@@ -153,21 +153,31 @@ function draw() {
       }
     }
 
-    // UI with background blur effect
+    // Home link and stats at bottom
+    const homeText = "← home";
     const trailMode = fadeAmount === 15 ? "short" : "long";
     const randomMode = grid[0][0].randomAmount < 0.15 ? "low" : (grid[0][0].randomAmount < 0.35 ? "med" : "high");
     const invertMode = inverted ? "on" : "off";
-    const uiText = `FPS: ${int(frameRate())} | B = bigger | S = smaller | T = trails (${trailMode}) | R = random (${randomMode}) | I = invert (${invertMode})`;
+    const uiText = `${homeText} | FPS: ${int(frameRate())} | B = bigger | S = smaller | T = trails (${trailMode}) | R = random (${randomMode}) | I = invert (${invertMode})`;
     const uiX = 10;
-    const uiY = 20;
+    const uiY = height - 30;
     const uiPadding = 8;
 
     textAlign(LEFT, TOP);
     textSize(12);
     const textW = textWidth(uiText);
     const textH = 12;
+    const homeTextW = textWidth(homeText);
 
-    // Semi-transparent background box with slight blur effect
+    // Check if hovering over home link
+    if (mouseX >= uiX - uiPadding && mouseX <= uiX + homeTextW + uiPadding &&
+        mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding) {
+      cursor(HAND);
+    } else {
+      cursor(ARROW);
+    }
+
+    // Semi-transparent background box
     fill(0, 150);
     noStroke();
     rect(uiX - uiPadding, uiY - uiPadding, textW + uiPadding * 2, textH + uiPadding * 2, 4);
@@ -175,6 +185,14 @@ function draw() {
     // Draw UI text
     fill(255, 255);
     text(uiText, uiX, uiY);
+
+    // Draw underline for home link on hover
+    if (mouseX >= uiX - uiPadding && mouseX <= uiX + homeTextW + uiPadding &&
+        mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding) {
+      stroke(255);
+      strokeWeight(1);
+      line(uiX, uiY + textH + 2, uiX + homeTextW, uiY + textH + 2);
+    }
   }
 }
 
@@ -325,4 +343,19 @@ function updateGrid() {
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
   updateGrid();
+}
+
+function mousePressed() {
+  // Check if home link was clicked (bottom left)
+  const uiX = 10;
+  const uiY = height - 30;
+  const uiPadding = 8;
+  textSize(12);
+  const homeTextW = textWidth("← home");
+  const textH = 12;
+
+  if (mouseX >= uiX - uiPadding && mouseX <= uiX + homeTextW + uiPadding &&
+      mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding) {
+    window.location.href = '../index.html';
+  }
 }

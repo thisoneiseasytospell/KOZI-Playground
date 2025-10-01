@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Accelerator - GLSL Shader</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: monospace;
+            color: #fff;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.5);
+            padding: 12px 20px;
+            border-radius: 4px;
+            backdrop-filter: blur(10px);
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        #fps {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 6px 12px;
+            border-radius: 4px;
+            backdrop-filter: blur(10px);
+            font-size: 11px;
+            opacity: 0.7;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .control-group label {
+            font-size: 9px;
+            opacity: 0.6;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .control-group input[type="range"] {
+            width: 80px;
+            height: 2px;
+            -webkit-appearance: none;
+            background: rgba(255, 255, 255, 0.2);
+            outline: none;
+        }
+        .control-group input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 8px;
+            height: 8px;
+            background: #fff;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+        .control-group input[type="range"]::-moz-range-thumb {
+            width: 8px;
+            height: 8px;
+            background: #fff;
+            cursor: pointer;
+            border-radius: 50%;
+            border: none;
+        }
+        .control-value {
+            font-size: 10px;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div id="fps">FPS: --</div>
+    <div id="controls">
+        <div class="control-group">
+            <label>SPD <span class="control-value" id="speedValue">1.0</span></label>
+            <input type="range" id="speed" min="0" max="3" step="0.1" value="1.0">
+        </div>
+        <div class="control-group">
+            <label>ZOOM <span class="control-value" id="zoomValue">9.0</span></label>
+            <input type="range" id="zoom" min="1" max="20" step="0.1" value="9.0">
+        </div>
+        <div class="control-group">
+            <label>CPLX <span class="control-value" id="complexityValue">0.00</span></label>
+            <input type="range" id="complexity" min="0.1" max="0.75" step="0.01" value="0.0">
+        </div>
+        <div class="control-group">
+            <label>ITER <span class="control-value" id="iterationsValue">80</span></label>
+            <input type="range" id="iterations" min="20" max="150" step="1" value="80">
+        </div>
+        <div class="control-group">
+            <label>COLOR <span class="control-value" id="colorValue">3500</span></label>
+            <input type="range" id="colorIntensity" min="1000" max="8000" step="100" value="3500">
+        </div>
+        <div class="control-group">
+            <label>BEND <span class="control-value" id="bendValue">0.5</span></label>
+            <input type="range" id="bend" min="0" max="2" step="0.1" value="0.5">
+        </div>
+        <div class="control-group">
+            <label>WARP <span class="control-value" id="centerWarpValue">-2.5</span></label>
+            <input type="range" id="centerWarp" min="-5" max="0" step="0.1" value="-2.5">
+        </div>
+        <div class="control-group">
+            <label>HUE <span class="control-value" id="hueValue">0</span></label>
+            <input type="range" id="hue" min="0" max="360" step="1" value="0">
+        </div>
+    </div>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js"
+        }
+    }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Shader uniforms
+        const uniforms = {
+            t: { value: 0.0 },
+            r: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+            speed: { value: 1.0 },
+            zoom: { value: 9.0 },
+            complexity: { value: 0.0 },  // Start at 0 for intro animation
+            iterations: { value: 80.0 },
+            colorIntensity: { value: 3500.0 },
+            bend: { value: 0.5 },
+            centerWarp: { value: -2.5 },
+            hue: { value: 0.0 }
+        };
+
+        // Vertex shader
+        const vertexShader = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = vec4(position, 1.0);
+            }
+        `;
+
+        // Fragment shader - "Accelerator"
+        const fragmentShader = `
+            uniform float t;              // time - drives animation
+            uniform vec2 r;               // resolution
+            uniform float zoom;           // camera depth (line 126)
+            uniform float complexity;     // fractal seed value (line 129)
+            uniform float iterations;     // detail level - more = slower but more detected
+            uniform float colorIntensity; // brightness control (line 142)
+            uniform float bend;           // bend/warp amount
+            uniform float centerWarp;     // center-focused distortion
+            uniform float hue;            // hue rotation in degrees
+            varying vec2 vUv;
+
+            // Hue rotation function
+            vec3 hueShift(vec3 color, float hueAdjust) {
+                const vec3 k = vec3(0.57735, 0.57735, 0.57735);
+                float cosAngle = cos(hueAdjust);
+                return vec3(color * cosAngle + cross(k, color) * sin(hueAdjust) + k * dot(k, color) * (1.0 - cosAngle));
+            }
+
+            void main() {
+                vec4 o = vec4(0.0);       // output color accumulator
+                vec2 FC = gl_FragCoord.xy;
+
+                // Raymarching loop - steps through 3D space
+                for(float i = 0.0, z = 0.0, d = 0.0, s = 0.0; i < iterations; i++) {
+                    // p = ray direction from camera
+                    vec3 p = z * normalize(vec3(FC.xy * 2.0 - r.xy, 0.0));
+
+                    // Apply bend to ray direction
+                    vec2 uv = FC / r - 0.5;
+                    float bendAmount = length(uv) * bend;
+                    p.xy += uv * bendAmount * 5.0;
+
+                    p.z += zoom;  // camera distance
+
+                    // a = fractal position - this creates the geometric structure
+                    vec3 a = vec3(0.0);
+                    a += complexity;  // seed value affects shape complexity
+                    a = dot(a, p) * a * cross(a, p);  // fractal formula
+
+                    // Apply center warp - localized to center with falloff
+                    float centerDist = length(uv);
+                    float centerFalloff = exp(-centerDist * 3.0);  // exponential falloff
+                    a += centerWarp * centerFalloff * 2.0;
+
+                    // s = shape field - distance to surface
+                    // changing the -0.8 value shifts the form
+                    s = sqrt(length(a.xz - a.y - 0.8));
+
+                    // Inner loop - creates animated distortions
+                    // sin(round(a * d) - t) creates the wavy/glitchy patterns
+                    for(d = 2.0; d < 9.0; d++) {
+                        a += sin(round(a * d) - t).yzx / d;
+                    }
+
+                    // Raymarch step - how far to step through space
+                    z += d = length(sin(a / 0.1)) * s / 20.0;
+
+                    // Accumulate color - vec4(R, G, B, A)
+                    // s = red channel (shape field)
+                    // 2.0 = green channel (constant)
+                    // z = blue channel (depth)
+                    o += vec4(s, 2.0, z, 1.0) / s / d;
+                }
+
+                // Final color with contrast curve
+                o = tanh(o / colorIntensity);
+
+                // Apply hue rotation
+                o.rgb = hueShift(o.rgb, radians(hue));
+
+                gl_FragColor = o;
+            }
+        `;
+
+        // Create shader material
+        const material = new THREE.ShaderMaterial({
+            uniforms: uniforms,
+            vertexShader: vertexShader,
+            fragmentShader: fragmentShader
+        });
+
+        // Create plane geometry
+        const geometry = new THREE.PlaneGeometry(2, 2);
+        const mesh = new THREE.Mesh(geometry, material);
+        scene.add(mesh);
+
+        // Slider controls
+        const controls = {
+            speed: document.getElementById('speed'),
+            zoom: document.getElementById('zoom'),
+            complexity: document.getElementById('complexity'),
+            iterations: document.getElementById('iterations'),
+            colorIntensity: document.getElementById('colorIntensity'),
+            bend: document.getElementById('bend'),
+            centerWarp: document.getElementById('centerWarp'),
+            hue: document.getElementById('hue')
+        };
+
+        const valueDisplays = {
+            speed: document.getElementById('speedValue'),
+            zoom: document.getElementById('zoomValue'),
+            complexity: document.getElementById('complexityValue'),
+            iterations: document.getElementById('iterationsValue'),
+            colorIntensity: document.getElementById('colorValue'),
+            bend: document.getElementById('bendValue'),
+            centerWarp: document.getElementById('centerWarpValue'),
+            hue: document.getElementById('hueValue')
+        };
+
+        Object.keys(controls).forEach(key => {
+            controls[key].addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value);
+                uniforms[key].value = value;
+                valueDisplays[key].textContent = value;
+            });
+        });
+
+        // FPS counter
+        let lastTime = performance.now();
+        let frames = 0;
+        let fps = 0;
+        const fpsDisplay = document.getElementById('fps');
+
+        // Intro animation
+        const introDuration = 3000; // 3 seconds
+        const introStart = performance.now();
+        const introTargetComplexity = 0.55;
+        const complexitySlider = document.getElementById('complexity');
+        const complexityDisplay = document.getElementById('complexityValue');
+
+        // Ease in-out function
+        function easeInOutCubic(t) {
+            return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Intro animation for complexity
+            const elapsed = performance.now() - introStart;
+            if (elapsed < introDuration) {
+                const progress = elapsed / introDuration;
+                const easedProgress = easeInOutCubic(progress);
+                const currentComplexity = easedProgress * introTargetComplexity;
+                uniforms.complexity.value = currentComplexity;
+                complexitySlider.value = currentComplexity;
+                complexityDisplay.textContent = currentComplexity.toFixed(2);
+            }
+
+            uniforms.t.value += 0.01 * uniforms.speed.value;
+            renderer.render(scene, camera);
+
+            // Calculate FPS
+            frames++;
+            const now = performance.now();
+            if (now >= lastTime + 1000) {
+                fps = Math.round((frames * 1000) / (now - lastTime));
+                fpsDisplay.textContent = `FPS: ${fps}`;
+                frames = 0;
+                lastTime = now;
+            }
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            uniforms.r.value.set(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>

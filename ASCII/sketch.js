@@ -40,7 +40,7 @@ function setup() {
   textAlign(CENTER, CENTER);
   textFont('monospace'); // Use monospace for consistent ASCII rendering
   background(0);
-  frameRate(60);
+  frameRate(30);
 }
 
 function initCamera() {

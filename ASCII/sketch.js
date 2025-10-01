@@ -1,5 +1,6 @@
 let cam;
-let cellSize = 12;
+const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+let cellSize = isMobileDevice ? 10 : 12; // Smaller cells on mobile for higher res
 let cols, rows;
 let grid;
 let pg; // Graphics buffer for better performance
@@ -7,6 +8,12 @@ let pg; // Graphics buffer for better performance
 const asciiChars = " .:AkerBP";
 let fadeAmount = 15;
 let inverted = false;
+
+// Camera switching for mobile
+let currentCamera = 'user'; // 'user' = front, 'environment' = back
+
+// Mobile controls menu
+let menuOpen = false;
 
 let lastGlitchTime = 0;
 let glitchInterval = 5000;
@@ -26,9 +33,7 @@ function setup() {
   createCanvas(windowWidth, windowHeight);
   pixelDensity(1); // Reduce pixel density for better performance
 
-  cam = createCapture(VIDEO);
-  cam.size(640, 480); // Lower resolution for performance
-  cam.hide();
+  initCamera();
 
   updateGrid();
 
@@ -36,6 +41,39 @@ function setup() {
   textFont('monospace'); // Use monospace for consistent ASCII rendering
   background(0);
   frameRate(60);
+}
+
+function initCamera() {
+  // Stop existing camera if it exists
+  if (cam) {
+    cam.remove();
+  }
+
+  // Create capture with camera constraint
+  const constraints = {
+    video: {
+      facingMode: currentCamera,
+      width: { ideal: 640, max: 640 },
+      height: { ideal: 480, max: 480 }
+    }
+  };
+
+  cam = createCapture(constraints);
+  cam.hide();
+}
+
+function swapCamera() {
+  currentCamera = currentCamera === 'user' ? 'environment' : 'user';
+
+  // Smaller cell size (higher res) for front camera
+  if (currentCamera === 'user') {
+    cellSize = 10;
+  } else {
+    cellSize = 12;
+  }
+
+  initCamera();
+  updateGrid();
 }
 
 function draw() {
@@ -109,8 +147,9 @@ function draw() {
 
     for (let i = 0; i < cols; i++) {
       for (let j = 0; j < rows; j++) {
-        const mirrorI = cols - 1 - i;
-        const x = mirrorI * cellSize + cellSize / 2;
+        // Only mirror front camera, not back camera
+        const displayI = currentCamera === 'user' ? (cols - 1 - i) : i;
+        const x = displayI * cellSize + cellSize / 2;
         const y = j * cellSize + cellSize / 2;
 
         let glitchOffsetX = 0;
@@ -153,45 +192,135 @@ function draw() {
       }
     }
 
-    // Home link and stats at bottom
-    const homeText = "← home";
-    const trailMode = fadeAmount === 15 ? "short" : "long";
-    const randomMode = grid[0][0].randomAmount < 0.15 ? "low" : (grid[0][0].randomAmount < 0.35 ? "med" : "high");
-    const invertMode = inverted ? "on" : "off";
-    const uiText = `${homeText} | FPS: ${int(frameRate())} | B = bigger | S = smaller | T = trails (${trailMode}) | R = random (${randomMode}) | I = invert (${invertMode})`;
-    const uiX = 10;
-    const uiY = height - 30;
-    const uiPadding = 8;
+    // Home link and stats at bottom - desktop only
+    if (!isMobileDevice) {
+      const homeText = "← home";
+      const trailMode = fadeAmount === 15 ? "short" : "long";
+      const randomMode = grid[0][0].randomAmount < 0.15 ? "low" : (grid[0][0].randomAmount < 0.35 ? "med" : "high");
+      const invertMode = inverted ? "on" : "off";
+      const uiText = `${homeText} | FPS: ${int(frameRate())} | B = bigger | S = smaller | T = trails (${trailMode}) | R = random (${randomMode}) | I = invert (${invertMode})`;
 
-    textAlign(LEFT, TOP);
-    textSize(12);
-    const textW = textWidth(uiText);
-    const textH = 12;
-    const homeTextW = textWidth(homeText);
+      const uiX = 10;
+      const uiY = height - 30;
+      const uiPadding = 8;
 
-    // Check if hovering over home link
-    if (mouseX >= uiX - uiPadding && mouseX <= uiX + homeTextW + uiPadding &&
-        mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding) {
-      cursor(HAND);
-    } else {
-      cursor(ARROW);
+      textAlign(LEFT, TOP);
+      textSize(12);
+      const textW = textWidth(uiText);
+      const textH = 12;
+      const homeTextW = textWidth(homeText);
+
+      // Check if hovering over home link
+      if (mouseX >= uiX - uiPadding && mouseX <= uiX + homeTextW + uiPadding &&
+          mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding) {
+        cursor(HAND);
+      } else {
+        cursor(ARROW);
+      }
+
+      // Semi-transparent background box
+      fill(0, 150);
+      noStroke();
+      rect(uiX - uiPadding, uiY - uiPadding, textW + uiPadding * 2, textH + uiPadding * 2, 4);
+
+      // Draw UI text
+      fill(255, 255);
+      text(uiText, uiX, uiY);
+
+      // Draw underline for home link on hover
+      if (mouseX >= uiX - uiPadding && mouseX <= uiX + homeTextW + uiPadding &&
+          mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding) {
+        stroke(255);
+        strokeWeight(1);
+        line(uiX, uiY + textH + 2, uiX + homeTextW, uiY + textH + 2);
+      }
     }
 
-    // Semi-transparent background box
-    fill(0, 150);
-    noStroke();
-    rect(uiX - uiPadding, uiY - uiPadding, textW + uiPadding * 2, textH + uiPadding * 2, 4);
+    // Mobile controls menu (bottom right)
+    if (isMobileDevice) {
+      const buttonSize = 50;
+      const buttonSpacing = 10;
+      const menuX = width - buttonSize - 20;
+      const menuY = height - buttonSize - 20;
 
-    // Draw UI text
-    fill(255, 255);
-    text(uiText, uiX, uiY);
+      // Draw control buttons if menu is open
+      if (menuOpen) {
+        // Home button
+        const homeX = menuX;
+        const homeY = menuY - (buttonSize + buttonSpacing) * 5;
+        const homeHover = mouseX >= homeX && mouseX <= homeX + buttonSize &&
+                          mouseY >= homeY && mouseY <= homeY + buttonSize;
+        fill(0, homeHover ? 200 : 150);
+        noStroke();
+        rect(homeX, homeY, buttonSize, buttonSize, 8);
+        fill(255);
+        textAlign(CENTER, CENTER);
+        textSize(20);
+        text("🏠", homeX + buttonSize / 2, homeY + buttonSize / 2);
 
-    // Draw underline for home link on hover
-    if (mouseX >= uiX - uiPadding && mouseX <= uiX + homeTextW + uiPadding &&
-        mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding) {
-      stroke(255);
-      strokeWeight(1);
-      line(uiX, uiY + textH + 2, uiX + homeTextW, uiY + textH + 2);
+        // Invert colors button
+        const invertX = menuX;
+        const invertY = menuY - (buttonSize + buttonSpacing) * 4;
+        const invertHover = mouseX >= invertX && mouseX <= invertX + buttonSize &&
+                            mouseY >= invertY && mouseY <= invertY + buttonSize;
+        fill(0, invertHover ? 200 : 150);
+        noStroke();
+        rect(invertX, invertY, buttonSize, buttonSize, 8);
+        fill(inverted ? 255 : 200);
+        textAlign(CENTER, CENTER);
+        textSize(20);
+        text("⚫⚪", invertX + buttonSize / 2, invertY + buttonSize / 2);
+
+        // Plus button (increase cell size - lower res)
+        const plusX = menuX;
+        const plusY = menuY - (buttonSize + buttonSpacing) * 3;
+        const plusHover = mouseX >= plusX && mouseX <= plusX + buttonSize &&
+                          mouseY >= plusY && mouseY <= plusY + buttonSize;
+        fill(0, plusHover ? 200 : 150);
+        noStroke();
+        rect(plusX, plusY, buttonSize, buttonSize, 8);
+        fill(255);
+        textAlign(CENTER, CENTER);
+        textSize(32);
+        text("+", plusX + buttonSize / 2, plusY + buttonSize / 2);
+
+        // Minus button (decrease cell size - higher res)
+        const minusX = menuX;
+        const minusY = menuY - (buttonSize + buttonSpacing) * 2;
+        const minusHover = mouseX >= minusX && mouseX <= minusX + buttonSize &&
+                           mouseY >= minusY && mouseY <= minusY + buttonSize;
+        fill(0, minusHover ? 200 : 150);
+        noStroke();
+        rect(minusX, minusY, buttonSize, buttonSize, 8);
+        fill(255);
+        textAlign(CENTER, CENTER);
+        textSize(32);
+        text("−", minusX + buttonSize / 2, minusY + buttonSize / 2);
+
+        // Camera swap button
+        const swapX = menuX;
+        const swapY = menuY - (buttonSize + buttonSpacing);
+        const swapHover = mouseX >= swapX && mouseX <= swapX + buttonSize &&
+                          mouseY >= swapY && mouseY <= swapY + buttonSize;
+        fill(0, swapHover ? 200 : 150);
+        noStroke();
+        rect(swapX, swapY, buttonSize, buttonSize, 8);
+        fill(255);
+        textAlign(CENTER, CENTER);
+        textSize(20);
+        text("🔄", swapX + buttonSize / 2, swapY + buttonSize / 2);
+      }
+
+      // Menu toggle button (always visible)
+      const toggleHover = mouseX >= menuX && mouseX <= menuX + buttonSize &&
+                          mouseY >= menuY && mouseY <= menuY + buttonSize;
+      fill(0, toggleHover ? 200 : 150);
+      noStroke();
+      rect(menuX, menuY, buttonSize, buttonSize, 8);
+      fill(255);
+      textAlign(CENTER, CENTER);
+      textSize(28);
+      text(menuOpen ? "✕" : "☰", menuX + buttonSize / 2, menuY + buttonSize / 2);
     }
   }
 }
@@ -346,16 +475,83 @@ function windowResized() {
 }
 
 function mousePressed() {
-  // Check if home link was clicked (bottom left)
-  const uiX = 10;
-  const uiY = height - 30;
-  const uiPadding = 8;
-  textSize(12);
-  const homeTextW = textWidth("← home");
-  const textH = 12;
+  // Mobile menu controls
+  if (isMobileDevice) {
+    const buttonSize = 50;
+    const buttonSpacing = 10;
+    const menuX = width - buttonSize - 20;
+    const menuY = height - buttonSize - 20;
 
-  if (mouseX >= uiX - uiPadding && mouseX <= uiX + homeTextW + uiPadding &&
-      mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding) {
-    window.location.href = '../index.html';
+    // Check menu toggle button
+    if (mouseX >= menuX && mouseX <= menuX + buttonSize &&
+        mouseY >= menuY && mouseY <= menuY + buttonSize) {
+      menuOpen = !menuOpen;
+      return;
+    }
+
+    // If menu is open, check for button clicks
+    if (menuOpen) {
+      // Home button
+      const homeX = menuX;
+      const homeY = menuY - (buttonSize + buttonSpacing) * 5;
+      if (mouseX >= homeX && mouseX <= homeX + buttonSize &&
+          mouseY >= homeY && mouseY <= homeY + buttonSize) {
+        window.location.href = '../index.html';
+        return;
+      }
+
+      // Invert button
+      const invertX = menuX;
+      const invertY = menuY - (buttonSize + buttonSpacing) * 4;
+      if (mouseX >= invertX && mouseX <= invertX + buttonSize &&
+          mouseY >= invertY && mouseY <= invertY + buttonSize) {
+        inverted = !inverted;
+        return;
+      }
+
+      // Plus button (bigger cells, lower res)
+      const plusX = menuX;
+      const plusY = menuY - (buttonSize + buttonSpacing) * 3;
+      if (mouseX >= plusX && mouseX <= plusX + buttonSize &&
+          mouseY >= plusY && mouseY <= plusY + buttonSize) {
+        cellSize = constrain(cellSize + 2, 6, 40);
+        updateGrid();
+        return;
+      }
+
+      // Minus button (smaller cells, higher res)
+      const minusX = menuX;
+      const minusY = menuY - (buttonSize + buttonSpacing) * 2;
+      if (mouseX >= minusX && mouseX <= minusX + buttonSize &&
+          mouseY >= minusY && mouseY <= minusY + buttonSize) {
+        cellSize = constrain(cellSize - 2, 6, 40);
+        updateGrid();
+        return;
+      }
+
+      // Camera swap button
+      const swapX = menuX;
+      const swapY = menuY - (buttonSize + buttonSpacing);
+      if (mouseX >= swapX && mouseX <= swapX + buttonSize &&
+          mouseY >= swapY && mouseY <= swapY + buttonSize) {
+        swapCamera();
+        return;
+      }
+    }
+  }
+
+  // Check if home link was clicked (bottom left) - desktop only
+  if (!isMobileDevice) {
+    const uiX = 10;
+    const uiY = height - 30;
+    const uiPadding = 8;
+    textSize(12);
+    const homeTextW = textWidth("← home");
+    const textH = 12;
+
+    if (mouseX >= uiX - uiPadding && mouseX <= uiX + homeTextW + uiPadding &&
+        mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding) {
+      window.location.href = '../index.html';
+    }
   }
 }

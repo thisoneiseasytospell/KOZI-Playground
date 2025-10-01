@@ -38,7 +38,7 @@ function setup() {
   updateGrid();
 
   textAlign(CENTER, CENTER);
-  textFont('monospace'); // Use monospace for consistent ASCII rendering
+  textFont('ABCDiatype'); // Use ABCDiatype for consistent ASCII rendering
   background(0);
   frameRate(30);
 }

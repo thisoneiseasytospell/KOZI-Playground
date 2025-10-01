@@ -9,7 +9,7 @@
             margin: 0;
             overflow: hidden;
             background: #000;
-            font-family: monospace;
+            font-family: 'ABCDiatype', monospace;
             color: #fff;
         }
         canvas {
@@ -140,8 +140,8 @@
             r: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
             speed: { value: 1.0 },
             zoom: { value: 9.0 },
-            complexity: { value: 0.0 },  // Start at 0 for intro animation
-            iterations: { value: 80.0 },
+            complexity: { value: 0.55 },
+            iterations: { value: 20.0 },  // Start at 20 for intro animation
             colorIntensity: { value: 3500.0 },
             bend: { value: 0.5 },
             centerWarp: { value: -2.5 },
@@ -285,9 +285,10 @@
         // Intro animation
         const introDuration = 3000; // 3 seconds
         const introStart = performance.now();
-        const introTargetComplexity = 0.55;
-        const complexitySlider = document.getElementById('complexity');
-        const complexityDisplay = document.getElementById('complexityValue');
+        const introStartIterations = 20;
+        const introTargetIterations = 80;
+        const iterationsSlider = document.getElementById('iterations');
+        const iterationsDisplay = document.getElementById('iterationsValue');
 
         // Ease in-out function
         function easeInOutCubic(t) {
@@ -298,15 +299,15 @@
         function animate() {
             requestAnimationFrame(animate);
 
-            // Intro animation for complexity
+            // Intro animation for iterations
             const elapsed = performance.now() - introStart;
             if (elapsed < introDuration) {
                 const progress = elapsed / introDuration;
                 const easedProgress = easeInOutCubic(progress);
-                const currentComplexity = easedProgress * introTargetComplexity;
-                uniforms.complexity.value = currentComplexity;
-                complexitySlider.value = currentComplexity;
-                complexityDisplay.textContent = currentComplexity.toFixed(2);
+                const currentIterations = introStartIterations + easedProgress * (introTargetIterations - introStartIterations);
+                uniforms.iterations.value = currentIterations;
+                iterationsSlider.value = currentIterations;
+                iterationsDisplay.textContent = Math.round(currentIterations);
             }
 
             uniforms.t.value += 0.01 * uniforms.speed.value;

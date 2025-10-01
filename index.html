@@ -36,6 +36,7 @@
 
     const asciiChars = " .:AkerBP";
     let fadeAmount = 15;
+    let inverted = false;
 
     let lastGlitchTime = 0;
     let glitchInterval = 5000;
@@ -162,7 +163,10 @@
               const r = camPixels[pixelIndex];
               const g = camPixels[pixelIndex + 1];
               const b = camPixels[pixelIndex + 2];
-              const brightness = (r + g + b) * 0.333; // Slightly faster than division
+              let brightness = (r + g + b) * 0.333; // Slightly faster than division
+
+              // Invert brightness if inverted mode is on
+              if (inverted) brightness = 255 - brightness;
 
               grid[i][j].update(brightness);
               grid[i][j].display(
@@ -182,7 +186,8 @@
         // UI with background blur effect
         const trailMode = fadeAmount === 15 ? "short" : "long";
         const randomMode = grid[0][0].randomAmount < 0.15 ? "low" : (grid[0][0].randomAmount < 0.35 ? "med" : "high");
-        const uiText = `FPS: ${int(frameRate())} | B = bigger | S = smaller | T = trails (${trailMode}) | R = random (${randomMode})`;
+        const invertMode = inverted ? "on" : "off";
+        const uiText = `FPS: ${int(frameRate())} | B = bigger | S = smaller | T = trails (${trailMode}) | R = random (${randomMode}) | I = invert (${invertMode})`;
         const uiX = 10;
         const uiY = 20;
         const uiPadding = 8;
@@ -317,6 +322,8 @@
             grid[i][j].setRandomAmount(newRandom);
           }
         }
+      } else if (key === 'i' || key === 'I') {
+        inverted = !inverted;
       }
     }
 

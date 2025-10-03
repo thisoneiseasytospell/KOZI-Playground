@@ -6,9 +6,52 @@
   <title>ASCII Camera Glitch</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://unpkg.com/h264-mp4-encoder@1.0.12/embuild/dist/h264-mp4-encoder.web.js"></script>
 </head>
 <body>
   <main></main>
+  <input type="file" id="imageUpload" accept="image/*" style="display: none;">
+
+  <button id="toggleImageControls">Image Controls</button>
+
+  <div id="imageControls">
+    <div class="control-group">
+      <label>
+        Scale
+        <span class="control-value" id="scaleValue">1.0x</span>
+      </label>
+      <input type="range" id="scaleSlider" min="0.1" max="3" step="0.1" value="1.0">
+    </div>
+
+    <div class="control-group">
+      <label>
+        Grey Levels
+        <span class="control-value" id="greyValue">6</span>
+      </label>
+      <input type="range" id="greySlider" min="2" max="50" step="1" value="6">
+    </div>
+
+    <div class="control-group">
+      <label>Position</label>
+      <div class="control-hint">Drag canvas to reposition image</div>
+    </div>
+
+    <div class="control-group">
+      <button id="exportSVG">Export SVG</button>
+    </div>
+
+    <div class="control-group">
+      <button id="exportPDF">Export PNG</button>
+    </div>
+
+    <div class="control-group">
+      <button id="exportMP4">Export MP4</button>
+      <div class="control-hint" id="exportStatus"></div>
+    </div>
+  </div>
+
+  <script src="imageProcessor.js"></script>
   <script src="sketch.js"></script>
 </body>
 </html>

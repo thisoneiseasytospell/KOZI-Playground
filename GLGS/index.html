@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Accelerator - GLSL Shader</title>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
         body {
             margin: 0;
             overflow: hidden;
@@ -17,111 +22,30 @@
             width: 100vw;
             height: 100vh;
         }
-        #controls {
+        #ui-bar {
             position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.5);
-            padding: 12px 20px;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 8px;
             border-radius: 4px;
-            backdrop-filter: blur(10px);
-            display: flex;
-            gap: 20px;
-            align-items: center;
+            font-size: 12px;
+            color: #fff;
+            user-select: none;
+            cursor: default;
         }
-        #fps {
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            background: rgba(0, 0, 0, 0.5);
-            padding: 6px 12px;
-            border-radius: 4px;
-            backdrop-filter: blur(10px);
-            font-size: 11px;
-            opacity: 0.7;
-        }
-        .control-group {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-        .control-group label {
-            font-size: 9px;
-            opacity: 0.6;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .control-group input[type="range"] {
-            width: 80px;
-            height: 2px;
-            -webkit-appearance: none;
-            background: rgba(255, 255, 255, 0.2);
-            outline: none;
-        }
-        .control-group input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 8px;
-            height: 8px;
-            background: #fff;
+        #ui-bar a {
+            color: #fff;
+            text-decoration: none;
             cursor: pointer;
-            border-radius: 50%;
         }
-        .control-group input[type="range"]::-moz-range-thumb {
-            width: 8px;
-            height: 8px;
-            background: #fff;
-            cursor: pointer;
-            border-radius: 50%;
-            border: none;
-        }
-        .control-value {
-            font-size: 10px;
-            opacity: 0.8;
+        #ui-bar a:hover {
+            text-decoration: underline;
         }
     </style>
 </head>
 <body>
-    <div id="fps">FPS: --</div>
-    <div id="controls">
-        <div class="control-group">
-            <label>SPD <span class="control-value" id="speedValue">1.0</span></label>
-            <input type="range" id="speed" min="0" max="3" step="0.1" value="1.0">
-        </div>
-        <div class="control-group">
-            <label>ZOOM <span class="control-value" id="zoomValue">9.0</span></label>
-            <input type="range" id="zoom" min="1" max="20" step="0.1" value="9.0">
-        </div>
-        <div class="control-group">
-            <label>CPLX <span class="control-value" id="complexityValue">0.00</span></label>
-            <input type="range" id="complexity" min="0.1" max="0.75" step="0.01" value="0.0">
-        </div>
-        <div class="control-group">
-            <label>ITER <span class="control-value" id="iterationsValue">80</span></label>
-            <input type="range" id="iterations" min="20" max="150" step="1" value="80">
-        </div>
-        <div class="control-group">
-            <label>COLOR <span class="control-value" id="colorValue">3500</span></label>
-            <input type="range" id="colorIntensity" min="1000" max="8000" step="100" value="3500">
-        </div>
-        <div class="control-group">
-            <label>BEND <span class="control-value" id="bendValue">0.5</span></label>
-            <input type="range" id="bend" min="0" max="2" step="0.1" value="0.5">
-        </div>
-        <div class="control-group">
-            <label>WARP <span class="control-value" id="centerWarpValue">-2.5</span></label>
-            <input type="range" id="centerWarp" min="-5" max="0" step="0.1" value="-2.5">
-        </div>
-        <div class="control-group">
-            <label>HUE <span class="control-value" id="hueValue">0</span></label>
-            <input type="range" id="hue" min="0" max="360" step="1" value="0">
-        </div>
-        <div class="control-group">
-            <label>NOISE <span class="control-value" id="noiseValue">0.0</span></label>
-            <input type="range" id="noiseAmount" min="0" max="2" step="0.1" value="0.0">
-        </div>
-    </div>
+    <div id="ui-bar"></div>
     <script type="importmap">
     {
         "imports": {
@@ -152,6 +76,9 @@
             hue: { value: 0.0 },
             noiseAmount: { value: 0.0 }
         };
+
+        // UI state
+        let showUI = true;
 
         // Vertex shader
         const vertexShader = `
@@ -321,52 +248,75 @@
         const mesh = new THREE.Mesh(geometry, material);
         scene.add(mesh);
 
-        // Slider controls
-        const controls = {
-            speed: document.getElementById('speed'),
-            zoom: document.getElementById('zoom'),
-            complexity: document.getElementById('complexity'),
-            iterations: document.getElementById('iterations'),
-            colorIntensity: document.getElementById('colorIntensity'),
-            bend: document.getElementById('bend'),
-            centerWarp: document.getElementById('centerWarp'),
-            hue: document.getElementById('hue'),
-            noiseAmount: document.getElementById('noiseAmount')
-        };
-
-        const valueDisplays = {
-            speed: document.getElementById('speedValue'),
-            zoom: document.getElementById('zoomValue'),
-            complexity: document.getElementById('complexityValue'),
-            iterations: document.getElementById('iterationsValue'),
-            colorIntensity: document.getElementById('colorValue'),
-            bend: document.getElementById('bendValue'),
-            centerWarp: document.getElementById('centerWarpValue'),
-            hue: document.getElementById('hueValue'),
-            noiseAmount: document.getElementById('noiseValue')
-        };
-
-        Object.keys(controls).forEach(key => {
-            controls[key].addEventListener('input', (e) => {
-                const value = parseFloat(e.target.value);
-                uniforms[key].value = value;
-                valueDisplays[key].textContent = value;
-            });
-        });
-
         // FPS counter
         let lastTime = performance.now();
         let frames = 0;
         let fps = 0;
-        const fpsDisplay = document.getElementById('fps');
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            const step = e.shiftKey ? 10 : 1;
+            switch(e.key.toLowerCase()) {
+                case 'h':
+                    window.location.href = '../';
+                    break;
+                case 'u':
+                    showUI = !showUI;
+                    updateUI();
+                    break;
+                case 'z':
+                    uniforms.zoom.value = Math.max(1, uniforms.zoom.value - 0.5 * step);
+                    break;
+                case 'x':
+                    uniforms.zoom.value = Math.min(20, uniforms.zoom.value + 0.5 * step);
+                    break;
+                case 'c':
+                    uniforms.complexity.value = Math.max(0.1, uniforms.complexity.value - 0.05 * step);
+                    break;
+                case 'v':
+                    uniforms.complexity.value = Math.min(0.75, uniforms.complexity.value + 0.05 * step);
+                    break;
+                case 'i':
+                    uniforms.iterations.value = Math.max(20, uniforms.iterations.value - 5 * step);
+                    break;
+                case 'o':
+                    uniforms.iterations.value = Math.min(150, uniforms.iterations.value + 5 * step);
+                    break;
+                case 'b':
+                    uniforms.colorIntensity.value = Math.max(1000, uniforms.colorIntensity.value - 500 * step);
+                    break;
+                case 'n':
+                    uniforms.colorIntensity.value = Math.min(8000, uniforms.colorIntensity.value + 500 * step);
+                    break;
+                case 's':
+                    uniforms.speed.value = Math.max(0, uniforms.speed.value - 0.1 * step);
+                    break;
+                case 'f':
+                    uniforms.speed.value = Math.min(3, uniforms.speed.value + 0.1 * step);
+                    break;
+            }
+            updateUI();
+        });
+
+        // Update UI function
+        function updateUI() {
+            const uiBar = document.getElementById('ui-bar');
+            if (!showUI) {
+                uiBar.style.display = 'none';
+                return;
+            }
+            uiBar.style.display = 'block';
+
+            const homeLink = '<a href="../">← home</a>';
+            const text = `${homeLink} | FPS: ${Math.round(fps)} | Z/X = zoom (${uniforms.zoom.value.toFixed(1)}) | C/V = complexity (${uniforms.complexity.value.toFixed(2)}) | I/O = iterations (${Math.round(uniforms.iterations.value)}) | B/N = brightness (${Math.round(uniforms.colorIntensity.value)}) | S/F = speed (${uniforms.speed.value.toFixed(1)}) | U = hide UI`;
+            uiBar.innerHTML = text;
+        }
 
         // Intro animation
         const introDuration = 3000; // 3 seconds
         const introStart = performance.now();
         const introStartIterations = 20;
         const introTargetIterations = 80;
-        const iterationsSlider = document.getElementById('iterations');
-        const iterationsDisplay = document.getElementById('iterationsValue');
 
         // Ease in-out function
         function easeInOutCubic(t) {
@@ -384,8 +334,6 @@
                 const easedProgress = easeInOutCubic(progress);
                 const currentIterations = introStartIterations + easedProgress * (introTargetIterations - introStartIterations);
                 uniforms.iterations.value = currentIterations;
-                iterationsSlider.value = currentIterations;
-                iterationsDisplay.textContent = Math.round(currentIterations);
             }
 
             uniforms.t.value += 0.01 * uniforms.speed.value;
@@ -396,11 +344,14 @@
             const now = performance.now();
             if (now >= lastTime + 1000) {
                 fps = Math.round((frames * 1000) / (now - lastTime));
-                fpsDisplay.textContent = `FPS: ${fps}`;
                 frames = 0;
                 lastTime = now;
+                updateUI();
             }
         }
+
+        // Initialize UI
+        updateUI();
 
         // Handle window resize
         window.addEventListener('resize', () => {

@@ -660,6 +660,11 @@ window.addEventListener('keydown', (event) => {
     } else if (event.key === 'r' || event.key === 'R') {
         cameraRotationEnabled = !cameraRotationEnabled;
         updateInfoText();
+    } else if (event.key === 'u' || event.key === 'U') {
+        showUI = !showUI;
+        updateInfoText();
+    } else if (event.key === 'h' || event.key === 'H') {
+        window.location.href = '../';
     }
 });
 
@@ -681,16 +686,25 @@ let isExportingVideo = false;
 let videoFrameCount = 0;
 let videoTotalFrames = 250; // 10 seconds at 25fps
 
+// UI state
+let showUI = true;
+
 function updateInfoText() {
-    const info = document.querySelector('.info');
+    const uiBar = document.getElementById('ui-bar');
+    if (!showUI) {
+        uiBar.style.display = 'none';
+        return;
+    }
+    uiBar.style.display = 'block';
+
     const thicknessPercent = Math.round(boltThickness * 100);
     const rotationStatus = cameraRotationEnabled ? 'ON' : 'OFF';
 
-    // Preserve the Home link and Export button
-    const homeLink = '<a href="../">Home</a>';
+    // Create UI text
+    const homeLink = '<a href="../">← home</a>';
     const exportBtn = '<button id="exportMP4">Export MP4</button> <span id="exportStatus"></span>';
 
-    info.innerHTML = `${homeLink} | Click and drag to spawn thunderbolts | Thickness: ${thicknessPercent}% (+/- keys) | SPACE: explosion | R: rotation (${rotationStatus}) | ${exportBtn}`;
+    uiBar.innerHTML = `${homeLink} | Click/drag = spawn | +/- = thickness (${thicknessPercent}%) | SPACE = explosion | R = rotation (${rotationStatus}) | U = hide UI | ${exportBtn}`;
 
     // Re-attach the export button event listener after updating HTML
     const exportMP4Btn = document.getElementById('exportMP4');

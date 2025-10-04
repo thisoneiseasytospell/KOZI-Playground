@@ -22,14 +22,18 @@ composer.addPass(renderPass);
 
 const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.8,  // Bloom strength - reduced for less intense glow
+    0.8,  // Bloom strength - will be increased during explosions
     0.6,  // Radius - tighter glow
     0.4   // Threshold - only brightest things glow
 );
 composer.addPass(bloomPass);
 
+// Track explosion intensity
+let explosionIntensity = 0;
+let explosionDecay = 0.03;
+
 // Thickness control
-let boltThickness = 0.5; // Default thickness multiplier (50%)
+let boltThickness = 0.2; // Default thickness multiplier (20%)
 
 // Lightning system
 class Lightning {
@@ -292,11 +296,11 @@ class Lightning {
         if (points.length < 2) return;
 
         try {
-            // Main tube with thickness control
+            // Main tube with thickness control - minimum visible size
             const tubeGeometry = new THREE.TubeGeometry(
                 new THREE.CatmullRomCurve3(points),
                 Math.max(points.length * 5, 20), // More segments for smoother glow
-                0.08 * boltThickness,
+                Math.max(0.08 * boltThickness, 0.03), // Minimum radius
                 8,
                 false
             );
@@ -317,7 +321,7 @@ class Lightning {
             const glowGeometry = new THREE.TubeGeometry(
                 new THREE.CatmullRomCurve3(points),
                 Math.max(points.length * 5, 20), // More segments to prevent clumping
-                0.25 * boltThickness, // Smaller glow radius
+                Math.max(0.25 * boltThickness, 0.15), // Minimum glow radius
                 8,
                 false
             );
@@ -348,7 +352,7 @@ class Lightning {
         return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
     }
 
-    update() {
+    update(keepAlive = false) {
         const now = Date.now();
         const atPeak = this.progress >= this.maxProgress && this.fadeProgress < 0.2;
 
@@ -443,8 +447,10 @@ class Lightning {
                 }
             });
         } else {
-            // Continue shrinking after growth completes
-            this.fadeProgress += this.fadeSpeed;
+            // Continue shrinking after growth completes (unless held)
+            if (!keepAlive) {
+                this.fadeProgress += this.fadeSpeed;
+            }
 
             // Shrink continues from start to end
             this.lineMeshes.forEach(({ material, geometry, branch }, index) => {
@@ -486,7 +492,8 @@ class Lightning {
             });
         }
 
-        return this.fadeProgress < 1.5 && (this.progress < 1 || this.fadeProgress < 1);
+        // Stay alive if being held, otherwise check normal fade progress
+        return keepAlive || (this.fadeProgress < 1.5 && (this.progress < 1 || this.fadeProgress < 1));
     }
 
     destroy() {
@@ -520,6 +527,7 @@ class Lightning {
 const lightnings = [];
 const maxLightnings = 50; // Limit active lightnings for performance
 let lastLightningPoint = null; // Track last spawn point for connections
+let activeLightning = null; // Track the currently held lightning
 
 // Mouse interaction
 const raycaster = new THREE.Raycaster();
@@ -533,6 +541,9 @@ const planeGeometry = new THREE.PlaneGeometry(100, 100);
 const planeMaterial = new THREE.MeshBasicMaterial({ visible: false });
 const plane = new THREE.Mesh(planeGeometry, planeMaterial);
 scene.add(plane);
+
+// Cloud layers removed for now
+const cloudLayers = [];
 
 function spawnLightning(clientX, clientY, forceExplosion = false) {
     mouse.x = (clientX / window.innerWidth) * 2 - 1;
@@ -549,7 +560,17 @@ function spawnLightning(clientX, clientY, forceExplosion = false) {
 
         // Connect to previous point if dragging (no connection for explosions)
         const endPoint = !isExplosion && lastLightningPoint && isMouseDown ? lastLightningPoint : null;
-        lightnings.push(new Lightning(point, scene, endPoint, isExplosion));
+        const newLightning = new Lightning(point, scene, endPoint, isExplosion);
+        lightnings.push(newLightning);
+
+        // Track as active if mouse is down and not an explosion
+        if (isMouseDown && !isExplosion) {
+            // If we already have an active lightning, release it
+            if (activeLightning) {
+                activeLightning = null;
+            }
+            activeLightning = newLightning;
+        }
 
         // Remove oldest lightning if too many
         if (lightnings.length > maxLightnings) {
@@ -562,6 +583,10 @@ function spawnLightning(clientX, clientY, forceExplosion = false) {
 }
 
 window.addEventListener('mousedown', (event) => {
+    // Don't spawn lightning if clicking on UI elements
+    if (event.target.tagName === 'A' || event.target.tagName === 'BUTTON') {
+        return;
+    }
     isMouseDown = true;
     spawnLightning(event.clientX, event.clientY);
 });
@@ -569,9 +594,14 @@ window.addEventListener('mousedown', (event) => {
 window.addEventListener('mouseup', () => {
     isMouseDown = false;
     lastLightningPoint = null; // Reset connection on mouse up
+    activeLightning = null; // Release the active lightning
 });
 
 window.addEventListener('mousemove', (event) => {
+    // Don't spawn lightning if over UI elements
+    if (event.target.tagName === 'A' || event.target.tagName === 'BUTTON') {
+        return;
+    }
     if (isMouseDown) {
         const now = Date.now();
         if (now - lastSpawnTime > spawnInterval) {
@@ -592,6 +622,7 @@ window.addEventListener('touchstart', (event) => {
 window.addEventListener('touchend', () => {
     isMouseDown = false;
     lastLightningPoint = null;
+    activeLightning = null;
 });
 
 window.addEventListener('touchmove', (event) => {
@@ -607,6 +638,9 @@ window.addEventListener('touchmove', (event) => {
 }, { passive: false });
 
 // Keyboard controls for thickness and explosions
+let spacebarHeldTime = 0;
+let isSpacebarHeld = false;
+
 window.addEventListener('keydown', (event) => {
     if (event.key === '=' || event.key === '+') {
         boltThickness = Math.min(boltThickness + 0.2, 3.0);
@@ -615,46 +649,144 @@ window.addEventListener('keydown', (event) => {
         boltThickness = Math.max(boltThickness - 0.2, 0.2);
         updateInfoText();
     } else if (event.key === 'e' || event.key === 'E' || event.key === ' ') {
-        // Trigger explosion at center of viewport
-        const centerX = window.innerWidth / 2;
-        const centerY = window.innerHeight / 2;
-        spawnLightning(centerX, centerY, true);
+        if (!isSpacebarHeld) {
+            isSpacebarHeld = true;
+            spacebarHeldTime = 0;
+            // Trigger initial explosion at center of viewport
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
+            spawnLightning(centerX, centerY, true);
+        }
+    } else if (event.key === 'r' || event.key === 'R') {
+        cameraRotationEnabled = !cameraRotationEnabled;
+        updateInfoText();
     }
 });
 
-function updateInfoText() {
-    const info = document.querySelector('.info');
-    const thicknessPercent = Math.round(boltThickness * 100);
-    info.textContent = `Click and drag to spawn thunderbolts | Thickness: ${thicknessPercent}% (+/- keys) | Press SPACE for explosion`;
-}
+window.addEventListener('keyup', (event) => {
+    if (event.key === ' ' || event.key === 'e' || event.key === 'E') {
+        isSpacebarHeld = false;
+        spacebarHeldTime = 0;
+    }
+});
 
 // Camera rotation
 let cameraAngle = 0;
 const cameraRadius = 30;
+let cameraRotationEnabled = true;
+
+// Video export
+let mp4Encoder = null;
+let isExportingVideo = false;
+let videoFrameCount = 0;
+let videoTotalFrames = 250; // 10 seconds at 25fps
+
+function updateInfoText() {
+    const info = document.querySelector('.info');
+    const thicknessPercent = Math.round(boltThickness * 100);
+    const rotationStatus = cameraRotationEnabled ? 'ON' : 'OFF';
+
+    // Preserve the Home link and Export button
+    const homeLink = '<a href="../">Home</a>';
+    const exportBtn = '<button id="exportMP4">Export MP4</button> <span id="exportStatus"></span>';
+
+    info.innerHTML = `${homeLink} | Click and drag to spawn thunderbolts | Thickness: ${thicknessPercent}% (+/- keys) | SPACE: explosion | R: rotation (${rotationStatus}) | ${exportBtn}`;
+
+    // Re-attach the export button event listener after updating HTML
+    const exportMP4Btn = document.getElementById('exportMP4');
+    if (exportMP4Btn) {
+        exportMP4Btn.addEventListener('click', startVideoExport);
+    }
+}
+
+updateInfoText();
+
+// Setup MP4 export button
+const exportMP4Btn = document.getElementById('exportMP4');
+const exportStatus = document.getElementById('exportStatus');
+if (exportMP4Btn) {
+    exportMP4Btn.addEventListener('click', startVideoExport);
+}
 
 // Animation loop
 function animate() {
     requestAnimationFrame(animate);
 
+    const time = Date.now() * 0.001;
+
     // Slow camera rotation
-    cameraAngle += 0.002;
-    camera.position.x = Math.sin(cameraAngle) * cameraRadius;
-    camera.position.z = Math.cos(cameraAngle) * cameraRadius;
-    camera.lookAt(0, 0, 0);
+    if (cameraRotationEnabled) {
+        cameraAngle += 0.002;
+        camera.position.x = Math.sin(cameraAngle) * cameraRadius;
+        camera.position.z = Math.cos(cameraAngle) * cameraRadius;
+        camera.lookAt(0, 0, 0);
+    }
 
     // Update plane to always face camera
     plane.lookAt(camera.position);
 
+    // Update cloud layers for parallax effect (disabled for now)
+    // cloudLayers.forEach(layer => layer.update(time));
+
+    // Handle spacebar held for increasing explosions
+    if (isSpacebarHeld) {
+        spacebarHeldTime += 0.016; // ~60fps increment
+
+        // Spawn more explosions the longer it's held (ramps up over 15 seconds)
+        const spawnChance = 0.1 + (spacebarHeldTime / 15) * 0.4; // 0.1 to 0.5 over 15 seconds
+        if (Math.random() < spawnChance) {
+            const randomX = window.innerWidth * (0.3 + Math.random() * 0.4);
+            const randomY = window.innerHeight * (0.3 + Math.random() * 0.4);
+            spawnLightning(randomX, randomY, true);
+        }
+
+        // Increase bloom intensity gradually over 15 seconds
+        const maxIntensity = 6.0; // Maximum bloom strength
+        const intensityIncrement = maxIntensity / (15 * 60); // Ramp over 15 seconds at 60fps
+        explosionIntensity = Math.min(explosionIntensity + intensityIncrement, maxIntensity);
+        bloomPass.strength = 0.8 + explosionIntensity;
+    } else {
+        // Decay explosion intensity
+        if (explosionIntensity > 0) {
+            explosionIntensity = Math.max(0, explosionIntensity - explosionDecay);
+            bloomPass.strength = 0.8 + explosionIntensity;
+        }
+    }
+
     // Update lightnings
     for (let i = lightnings.length - 1; i >= 0; i--) {
-        const alive = lightnings[i].update();
+        const isBeingHeld = lightnings[i] === activeLightning && isMouseDown;
+        const alive = lightnings[i].update(isBeingHeld);
         if (!alive) {
+            if (lightnings[i] === activeLightning) {
+                activeLightning = null;
+            }
             lightnings[i].destroy();
             lightnings.splice(i, 1);
         }
     }
 
     composer.render();
+
+    // Handle video export - capture frames
+    if (isExportingVideo && videoFrameCount < videoTotalFrames && mp4Encoder) {
+        // Hide UI during export
+        const info = document.querySelector('.info');
+        if (info) info.style.display = 'none';
+
+        const gl = renderer.getContext();
+        const pixels = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
+        gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+        mp4Encoder.addFrameRgba(pixels);
+        videoFrameCount++;
+
+        if (videoFrameCount >= videoTotalFrames) {
+            stopVideoExport();
+            // Show UI again
+            if (info) info.style.display = 'block';
+        }
+    }
 }
 
 // Handle window resize
@@ -664,5 +796,98 @@ window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
     composer.setSize(window.innerWidth, window.innerHeight);
 });
+
+// Video Export Functions
+async function startVideoExport() {
+    console.log('Starting MP4 export at 25fps...');
+
+    const exportStatus = document.getElementById('exportStatus');
+    const exportMP4Btn = document.getElementById('exportMP4');
+
+    if (!window.HME) {
+        exportStatus.textContent = 'Encoder still loading, please wait ~10 seconds and try again';
+        setTimeout(() => {
+            exportStatus.textContent = '';
+        }, 4000);
+        return;
+    }
+
+    exportStatus.textContent = 'Recording...';
+    exportMP4Btn.disabled = true;
+
+    try {
+        mp4Encoder = await window.HME.createH264MP4Encoder();
+        mp4Encoder.outputFilename = 'thunderbolt_animation';
+        mp4Encoder.width = renderer.domElement.width;
+        mp4Encoder.height = renderer.domElement.height;
+        mp4Encoder.frameRate = 25;
+        mp4Encoder.kbps = 20000; // High bitrate for quality
+        mp4Encoder.groupOfPictures = 25;
+        mp4Encoder.speed = 0;
+        mp4Encoder.quantizationParameter = 10;
+        mp4Encoder.initialize();
+
+        isExportingVideo = true;
+        videoFrameCount = 0;
+
+        console.log('MP4 encoder initialized');
+
+    } catch (error) {
+        console.error('Failed to initialize encoder:', error);
+        exportStatus.textContent = 'Failed to initialize encoder';
+        exportMP4Btn.disabled = false;
+    }
+}
+
+async function stopVideoExport() {
+    console.log('Finalizing MP4...');
+
+    isExportingVideo = false;
+
+    const exportStatus = document.getElementById('exportStatus');
+    const exportMP4Btn = document.getElementById('exportMP4');
+
+    try {
+        exportStatus.textContent = 'Finalizing...';
+
+        await mp4Encoder.finalize();
+        const uint8Array = mp4Encoder.FS.readFile(mp4Encoder.outputFilename);
+
+        const blob = new Blob([uint8Array.buffer], { type: 'video/mp4' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'thunderbolt_animation.mp4';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        mp4Encoder.delete();
+        mp4Encoder = null;
+
+        exportStatus.textContent = 'Done!';
+        exportMP4Btn.disabled = false;
+
+        setTimeout(() => {
+            if (exportStatus) exportStatus.textContent = '';
+        }, 3000);
+
+        console.log('MP4 export complete!');
+
+    } catch (error) {
+        console.error('MP4 finalization failed:', error);
+        exportStatus.textContent = 'MP4 export failed. Check console.';
+        exportMP4Btn.disabled = false;
+        if (mp4Encoder) {
+            try {
+                mp4Encoder.delete();
+            } catch (e) {
+                console.error('Failed to delete encoder:', e);
+            }
+            mp4Encoder = null;
+        }
+    }
+}
 
 animate();

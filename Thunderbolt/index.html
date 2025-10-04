@@ -27,8 +27,38 @@
             left: 20px;
             color: #fff;
             font-size: 14px;
-            pointer-events: none;
             opacity: 0.7;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        .info a, .info button {
+            color: #fff;
+            text-decoration: underline;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-family: monospace;
+            font-size: 14px;
+            padding: 0;
+            margin: 0;
+            pointer-events: auto;
+        }
+
+        .info a:hover, .info button:hover {
+            opacity: 1;
+        }
+
+        .info button:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        #exportStatus {
+            color: #fff;
+            font-family: monospace;
+            font-size: 14px;
+            display: inline;
         }
 
         canvas {
@@ -37,7 +67,10 @@
     </style>
 </head>
 <body>
-    <div class="info">Click and drag to spawn thunderbolts | Thickness: 50% (+/- keys) | Press SPACE for explosion</div>
+    <div class="info">
+        <a href="../">Home</a> | Click and drag to spawn thunderbolts | Thickness: 20% (+/- keys) | SPACE: explosion | R: rotation (ON) | <button id="exportMP4">Export MP4</button> <span id="exportStatus"></span>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/h264-mp4-encoder@1.0.12/embuild/dist/h264-mp4-encoder.web.js"></script>
     <script type="importmap">
         {
             "imports": {

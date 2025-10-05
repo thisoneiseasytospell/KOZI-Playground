@@ -6,6 +6,10 @@ const hud = document.getElementById('hud');
 const statusBadge = hud.querySelector('.status');
 const spacingSlider = document.getElementById('spacingSlider');
 const cameraToggle = document.getElementById('cameraToggle');
+const cameraPreview = document.getElementById('cameraPreview');
+const previewVideo = document.getElementById('previewVideo');
+const previewCanvas = document.getElementById('previewCanvas');
+const previewCtx = previewCanvas.getContext('2d');
 
 const COLS = 140;
 const ROWS = 60;
@@ -28,13 +32,14 @@ const rebellionQuotes = [
 const state = {
   baseHue: Math.floor(Math.random() * 360),
   palette: ['@', '#', '%', '&', '*', '+', '=', ':', ';', '.'],
-  brushSize: 3,
+  brushSize: 6,
   quoteSpacing: 5,
 };
 
 const messageLayer = {
   chars: Array.from({ length: ROWS }, () => Array(COLS).fill(' ')),
   revealed: Array.from({ length: ROWS }, () => Array(COLS).fill(false)),
+  lastTouched: Array.from({ length: ROWS }, () => Array(COLS).fill(0)),
 };
 
 const noiseGrid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
@@ -52,8 +57,14 @@ let handStream = null;
 let visionResolver = null;
 let statusTimeoutId = null;
 let spaceHeld = false;
-let savedBrushSize = 3;
+let savedBrushSize = 6;
 let eraseMode = false;
+
+// Thermal effect canvas
+const thermalCanvas = document.createElement('canvas');
+const thermalCtx = thermalCanvas.getContext('2d');
+thermalCanvas.width = COLS;
+thermalCanvas.height = ROWS;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -84,28 +95,23 @@ function buildMessageField(preserveRevealed = false) {
   const oldRevealed = preserveRevealed
     ? messageLayer.revealed.map(row => [...row])
     : null;
+  const oldTouched = preserveRevealed
+    ? messageLayer.lastTouched.map(row => [...row])
+    : null;
 
   messageLayer.chars = Array.from({ length: ROWS }, () => Array(COLS).fill(' '));
   messageLayer.revealed = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  messageLayer.lastTouched = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
 
   for (let r = 0; r < ROWS; r += 1) {
     const quote = randomChoice(rebellionQuotes).toUpperCase();
-    const words = quote.split(/\s+/).filter(Boolean);
     const sentenceSpacing = Math.max(0, Math.floor(state.quoteSpacing));
-    const wordGap = 1; // Always 1 space between words
     let c = 0;
 
     while (c < COLS) {
-      const word = words.length ? randomChoice(words) : quote;
-      for (let i = 0; i < word.length && c < COLS; i += 1) {
-        messageLayer.chars[r][c] = word[i];
-        c += 1;
-      }
-      if (c >= COLS) break;
-
-      // Add 1 space between words
-      for (let gap = 0; gap < wordGap && c < COLS; gap += 1) {
-        messageLayer.chars[r][c] = ' ';
+      // Write full quote
+      for (let i = 0; i < quote.length && c < COLS; i += 1) {
+        messageLayer.chars[r][c] = quote[i];
         c += 1;
       }
       if (c >= COLS) break;
@@ -121,6 +127,9 @@ function buildMessageField(preserveRevealed = false) {
   // Restore revealed state if requested
   if (oldRevealed) {
     messageLayer.revealed = oldRevealed;
+  }
+  if (oldTouched) {
+    messageLayer.lastTouched = oldTouched;
   }
 }
 
@@ -180,6 +189,9 @@ function drawSurface(now = performance.now()) {
   ctx.textBaseline = 'middle';
   ctx.shadowBlur = 14;
 
+  // Get thermal effect if camera is active
+  const thermalEdges = cameraEnabled ? processThermalEffect() : null;
+
   for (let r = 0; r < ROWS; r += 1) {
     for (let c = 0; c < COLS; c += 1) {
       const revealed = messageLayer.revealed[r][c];
@@ -189,20 +201,57 @@ function drawSurface(now = performance.now()) {
       let lightness;
       let alpha;
 
+      // Ensure noise cell exists
+      if (!cell || now > cell.animateUntil) {
+        createChaosCell(r, c, messageLayer.chars[r][c] !== ' ');
+      }
+      const noiseCell = noiseGrid[r][c];
+
+      // Check for fade-out (2 seconds = 2000ms)
+      const timeSinceTouch = now - messageLayer.lastTouched[r][c];
+      const fadeStart = 2000;
+      const fadeDuration = 1000;
+
       if (revealed && messageLayer.chars[r][c] !== ' ') {
-        glyph = messageLayer.chars[r][c];
-        hue = (state.baseHue + 120 + Math.sin((r + c + now * 0.004)) * 30 + 360) % 360;
-        lightness = 78 + Math.random() * 6;
-        alpha = 0.95;
-      } else {
-        if (!cell || now > cell.animateUntil) {
-          createChaosCell(r, c, messageLayer.chars[r][c] !== ' ');
+        const revealedGlyph = messageLayer.chars[r][c];
+        const revealedHue = (state.baseHue + 120 + Math.sin((r + c + now * 0.004)) * 30 + 360) % 360;
+        const revealedLightness = 78 + Math.random() * 6;
+        const revealedAlpha = 0.95;
+
+        // Apply fade-out effect with color blending
+        if (timeSinceTouch > fadeStart) {
+          const fadeProgress = Math.min(1, (timeSinceTouch - fadeStart) / fadeDuration);
+
+          // Blend from revealed to noise
+          glyph = fadeProgress > 0.5 ? noiseCell.glyph : revealedGlyph;
+          hue = revealedHue + (noiseCell.hue - revealedHue) * fadeProgress;
+          lightness = revealedLightness + (noiseCell.lightness - revealedLightness) * fadeProgress;
+          alpha = revealedAlpha + (noiseCell.alpha - revealedAlpha) * fadeProgress;
+
+          // Fully unrevealed after fade
+          if (fadeProgress >= 1) {
+            messageLayer.revealed[r][c] = false;
+            messageLayer.lastTouched[r][c] = 0;
+          }
+        } else {
+          glyph = revealedGlyph;
+          hue = revealedHue;
+          lightness = revealedLightness;
+          alpha = revealedAlpha;
         }
-        const current = noiseGrid[r][c];
-        glyph = current.glyph;
-        hue = current.hue;
-        lightness = current.lightness;
-        alpha = current.alpha;
+      } else {
+        glyph = noiseCell.glyph;
+        hue = noiseCell.hue;
+        lightness = noiseCell.lightness;
+        alpha = noiseCell.alpha;
+      }
+
+      // Apply thermal outline effect (gentle)
+      if (thermalEdges && thermalEdges[r * COLS + c] > 0) {
+        hue = (state.baseHue + 60) % 360; // Subtle hue shift instead of complementary
+        lightness = Math.min(75, lightness + 8);
+        alpha = Math.min(0.8, alpha + 0.15);
+        ctx.shadowBlur = 18;
       }
 
       ctx.fillStyle = `hsl(${hue}, 85%, ${lightness}%)`;
@@ -211,6 +260,11 @@ function drawSurface(now = performance.now()) {
       const x = (c + 0.5) * colSize;
       const y = (r + 0.5) * rowSize;
       ctx.fillText(glyph, x, y);
+
+      // Reset shadow blur for next iteration
+      if (thermalEdges && thermalEdges[r * COLS + c] > 0) {
+        ctx.shadowBlur = 14;
+      }
     }
   }
 
@@ -230,9 +284,11 @@ function revealAt(row, col, radius = state.brushSize) {
       if (distance <= radius + 0.3) {
         if (eraseMode) {
           messageLayer.revealed[r][c] = false;
+          messageLayer.lastTouched[r][c] = 0;
           createChaosCell(r, c, messageLayer.chars[r][c] !== ' ');
         } else {
           messageLayer.revealed[r][c] = true;
+          messageLayer.lastTouched[r][c] = performance.now();
         }
       }
     }
@@ -329,20 +385,25 @@ window.addEventListener('keydown', (event) => {
     buildMessageField();
     seedNoiseField();
     messageLayer.revealed = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+    messageLayer.lastTouched = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
     lastHandPoint = null;
     flashStatus('reshuffled');
     drawSurface();
   }
 
   if (event.key && event.key.toLowerCase() === 'c') {
+    const now = performance.now();
     for (let r = 0; r < ROWS; r += 1) {
       for (let c = 0; c < COLS; c += 1) {
         if (messageLayer.chars[r][c] !== ' ') {
           messageLayer.revealed[r][c] = true;
+          // Set timestamp 3 seconds in the future so fade starts after 5 seconds total
+          messageLayer.lastTouched[r][c] = now + 3000;
         }
       }
     }
-    flashStatus('full reveal');
+    eraseMode = true;
+    flashStatus('full reveal - erase mode');
     drawSurface();
   }
 });
@@ -423,6 +484,22 @@ async function startHandTracking() {
       });
     }
 
+    // Setup preview
+    if (previewVideo && previewCanvas) {
+      previewVideo.srcObject = handStream;
+      previewVideo.play();
+      cameraPreview.classList.add('active');
+
+      // Size preview canvas to match video
+      const updatePreviewSize = () => {
+        const rect = previewVideo.getBoundingClientRect();
+        previewCanvas.width = rect.width;
+        previewCanvas.height = rect.height;
+      };
+      previewVideo.addEventListener('loadedmetadata', updatePreviewSize);
+      updatePreviewSize();
+    }
+
     cameraEnabled = true;
     if (cameraToggle) {
       cameraToggle.disabled = false;
@@ -453,6 +530,15 @@ function stopHandTracking() {
     const tracks = video.srcObject.getTracks();
     tracks.forEach((track) => track.stop());
   }
+
+  // Hide preview
+  if (cameraPreview) {
+    cameraPreview.classList.remove('active');
+  }
+  if (previewVideo) {
+    previewVideo.srcObject = null;
+  }
+
   video = null;
   handStream = null;
   lastHandPoint = null;
@@ -469,6 +555,11 @@ function processVideoFrame() {
   const now = performance.now();
   const results = handLandmarker.detectForVideo(video, now);
 
+  // Clear preview canvas
+  if (previewCanvas && previewCtx) {
+    previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+  }
+
   if (results && results.handedness.length > 0 && results.landmarks.length > 0) {
     const landmarks = results.landmarks[0];
     const tip = landmarks[8];
@@ -476,6 +567,51 @@ function processVideoFrame() {
     const pointerY = clamp(tip.y, 0, 1);
     handActive = true;
     applyHandReveal(pointerX, pointerY);
+
+    // Draw hand tracking on preview
+    if (previewCanvas && previewCtx) {
+      previewCtx.strokeStyle = '#00ffc6';
+      previewCtx.lineWidth = 2;
+      previewCtx.fillStyle = '#00ffc6';
+
+      // Draw hand skeleton
+      const connections = [
+        [0, 1], [1, 2], [2, 3], [3, 4], // thumb
+        [0, 5], [5, 6], [6, 7], [7, 8], // index
+        [0, 9], [9, 10], [10, 11], [11, 12], // middle
+        [0, 13], [13, 14], [14, 15], [15, 16], // ring
+        [0, 17], [17, 18], [18, 19], [19, 20], // pinky
+        [5, 9], [9, 13], [13, 17] // palm
+      ];
+
+      for (const [start, end] of connections) {
+        const startPt = landmarks[start];
+        const endPt = landmarks[end];
+        previewCtx.beginPath();
+        previewCtx.moveTo(
+          startPt.x * previewCanvas.width,
+          startPt.y * previewCanvas.height
+        );
+        previewCtx.lineTo(
+          endPt.x * previewCanvas.width,
+          endPt.y * previewCanvas.height
+        );
+        previewCtx.stroke();
+      }
+
+      // Draw landmarks
+      for (const landmark of landmarks) {
+        previewCtx.beginPath();
+        previewCtx.arc(
+          landmark.x * previewCanvas.width,
+          landmark.y * previewCanvas.height,
+          4,
+          0,
+          Math.PI * 2
+        );
+        previewCtx.fill();
+      }
+    }
   } else {
     handActive = false;
     lastHandPoint = null;
@@ -496,6 +632,39 @@ function applyHandReveal(normX, normY) {
   }
 
   lastHandPoint = { row, col };
+}
+
+function processThermalEffect() {
+  if (!video || !cameraEnabled) return null;
+
+  // Draw video to thermal canvas
+  thermalCtx.drawImage(video, 0, 0, COLS, ROWS);
+  const imageData = thermalCtx.getImageData(0, 0, COLS, ROWS);
+  const data = imageData.data;
+
+  // Create edge detection map
+  const edges = new Uint8ClampedArray(COLS * ROWS);
+
+  for (let y = 1; y < ROWS - 1; y++) {
+    for (let x = 1; x < COLS - 1; x++) {
+      const idx = (y * COLS + x) * 4;
+      const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+
+      // Sobel edge detection
+      const left = ((data[idx - 4] + data[idx - 3] + data[idx - 2]) / 3);
+      const right = ((data[idx + 4] + data[idx + 5] + data[idx + 6]) / 3);
+      const top = ((data[idx - COLS * 4] + data[idx - COLS * 4 + 1] + data[idx - COLS * 4 + 2]) / 3);
+      const bottom = ((data[idx + COLS * 4] + data[idx + COLS * 4 + 1] + data[idx + COLS * 4 + 2]) / 3);
+
+      const gx = right - left;
+      const gy = bottom - top;
+      const edge = Math.sqrt(gx * gx + gy * gy);
+
+      edges[y * COLS + x] = edge > 30 ? 255 : 0;
+    }
+  }
+
+  return edges;
 }
 
 function animate() {

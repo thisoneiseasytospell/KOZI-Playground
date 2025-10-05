@@ -8,20 +8,24 @@
 </head>
 <body>
   <canvas id="asciiCanvas" aria-label="ASCII graffiti surface"></canvas>
-  <div class="controls" id="controls">
-    <label class="control">
-      Spacing
-      <input type="range" id="spacingSlider" min="1" max="12" value="5" aria-label="Quote spacing">
-    </label>
-    <button id="cameraToggle" type="button">Enable Camera</button>
-  </div>
   <div class="hud" id="hud">
+    <a href="../">← home</a>
+    <span>|</span>
     <span><span class="key">Drag</span> paint</span>
     <span><span class="key">Shift</span> erase</span>
-    <span><span class="key">Space</span> calm hold</span>
+    <span><span class="key">Space</span> detail</span>
     <span><span class="key">R</span> reshuffle</span>
-    <span><span class="key">C</span> reveal all</span>
+    <span><span class="key">C</span> reveal</span>
+    <span>|</span>
+    <label class="control-inline">
+      Spacing: <input type="range" id="spacingSlider" min="0" max="20" step="0.5" value="5" aria-label="Quote spacing">
+    </label>
+    <button id="cameraToggle" type="button">Enable Camera</button>
     <span class="status" aria-live="polite"></span>
+  </div>
+  <div class="camera-preview" id="cameraPreview">
+    <video id="previewVideo" playsinline></video>
+    <canvas id="previewCanvas"></canvas>
   </div>
   <script type="module" src="sketch.js"></script>
 </body>

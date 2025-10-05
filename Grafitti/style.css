@@ -22,77 +22,99 @@ body {
   touch-action: none;
 }
 
-.controls {
-  position: fixed;
-  top: 24px;
-  right: 24px;
-  display: flex;
+.control-inline {
+  display: inline-flex;
   align-items: center;
-  gap: 16px;
-  padding: 10px 16px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  pointer-events: auto;
-  z-index: 10;
+  gap: 8px;
+  font-size: 12px;
 }
 
-.control {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
+.control-inline input[type="range"] {
+  width: 120px;
+  height: 20px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
 }
 
-.control input[type="range"] {
-  width: 160px;
-  accent-color: #00ffc6;
+.control-inline input[type="range"]::-webkit-slider-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
 }
 
-.controls button {
-  background: rgba(0, 255, 198, 0.12);
-  border: 1px solid rgba(0, 255, 198, 0.4);
-  color: #00ffc6;
-  padding: 6px 14px;
+.control-inline input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: white;
+  border-radius: 50%;
+  margin-top: -5px;
+}
+
+.control-inline input[type="range"]::-moz-range-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+}
+
+.control-inline input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: white;
+  border: none;
+  border-radius: 50%;
+}
+
+.hud button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  padding: 4px 10px;
   border-radius: 4px;
   font-family: 'ABCDiatype', monospace;
-  font-size: 0.7rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 12px;
   cursor: pointer;
-  transition: background 0.2s ease, transform 0.2s ease;
+  transition: background 0.2s ease;
 }
 
-.controls button:hover {
-  background: rgba(0, 255, 198, 0.24);
-  transform: translateY(-1px);
+.hud button:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
-.controls button:disabled {
+.hud button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
+.hud a {
+  color: white;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.hud a:hover {
+  text-decoration: underline;
+}
+
 .hud {
   position: fixed;
-  bottom: 24px;
-  left: 24px;
+  bottom: 10px;
+  left: 10px;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 14px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  pointer-events: none;
+  padding: 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 12px;
+  user-select: none;
+  cursor: default;
+  pointer-events: auto;
 }
 
 .hud span {
@@ -115,7 +137,7 @@ body {
   margin-left: 16px;
   min-width: 140px;
   text-align: right;
-  color: #00ffc6;
+  color: white;
   opacity: 0;
   transition: opacity 0.3s ease;
 }
@@ -126,31 +148,68 @@ body {
 
 @media (max-width: 720px) {
   .hud {
-    flex-direction: column;
-    align-items: flex-start;
+    flex-wrap: wrap;
     gap: 8px;
-    bottom: 16px;
-    left: 16px;
+    bottom: 10px;
+    left: 10px;
+    max-width: calc(100vw - 20px);
   }
 
   .status {
     margin-left: 0;
-    align-self: flex-end;
+    flex-basis: 100%;
     text-align: left;
-    width: 100%;
+  }
+
+  .control-inline input[type="range"] {
+    width: 80px;
   }
 }
 
-@media (max-width: 720px) {
-  .controls {
-    top: 16px;
-    right: 16px;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 10px;
-  }
+.camera-preview {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  width: 240px;
+  height: 180px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.6);
+  display: none;
+  z-index: 20;
+}
 
-  .control input[type="range"] {
-    width: 120px;
+.camera-preview.active {
+  display: block;
+}
+
+.camera-preview video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(1) contrast(1.2);
+  opacity: 0.9;
+  transform: scaleX(-1);
+}
+
+.camera-preview canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  transform: scaleX(-1);
+}
+
+@media (max-width: 720px) {
+  .camera-preview {
+    width: 180px;
+    height: 135px;
+    bottom: 10px;
+    right: 10px;
   }
 }

@@ -1,0 +1,156 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background-color: #000;
+  color: #fff;
+  font-family: 'ABCDiatype', monospace;
+}
+
+#asciiCanvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.controls {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: auto;
+  z-index: 10;
+}
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.control input[type="range"] {
+  width: 160px;
+  accent-color: #00ffc6;
+}
+
+.controls button {
+  background: rgba(0, 255, 198, 0.12);
+  border: 1px solid rgba(0, 255, 198, 0.4);
+  color: #00ffc6;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-family: 'ABCDiatype', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.controls button:hover {
+  background: rgba(0, 255, 198, 0.24);
+  transform: translateY(-1px);
+}
+
+.controls button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hud {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.hud span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.status {
+  margin-left: 16px;
+  min-width: 140px;
+  text-align: right;
+  color: #00ffc6;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.status.show {
+  opacity: 0.9;
+}
+
+@media (max-width: 720px) {
+  .hud {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    bottom: 16px;
+    left: 16px;
+  }
+
+  .status {
+    margin-left: 0;
+    align-self: flex-end;
+    text-align: left;
+    width: 100%;
+  }
+}
+
+@media (max-width: 720px) {
+  .controls {
+    top: 16px;
+    right: 16px;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 10px;
+  }
+
+  .control input[type="range"] {
+    width: 120px;
+  }
+}

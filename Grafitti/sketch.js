@@ -637,8 +637,14 @@ function applyHandReveal(normX, normY) {
 function processThermalEffect() {
   if (!video || !cameraEnabled) return null;
 
-  // Draw video to thermal canvas
+  // Draw video to thermal canvas mirrored so it matches the on-screen preview
+  thermalCtx.save();
+  thermalCtx.setTransform(1, 0, 0, 1, 0, 0);
+  thermalCtx.clearRect(0, 0, COLS, ROWS);
+  thermalCtx.translate(COLS, 0);
+  thermalCtx.scale(-1, 1);
   thermalCtx.drawImage(video, 0, 0, COLS, ROWS);
+  thermalCtx.restore();
   const imageData = thermalCtx.getImageData(0, 0, COLS, ROWS);
   const data = imageData.data;
 

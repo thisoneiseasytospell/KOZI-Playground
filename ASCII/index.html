@@ -13,41 +13,46 @@
   <main></main>
   <input type="file" id="imageUpload" accept="image/*" style="display: none;">
 
-  <button id="toggleImageControls">Image Controls</button>
-
-  <div id="imageControls">
-    <div class="control-group">
-      <label>
-        Scale
-        <span class="control-value" id="scaleValue">1.0x</span>
-      </label>
-      <input type="range" id="scaleSlider" min="0.1" max="3" step="0.1" value="1.0">
+  <div id="toolbar">
+    <div class="toolbar-section toolbar-section--primary">
+      <a id="homeLink" class="toolbar-link" href="../">← home</a>
+      <button id="uploadButton" type="button">Upload Image</button>
+      <button id="cameraModeButton" type="button">Camera Mode</button>
+      <button id="swapCameraButton" type="button">Swap Camera</button>
+      <span id="toolbarStats" aria-live="polite">FPS: --</span>
+      <span class="toolbar-shortcuts" aria-hidden="true">Keys: B/S size · T trails · R random · I invert · C camera</span>
     </div>
 
-    <div class="control-group">
-      <label>
-        Grey Levels
-        <span class="control-value" id="greyValue">6</span>
-      </label>
-      <input type="range" id="greySlider" min="2" max="50" step="1" value="6">
+    <div class="toolbar-section toolbar-section--toggles">
+      <div class="toolbar-button-group" role="group" aria-label="Cell size">
+        <button id="cellSmallerButton" type="button" aria-label="Smaller cells">Cell -</button>
+        <button id="cellBiggerButton" type="button" aria-label="Bigger cells">Cell +</button>
+      </div>
+      <button id="trailButton" type="button">Trails: short</button>
+      <button id="randomButton" type="button">Random: med</button>
+      <button id="invertButton" type="button">Invert: off</button>
+      <button id="glitchButton" type="button" class="active">Glitch: on</button>
     </div>
 
-    <div class="control-group">
-      <label>Position</label>
-      <div class="control-hint">Drag canvas to reposition image</div>
-    </div>
+    <div id="imageControls" class="toolbar-section toolbar-section--image" aria-live="polite">
+      <div class="toolbar-control">
+        <label for="scaleSlider">Scale <span id="scaleValue">1.0x</span></label>
+        <input type="range" id="scaleSlider" min="0.1" max="3" step="0.1" value="1.0">
+      </div>
 
-    <div class="control-group">
-      <button id="exportSVG">Export SVG</button>
-    </div>
+      <div class="toolbar-control">
+        <label for="greySlider">Grey Levels <span id="greyValue">6</span></label>
+        <input type="range" id="greySlider" min="2" max="12" step="1" value="6">
+      </div>
 
-    <div class="control-group">
-      <button id="exportPDF">Export PNG</button>
-    </div>
+      <div class="toolbar-exports">
+        <button id="exportSVG" type="button">Export SVG</button>
+        <button id="exportPDF" type="button">Export PNG</button>
+        <button id="exportMP4" type="button" disabled>Preparing MP4…</button>
+      </div>
 
-    <div class="control-group">
-      <button id="exportMP4">Export MP4</button>
-      <div class="control-hint" id="exportStatus"></div>
+      <div class="control-hint" id="imagePositionHint">Drag canvas to reposition image</div>
+      <div class="control-hint" id="exportStatus" aria-live="polite"></div>
     </div>
   </div>
 

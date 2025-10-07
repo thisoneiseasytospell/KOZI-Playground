@@ -12,6 +12,7 @@ let pg; // Graphics buffer for better performance
 const asciiChars = " .:AkerBP";
 let fadeAmount = 15;
 let inverted = false;
+let glitchEnabled = true;
 
 // Camera switching for mobile
 let currentCamera = 'user'; // 'user' = front, 'environment' = back
@@ -19,8 +20,10 @@ let currentCamera = 'user'; // 'user' = front, 'environment' = back
 // Mobile controls menu
 let menuOpen = false;
 
+const ui = {};
+let statsUpdateFrame = 0;
+
 // Image controls
-let imageControlsVisible = false;
 let imageScale = 1.0;
 let imagePositionX = 0; // Manual position offset
 let imagePositionY = 0;
@@ -61,7 +64,7 @@ async function setup() {
   pixelDensity(1); // Reduce pixel density for better performance
 
   initCamera();
-  setupImageUpload();
+  setupUI();
   setupDragAndDrop();
 
   updateGrid();
@@ -81,10 +84,10 @@ async function setup() {
       console.log('H264 encoder loaded successfully!');
 
       // Update UI to show encoder is ready
-      const exportMP4Btn = document.getElementById('exportMP4');
-      if (exportMP4Btn) {
-        exportMP4Btn.textContent = 'Export MP4';
-        exportMP4Btn.disabled = false;
+      if (ui.exportMP4Btn) {
+        ui.exportMP4Btn.textContent = 'Export MP4';
+        ui.exportMP4Btn.disabled = inputMode !== 'image' || isExportingVideo;
+        ui.exportMP4Btn.dataset.state = 'ready';
       }
     }
   }, 100);
@@ -95,10 +98,10 @@ async function setup() {
       clearInterval(checkEncoder);
       console.error('Failed to load H264 encoder: timeout');
       console.log('Available globals:', Object.keys(window).filter(k => k.includes('264') || k.includes('encoder') || k.includes('HME')));
-      const exportMP4Btn = document.getElementById('exportMP4');
-      if (exportMP4Btn) {
-        exportMP4Btn.textContent = 'Export MP4 (encoder failed)';
-        exportMP4Btn.disabled = true;
+      if (ui.exportMP4Btn) {
+        ui.exportMP4Btn.textContent = 'Export MP4 (encoder failed)';
+        ui.exportMP4Btn.disabled = true;
+        ui.exportMP4Btn.dataset.state = 'failed';
       }
     }
   }, 15000);
@@ -143,15 +146,12 @@ function processImageFile(file) {
         imagePositionY = 0;
         console.log('Image ready!');
 
-        // Show controls
-        const toggleBtn = document.getElementById('toggleImageControls');
-        toggleBtn.classList.add('visible');
-        imageControlsVisible = false;
-
         // Stop camera to save resources
         if (cam) {
           cam.stop();
         }
+
+        refreshToolbarIndicators();
       };
     };
     img.src = event.target.result;
@@ -159,44 +159,127 @@ function processImageFile(file) {
   reader.readAsDataURL(file);
 }
 
-function setupImageUpload() {
-  const fileInput = document.getElementById('imageUpload');
-  const toggleBtn = document.getElementById('toggleImageControls');
-  const controlsPanel = document.getElementById('imageControls');
-  const scaleSlider = document.getElementById('scaleSlider');
-  const greySlider = document.getElementById('greySlider');
-  const scaleValue = document.getElementById('scaleValue');
-  const greyValue = document.getElementById('greyValue');
+function setupUI() {
+  ui.fileInput = document.getElementById('imageUpload');
+  ui.uploadButton = document.getElementById('uploadButton');
+  ui.cameraModeButton = document.getElementById('cameraModeButton');
+  ui.swapCameraButton = document.getElementById('swapCameraButton');
+  ui.cellSmallerButton = document.getElementById('cellSmallerButton');
+  ui.cellBiggerButton = document.getElementById('cellBiggerButton');
+  ui.trailButton = document.getElementById('trailButton');
+  ui.randomButton = document.getElementById('randomButton');
+  ui.invertButton = document.getElementById('invertButton');
+  ui.glitchButton = document.getElementById('glitchButton');
+  ui.scaleSlider = document.getElementById('scaleSlider');
+  ui.scaleValue = document.getElementById('scaleValue');
+  ui.greySlider = document.getElementById('greySlider');
+  ui.greyValue = document.getElementById('greyValue');
+  ui.exportSVGBtn = document.getElementById('exportSVG');
+  ui.exportPDFBtn = document.getElementById('exportPDF');
+  ui.exportMP4Btn = document.getElementById('exportMP4');
+  ui.exportStatus = document.getElementById('exportStatus');
+  ui.imageControls = document.getElementById('imageControls');
+  ui.toolbarStats = document.getElementById('toolbarStats');
 
-  // Toggle controls panel
-  if (toggleBtn) {
-    toggleBtn.addEventListener('click', function() {
-      imageControlsVisible = !imageControlsVisible;
-      if (imageControlsVisible) {
-        controlsPanel.classList.add('visible');
-        toggleBtn.style.display = 'none';
-      } else {
-        controlsPanel.classList.remove('visible');
-        toggleBtn.classList.add('visible');
+  if (ui.uploadButton && ui.fileInput) {
+    ui.uploadButton.addEventListener('click', () => ui.fileInput.click());
+  }
+
+  if (ui.fileInput) {
+    ui.fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file && file.type.startsWith('image/')) {
+        processImageFile(file);
       }
     });
   }
 
-  // Scale slider
-  if (scaleSlider) {
-    scaleSlider.addEventListener('input', function() {
-      imageScale = parseFloat(this.value);
-      scaleValue.textContent = imageScale.toFixed(1) + 'x';
+  if (ui.cameraModeButton) {
+    ui.cameraModeButton.addEventListener('click', () => {
+      if (inputMode === 'image') {
+        switchToCameraMode();
+      }
     });
   }
 
-  // Grey scale slider
-  if (greySlider) {
-    greySlider.addEventListener('input', function() {
-      greyScaleLevels = parseInt(this.value);
-      greyValue.textContent = greyScaleLevels;
+  if (ui.swapCameraButton) {
+    if (isMobileDevice) {
+      ui.swapCameraButton.style.display = 'inline-flex';
+      ui.swapCameraButton.addEventListener('click', () => {
+        if (inputMode === 'camera') {
+          swapCamera();
+        }
+      });
+    } else {
+      ui.swapCameraButton.style.display = 'none';
+    }
+  }
 
-      // Reprocess image with new grey levels
+  const adjustCellSize = (delta) => {
+    cellSize = constrain(cellSize + delta, 6, 40);
+    updateGrid();
+    refreshToolbarIndicators();
+  };
+
+  if (ui.cellBiggerButton) {
+    ui.cellBiggerButton.addEventListener('click', () => adjustCellSize(2));
+  }
+
+  if (ui.cellSmallerButton) {
+    ui.cellSmallerButton.addEventListener('click', () => adjustCellSize(-2));
+  }
+
+  if (ui.trailButton) {
+    ui.trailButton.addEventListener('click', () => {
+      fadeAmount = (fadeAmount === 15) ? 40 : 15;
+      refreshToolbarIndicators();
+    });
+  }
+
+  if (ui.randomButton) {
+    ui.randomButton.addEventListener('click', () => {
+      cycleRandomAmount();
+      refreshToolbarIndicators();
+    });
+  }
+
+  if (ui.invertButton) {
+    ui.invertButton.addEventListener('click', () => {
+      inverted = !inverted;
+      refreshToolbarIndicators();
+    });
+  }
+
+  if (ui.glitchButton) {
+    ui.glitchButton.addEventListener('click', () => {
+      glitchEnabled = !glitchEnabled;
+      if (!glitchEnabled) {
+        isGlitching = false;
+        exportGlitchTriggered = false;
+        lastGlitchTime = millis();
+      } else {
+        lastGlitchTime = millis();
+      }
+      refreshToolbarIndicators();
+    });
+  }
+
+  if (ui.scaleSlider) {
+    ui.scaleSlider.addEventListener('input', (event) => {
+      imageScale = parseFloat(event.target.value);
+      if (ui.scaleValue) {
+        ui.scaleValue.textContent = `${imageScale.toFixed(1)}x`;
+      }
+    });
+  }
+
+  if (ui.greySlider) {
+    ui.greySlider.addEventListener('input', (event) => {
+      greyScaleLevels = parseInt(event.target.value, 10);
+      if (ui.greyValue) {
+        ui.greyValue.textContent = greyScaleLevels;
+      }
+
       if (originalImage && inputMode === 'image') {
         console.log(`Reprocessing image with ${greyScaleLevels} grey levels...`);
         const processed = processImageToGreys(originalImage, greyScaleLevels);
@@ -210,44 +293,143 @@ function setupImageUpload() {
     });
   }
 
-  // SVG export button
-  const exportSVGBtn = document.getElementById('exportSVG');
-  if (exportSVGBtn) {
-    exportSVGBtn.addEventListener('click', function() {
+  if (ui.exportSVGBtn) {
+    ui.exportSVGBtn.addEventListener('click', () => {
       if (inputMode === 'image') {
         exportSVG();
       }
     });
   }
 
-  // PDF export button
-  const exportPDFBtn = document.getElementById('exportPDF');
-  if (exportPDFBtn) {
-    exportPDFBtn.addEventListener('click', function() {
+  if (ui.exportPDFBtn) {
+    ui.exportPDFBtn.addEventListener('click', () => {
       if (inputMode === 'image') {
         exportPDF();
       }
     });
   }
 
-  // MP4 export button
-  const exportMP4Btn = document.getElementById('exportMP4');
-  const exportStatus = document.getElementById('exportStatus');
-  if (exportMP4Btn) {
-    exportMP4Btn.addEventListener('click', function() {
+  if (ui.exportMP4Btn) {
+    ui.exportMP4Btn.addEventListener('click', () => {
       if (inputMode === 'image' && !isExportingVideo) {
         startVideoExport();
       }
     });
+    ui.exportMP4Btn.dataset.state = window.HME ? 'ready' : 'loading';
   }
 
-  if (fileInput) {
-    fileInput.addEventListener('change', function(e) {
-      const file = e.target.files[0];
-      if (file && file.type.startsWith('image/')) {
-        processImageFile(file);
+  refreshToolbarIndicators();
+}
+
+function refreshToolbarIndicators() {
+  if (ui.cameraModeButton) {
+    ui.cameraModeButton.textContent = inputMode === 'image' ? 'Back to Camera' : 'Camera Mode';
+    ui.cameraModeButton.disabled = inputMode !== 'image';
+  }
+
+  if (ui.swapCameraButton && isMobileDevice) {
+    ui.swapCameraButton.disabled = inputMode !== 'camera';
+  }
+
+  if (ui.imageControls) {
+    const imageControlsActive = inputMode === 'image';
+    ui.imageControls.classList.toggle('active', imageControlsActive);
+    ui.imageControls.setAttribute('aria-hidden', imageControlsActive ? 'false' : 'true');
+  }
+
+  if (ui.scaleSlider) {
+    ui.scaleSlider.value = imageScale.toFixed(1);
+  }
+  if (ui.scaleValue) {
+    ui.scaleValue.textContent = `${imageScale.toFixed(1)}x`;
+  }
+
+  if (ui.greySlider) {
+    ui.greySlider.value = String(greyScaleLevels);
+  }
+  if (ui.greyValue) {
+    ui.greyValue.textContent = greyScaleLevels;
+  }
+
+  if (ui.trailButton) {
+    const trailLabel = fadeAmount === 15 ? 'short' : 'long';
+    ui.trailButton.textContent = `Trails: ${trailLabel}`;
+  }
+
+  if (ui.randomButton) {
+    let randomLabel = 'med';
+    const sampleCell = (grid && grid[0] && grid[0][0]) ? grid[0][0] : null;
+    if (sampleCell) {
+      if (sampleCell.randomAmount < 0.15) randomLabel = 'low';
+      else if (sampleCell.randomAmount > 0.35) randomLabel = 'high';
+    }
+    ui.randomButton.textContent = `Random: ${randomLabel}`;
+  }
+
+  if (ui.invertButton) {
+    ui.invertButton.textContent = `Invert: ${inverted ? 'on' : 'off'}`;
+  }
+
+  if (ui.glitchButton) {
+    ui.glitchButton.textContent = `Glitch: ${glitchEnabled ? 'on' : 'off'}`;
+    ui.glitchButton.classList.toggle('active', glitchEnabled);
+  }
+
+  const exportsDisabled = inputMode !== 'image' || isExportingVideo;
+  if (ui.exportSVGBtn) {
+    ui.exportSVGBtn.disabled = exportsDisabled;
+  }
+  if (ui.exportPDFBtn) {
+    ui.exportPDFBtn.disabled = exportsDisabled;
+  }
+  if (ui.exportMP4Btn) {
+    ui.exportMP4Btn.disabled = exportsDisabled || !window.HME;
+    if (!window.HME) {
+      if (ui.exportMP4Btn.dataset.state !== 'failed') {
+        ui.exportMP4Btn.dataset.state = 'loading';
+        ui.exportMP4Btn.textContent = 'Preparing MP4…';
       }
-    });
+    } else if (ui.exportMP4Btn.dataset.state !== 'failed') {
+      ui.exportMP4Btn.dataset.state = 'ready';
+      ui.exportMP4Btn.textContent = 'Export MP4';
+    }
+  }
+}
+
+function switchToCameraMode() {
+  if (inputMode !== 'camera') {
+    inputMode = 'camera';
+    uploadedImage = null;
+    originalImage = null;
+    imageOffsetX = 0;
+    imagePositionX = 0;
+    imagePositionY = 0;
+    imageScale = 1.0;
+    greyScaleLevels = 6;
+    isDraggingImage = false;
+
+    if (ui.exportStatus) {
+      ui.exportStatus.textContent = '';
+    }
+
+    initCamera();
+    refreshToolbarIndicators();
+  }
+}
+
+function cycleRandomAmount() {
+  const sampleCell = (grid && grid[0] && grid[0][0]) ? grid[0][0] : null;
+  if (!sampleCell) return;
+
+  let newRandom = sampleCell.randomAmount;
+  if (newRandom < 0.15) newRandom = 0.3;
+  else if (newRandom < 0.35) newRandom = 0.6;
+  else newRandom = 0.12;
+
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows; j++) {
+      grid[i][j].setRandomAmount(newRandom);
+    }
   }
 }
 
@@ -282,12 +464,18 @@ function swapCamera() {
 
   initCamera();
   updateGrid();
+  refreshToolbarIndicators();
 }
 
 function draw() {
   const inputSource = inputMode === 'image' ? uploadedImage : cam;
 
   if ((inputMode === 'camera' && cam.loadedmetadata) || (inputMode === 'image' && uploadedImage)) {
+    if (!glitchEnabled) {
+      isGlitching = false;
+      exportGlitchTriggered = false;
+    }
+
     // Handle video export - capture frames directly
     if (isExportingVideo && videoFrameCount < videoTotalFrames && mp4Encoder) {
       // Add frame directly to encoder
@@ -296,8 +484,9 @@ function draw() {
       mp4Encoder.addFrameRgba(imageData.data);
 
       videoFrameCount++;
-      const exportStatus = document.getElementById('exportStatus');
-      exportStatus.textContent = `Recording frame ${videoFrameCount}/${videoTotalFrames}...`;
+      if (ui.exportStatus) {
+        ui.exportStatus.textContent = `Recording frame ${videoFrameCount}/${videoTotalFrames}...`;
+      }
 
       if (videoFrameCount >= videoTotalFrames) {
         stopVideoExport();
@@ -323,7 +512,7 @@ function draw() {
     }
 
     // Check for random glitch event
-    if (millis() - lastGlitchTime > glitchInterval && !isGlitching) {
+    if (glitchEnabled && millis() - lastGlitchTime > glitchInterval && !isGlitching) {
       // During export: only glitch once at around 5 seconds (frame 125 of 250)
       if (isExportingVideo) {
         if (!exportGlitchTriggered && videoFrameCount >= 125 && videoFrameCount <= 130) {
@@ -344,7 +533,7 @@ function draw() {
       }
     }
 
-    if (isGlitching) {
+    if (glitchEnabled && isGlitching) {
       glitchDuration--;
       if (glitchDuration <= 0) {
         isGlitching = false;
@@ -423,6 +612,12 @@ function draw() {
           const b = sourcePixels[pixelIndex + 2];
           let brightness = (r + g + b) * 0.333; // Slightly faster than division
 
+          if (inputMode === 'image') {
+            const levels = Math.max(2, greyScaleLevels);
+            const step = 255 / (levels - 1);
+            brightness = Math.round(brightness / step) * step;
+          }
+
           // Invert brightness if inverted mode is on
           if (inverted) brightness = 255 - brightness;
 
@@ -434,68 +629,10 @@ function draw() {
             magenta,
             cyan,
             orange,
-            isGlitching,
+            glitchEnabled && isGlitching,
             glitchType
           );
         }
-      }
-    }
-
-    // Home link and stats at bottom - desktop only
-    if (!isMobileDevice) {
-      const homeText = "← home";
-      const uploadText = "upload image";
-      const trailMode = fadeAmount === 15 ? "short" : "long";
-      const randomMode = grid[0][0].randomAmount < 0.15 ? "low" : (grid[0][0].randomAmount < 0.35 ? "med" : "high");
-      const invertMode = inverted ? "on" : "off";
-      const modeText = inputMode === 'image' ? "image mode | C = camera" : "";
-      const uiText = `${homeText} | ${uploadText} | FPS: ${int(frameRate())} | B = bigger | S = smaller | T = trails (${trailMode}) | R = random (${randomMode}) | I = invert (${invertMode}) ${modeText}`;
-
-      const uiX = 10;
-      const uiY = height - 30;
-      const uiPadding = 8;
-
-      textAlign(LEFT, TOP);
-      textSize(12);
-      const textW = textWidth(uiText);
-      const textH = 12;
-      const homeTextW = textWidth(homeText);
-      const uploadTextW = textWidth(uploadText);
-      const uploadTextX = uiX + homeTextW + textWidth(" | ");
-
-      // Check if hovering over home link or upload link
-      const hoveringHome = mouseX >= uiX - uiPadding && mouseX <= uiX + homeTextW + uiPadding &&
-          mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding;
-      const hoveringUpload = mouseX >= uploadTextX - uiPadding && mouseX <= uploadTextX + uploadTextW + uiPadding &&
-          mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding;
-
-      if (hoveringHome || hoveringUpload) {
-        cursor(HAND);
-      } else {
-        cursor(ARROW);
-      }
-
-      // Semi-transparent background box
-      fill(0, 150);
-      noStroke();
-      rect(uiX - uiPadding, uiY - uiPadding, textW + uiPadding * 2, textH + uiPadding * 2, 4);
-
-      // Draw UI text
-      fill(255, 255);
-      text(uiText, uiX, uiY);
-
-      // Draw underline for home link on hover
-      if (hoveringHome) {
-        stroke(255);
-        strokeWeight(1);
-        line(uiX, uiY + textH + 2, uiX + homeTextW, uiY + textH + 2);
-      }
-
-      // Draw underline for upload link on hover
-      if (hoveringUpload) {
-        stroke(255);
-        strokeWeight(1);
-        line(uploadTextX, uiY + textH + 2, uploadTextX + uploadTextW, uiY + textH + 2);
       }
     }
 
@@ -612,6 +749,12 @@ function draw() {
       trailHistory.shift();
     }
   }
+
+  if (ui.toolbarStats && frameCount - statsUpdateFrame >= 15) {
+    const fpsValue = int(frameRate());
+    ui.toolbarStats.textContent = `FPS: ${fpsValue}`;
+    statsUpdateFrame = frameCount;
+  }
 }
 
 class TrailCell {
@@ -712,50 +855,22 @@ function keyPressed() {
   if (key === 'b' || key === 'B') {
     cellSize = constrain(cellSize + 2, 6, 40);
     updateGrid();
+    refreshToolbarIndicators();
   } else if (key === 's' || key === 'S') {
     cellSize = constrain(cellSize - 2, 6, 40);
     updateGrid();
+    refreshToolbarIndicators();
   } else if (key === 't' || key === 'T') {
     fadeAmount = (fadeAmount === 15) ? 40 : 15;
+    refreshToolbarIndicators();
   } else if (key === 'r' || key === 'R') {
-    let newRandom = grid[0][0].randomAmount;
-    if (newRandom < 0.15) newRandom = 0.3;
-    else if (newRandom < 0.35) newRandom = 0.6;
-    else newRandom = 0.12;
-
-    for (let i = 0; i < cols; i++) {
-      for (let j = 0; j < rows; j++) {
-        grid[i][j].setRandomAmount(newRandom);
-      }
-    }
+    cycleRandomAmount();
+    refreshToolbarIndicators();
   } else if (key === 'i' || key === 'I') {
     inverted = !inverted;
+    refreshToolbarIndicators();
   } else if (key === 'c' || key === 'C') {
-    // Switch back to camera mode
-    if (inputMode === 'image') {
-      inputMode = 'camera';
-      uploadedImage = null;
-      originalImage = null;
-      imageOffsetX = 0;
-      imagePositionX = 0;
-      imagePositionY = 0;
-      imageScale = 1.0;
-      greyScaleLevels = 6;
-
-      // Hide controls
-      const toggleBtn = document.getElementById('toggleImageControls');
-      const controlsPanel = document.getElementById('imageControls');
-      toggleBtn.classList.remove('visible');
-      controlsPanel.classList.remove('visible');
-
-      // Reset sliders
-      document.getElementById('scaleSlider').value = 1.0;
-      document.getElementById('greySlider').value = 6;
-      document.getElementById('scaleValue').textContent = '1.0x';
-      document.getElementById('greyValue').textContent = '6';
-
-      initCamera();
-    }
+    switchToCameraMode();
   }
 }
 
@@ -803,22 +918,25 @@ function mouseReleased() {
   }
 }
 
-function mousePressed() {
-  // Start dragging image if in image mode
-  if (inputMode === 'image' && !isMobileDevice) {
-    // Check if not clicking on controls
-    const controlsPanel = document.getElementById('imageControls');
-    const toggleBtn = document.getElementById('toggleImageControls');
+function mousePressed(event) {
+  const toolbar = document.getElementById('toolbar');
+  const pointerTarget = (event && event.target) ? event.target : document.elementFromPoint(mouseX, mouseY);
+  const interactingWithToolbar = toolbar && pointerTarget ? toolbar.contains(pointerTarget) : false;
 
-    if (!controlsPanel.contains(event.target) && !toggleBtn.contains(event.target)) {
-      isDraggingImage = true;
-      dragStartX = mouseX;
-      dragStartY = mouseY;
-      dragStartPosX = imagePositionX;
-      dragStartPosY = imagePositionY;
-      cursor('grabbing');
-      return;
-    }
+  // Start dragging image if in image mode
+  if (inputMode === 'image' && !isMobileDevice && !interactingWithToolbar) {
+    isDraggingImage = true;
+    dragStartX = mouseX;
+    dragStartY = mouseY;
+    dragStartPosX = imagePositionX;
+    dragStartPosY = imagePositionY;
+    cursor('grabbing');
+    return;
+  }
+
+  // Prevent interactions behind toolbar
+  if (interactingWithToolbar) {
+    return;
   }
 
   // Mobile menu controls
@@ -842,7 +960,7 @@ function mousePressed() {
       const homeY = menuY - (buttonSize + buttonSpacing) * 5;
       if (mouseX >= homeX && mouseX <= homeX + buttonSize &&
           mouseY >= homeY && mouseY <= homeY + buttonSize) {
-        window.location.href = '../index.html';
+        window.location.href = '../';
         return;
       }
 
@@ -883,32 +1001,6 @@ function mousePressed() {
         swapCamera();
         return;
       }
-    }
-  }
-
-  // Check if home link or upload link was clicked (bottom left) - desktop only
-  if (!isMobileDevice) {
-    const uiX = 10;
-    const uiY = height - 30;
-    const uiPadding = 8;
-    textSize(12);
-    const homeText = "← home";
-    const uploadText = "upload image";
-    const homeTextW = textWidth(homeText);
-    const uploadTextW = textWidth(uploadText);
-    const uploadTextX = uiX + homeTextW + textWidth(" | ");
-    const textH = 12;
-
-    // Check home link
-    if (mouseX >= uiX - uiPadding && mouseX <= uiX + homeTextW + uiPadding &&
-        mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding) {
-      window.location.href = '../index.html';
-    }
-
-    // Check upload link
-    if (mouseX >= uploadTextX - uiPadding && mouseX <= uploadTextX + uploadTextW + uiPadding &&
-        mouseY >= uiY - uiPadding && mouseY <= uiY + textH + uiPadding) {
-      document.getElementById('imageUpload').click();
     }
   }
 }
@@ -1118,19 +1210,27 @@ function exportPDF() {
 async function startVideoExport() {
   console.log('Starting MP4 export at 25fps (maximum quality)...');
 
-  const exportStatus = document.getElementById('exportStatus');
-  const exportMP4Btn = document.getElementById('exportMP4');
+  const exportStatus = ui.exportStatus;
+  const exportMP4Btn = ui.exportMP4Btn;
+
+  if (!exportStatus || !exportMP4Btn) {
+    console.warn('Export controls missing from DOM.');
+    return;
+  }
 
   if (!window.HME) {
     exportStatus.textContent = 'Encoder still loading, please wait ~10 seconds and try again';
     setTimeout(() => {
-      exportStatus.textContent = '';
+      if (ui.exportStatus) {
+        ui.exportStatus.textContent = '';
+      }
     }, 4000);
     return;
   }
 
   exportStatus.textContent = 'Initializing encoder...';
   exportMP4Btn.disabled = true;
+  refreshToolbarIndicators();
 
   try {
     // Initialize encoder with maximum quality, minimal compression
@@ -1151,11 +1251,13 @@ async function startVideoExport() {
 
     exportStatus.textContent = 'Recording (this will take 10 seconds)...';
     console.log('MP4 encoder initialized, starting 25fps capture with maximum quality');
+    refreshToolbarIndicators();
 
   } catch (error) {
     console.error('Failed to initialize encoder:', error);
     exportStatus.textContent = 'Failed to initialize encoder';
     exportMP4Btn.disabled = false;
+    refreshToolbarIndicators();
   }
 }
 
@@ -1164,8 +1266,13 @@ async function stopVideoExport() {
 
   isExportingVideo = false;
 
-  const exportStatus = document.getElementById('exportStatus');
-  const exportMP4Btn = document.getElementById('exportMP4');
+  const exportStatus = ui.exportStatus;
+  const exportMP4Btn = ui.exportMP4Btn;
+
+  if (!exportStatus || !exportMP4Btn) {
+    console.warn('Export controls missing from DOM.');
+    return;
+  }
 
   try {
     exportStatus.textContent = 'Finalizing MP4...';
@@ -1195,7 +1302,9 @@ async function stopVideoExport() {
     exportMP4Btn.disabled = false;
 
     setTimeout(() => {
-      exportStatus.textContent = '';
+      if (ui.exportStatus) {
+        ui.exportStatus.textContent = '';
+      }
     }, 3000);
 
     console.log('MP4 export complete!');
@@ -1214,4 +1323,6 @@ async function stopVideoExport() {
       mp4Encoder = null;
     }
   }
+
+  refreshToolbarIndicators();
 }

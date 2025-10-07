@@ -14,6 +14,7 @@ let asciiChars = DEFAULT_ASCII_CHARS;
 let fadeAmount = 15;
 let inverted = false;
 let glitchEnabled = true;
+let pixelsEnabled = true;
 
 // Camera switching for mobile
 let currentCamera = 'user'; // 'user' = front, 'environment' = back
@@ -66,7 +67,8 @@ function invertColor(col) {
 
 async function setup() {
   createCanvas(windowWidth, windowHeight);
-  pixelDensity(1); // Reduce pixel density for better performance
+  // Use higher pixel density for sharper text rendering
+  pixelDensity(displayDensity());
 
   initCamera();
   setupUI();
@@ -175,6 +177,7 @@ function setupUI() {
   ui.randomButton = document.getElementById('randomButton');
   ui.invertButton = document.getElementById('invertButton');
   ui.glitchButton = document.getElementById('glitchButton');
+  ui.pixelsButton = document.getElementById('pixelsButton');
   ui.asciiCharsInput = document.getElementById('asciiCharsInput');
   ui.scaleSlider = document.getElementById('scaleSlider');
   ui.scaleValue = document.getElementById('scaleValue');
@@ -237,7 +240,14 @@ function setupUI() {
 
   if (ui.trailButton) {
     ui.trailButton.addEventListener('click', () => {
-      fadeAmount = (fadeAmount === 15) ? 40 : 15;
+      // Cycle through: none (255) -> short (15) -> long (40)
+      if (fadeAmount === 255) {
+        fadeAmount = 15;
+      } else if (fadeAmount === 15) {
+        fadeAmount = 40;
+      } else {
+        fadeAmount = 255;
+      }
       refreshToolbarIndicators();
     });
   }
@@ -266,6 +276,13 @@ function setupUI() {
       } else {
         lastGlitchTime = millis();
       }
+      refreshToolbarIndicators();
+    });
+  }
+
+  if (ui.pixelsButton) {
+    ui.pixelsButton.addEventListener('click', () => {
+      pixelsEnabled = !pixelsEnabled;
       refreshToolbarIndicators();
     });
   }
@@ -380,7 +397,9 @@ function refreshToolbarIndicators() {
   }
 
   if (ui.trailButton) {
-    const trailLabel = fadeAmount === 15 ? 'short' : 'long';
+    let trailLabel = 'short';
+    if (fadeAmount === 255) trailLabel = 'none';
+    else if (fadeAmount === 40) trailLabel = 'long';
     ui.trailButton.textContent = `Trails: ${trailLabel} (T)`;
   }
 
@@ -388,8 +407,10 @@ function refreshToolbarIndicators() {
     let randomLabel = 'med';
     const sampleCell = (grid && grid[0] && grid[0][0]) ? grid[0][0] : null;
     if (sampleCell) {
-      if (sampleCell.randomAmount < 0.15) randomLabel = 'low';
-      else if (sampleCell.randomAmount > 0.35) randomLabel = 'high';
+      if (sampleCell.randomAmount < 0.01) randomLabel = 'none';
+      else if (sampleCell.randomAmount < 0.15) randomLabel = 'low';
+      else if (sampleCell.randomAmount < 0.35) randomLabel = 'med';
+      else randomLabel = 'high';
     }
     ui.randomButton.textContent = `Random: ${randomLabel} (R)`;
   }
@@ -401,6 +422,11 @@ function refreshToolbarIndicators() {
   if (ui.glitchButton) {
     ui.glitchButton.textContent = `Glitch: ${glitchEnabled ? 'on' : 'off'}`;
     ui.glitchButton.classList.toggle('active', glitchEnabled);
+  }
+
+  if (ui.pixelsButton) {
+    ui.pixelsButton.textContent = `Pixels: ${pixelsEnabled ? 'on' : 'off'} (P)`;
+    ui.pixelsButton.classList.toggle('active', pixelsEnabled);
   }
 
   document.body.classList.toggle('inverted', inverted);
@@ -452,9 +478,11 @@ function cycleRandomAmount() {
   if (!sampleCell) return;
 
   let newRandom = sampleCell.randomAmount;
-  if (newRandom < 0.15) newRandom = 0.3;
+  // Cycle through: none (0) -> low (0.12) -> med (0.3) -> high (0.6)
+  if (newRandom < 0.01) newRandom = 0.12;
+  else if (newRandom < 0.15) newRandom = 0.3;
   else if (newRandom < 0.35) newRandom = 0.6;
-  else newRandom = 0.12;
+  else newRandom = 0;
 
   for (let i = 0; i < cols; i++) {
     for (let j = 0; j < rows; j++) {
@@ -575,12 +603,9 @@ function draw() {
     fill(inverted ? 255 : 0, fadeAmount);
     rect(0, 0, width, height);
 
-    const baseMagenta = color(219, 10, 91);
-    const baseCyan = color(23, 190, 157);
-    const baseOrange = color(255, 152, 48);
-    const magenta = inverted ? invertColor(baseMagenta) : baseMagenta;
-    const cyan = inverted ? invertColor(baseCyan) : baseCyan;
-    const orange = inverted ? invertColor(baseOrange) : baseOrange;
+    const magenta = color(219, 10, 91);
+    const cyan = color(23, 190, 157);
+    const orange = color(255, 152, 48);
 
     inputSource.loadPixels();
 
@@ -650,9 +675,6 @@ function draw() {
             const step = 255 / (levels - 1);
             brightness = Math.round(brightness / step) * step;
           }
-
-          // Invert brightness if inverted mode is on
-          if (inverted) brightness = 255 - brightness;
 
           grid[i][j].update(brightness);
           grid[i][j].display(
@@ -807,7 +829,7 @@ class TrailCell {
     this.smoothedBrightness = lerp(this.smoothedBrightness, newBrightness, 0.4);
     this.displayBrightness = this.smoothedBrightness;
 
-    if (random(1) < 0.00008) {
+    if (pixelsEnabled && random(1) < 0.00008) {
       this.isBlock = true;
       this.blockTimer = int(random(30, 60));
       this.blockOffsetX = 0;
@@ -885,6 +907,11 @@ class TrailCell {
 }
 
 function keyPressed() {
+  // Don't trigger shortcuts if user is typing in text input
+  if (document.activeElement === ui.asciiCharsInput) {
+    return;
+  }
+
   if (key === 'b' || key === 'B') {
     cellSize = constrain(cellSize + 2, 6, 40);
     updateGrid();
@@ -894,13 +921,23 @@ function keyPressed() {
     updateGrid();
     refreshToolbarIndicators();
   } else if (key === 't' || key === 'T') {
-    fadeAmount = (fadeAmount === 15) ? 40 : 15;
+    // Cycle through: none (255) -> short (15) -> long (40)
+    if (fadeAmount === 255) {
+      fadeAmount = 15;
+    } else if (fadeAmount === 15) {
+      fadeAmount = 40;
+    } else {
+      fadeAmount = 255;
+    }
     refreshToolbarIndicators();
   } else if (key === 'r' || key === 'R') {
     cycleRandomAmount();
     refreshToolbarIndicators();
   } else if (key === 'i' || key === 'I') {
     inverted = !inverted;
+    refreshToolbarIndicators();
+  } else if (key === 'p' || key === 'P') {
+    pixelsEnabled = !pixelsEnabled;
     refreshToolbarIndicators();
   } else if (key === 'c' || key === 'C') {
     switchToCameraMode();

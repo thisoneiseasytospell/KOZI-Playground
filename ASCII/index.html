@@ -14,27 +14,26 @@
   <input type="file" id="imageUpload" accept="image/*" style="display: none;">
 
   <div id="toolbar">
-    <div class="toolbar-section toolbar-section--primary">
+    <div class="toolbar-section" aria-live="polite">
       <a id="homeLink" class="toolbar-link" href="../">← home</a>
       <button id="uploadButton" type="button">Upload Image</button>
-      <button id="cameraModeButton" type="button">Camera Mode</button>
-      <button id="swapCameraButton" type="button">Swap Camera</button>
-      <span id="toolbarStats" aria-live="polite">FPS: --</span>
-      <span class="toolbar-shortcuts" aria-hidden="true">Keys: B/S size · T trails · R random · I invert · C camera</span>
-    </div>
-
-    <div class="toolbar-section toolbar-section--toggles">
       <div class="toolbar-button-group" role="group" aria-label="Cell size">
-        <button id="cellSmallerButton" type="button" aria-label="Smaller cells">Cell -</button>
-        <button id="cellBiggerButton" type="button" aria-label="Bigger cells">Cell +</button>
+        <button id="cellSmallerButton" type="button" aria-label="Smaller cells">Cell - (S)</button>
+        <button id="cellBiggerButton" type="button" aria-label="Bigger cells">Cell + (B)</button>
       </div>
-      <button id="trailButton" type="button">Trails: short</button>
-      <button id="randomButton" type="button">Random: med</button>
-      <button id="invertButton" type="button">Invert: off</button>
+      <button id="cameraModeButton" type="button">Camera Mode (C)</button>
+      <button id="swapCameraButton" type="button">Swap Camera</button>
+      <button id="trailButton" type="button">Trails: short (T)</button>
+      <button id="randomButton" type="button">Random: med (R)</button>
+      <button id="invertButton" type="button">Invert: off (I)</button>
       <button id="glitchButton" type="button" class="active">Glitch: on</button>
+      <label class="toolbar-inline-control" for="asciiCharsInput">Chars
+        <input id="asciiCharsInput" type="text" value=" .:AkerBP" maxlength="32" spellcheck="false">
+      </label>
+      <span id="toolbarStats" aria-live="polite">FPS: --</span>
     </div>
 
-    <div id="imageControls" class="toolbar-section toolbar-section--image" aria-live="polite">
+    <div id="imageControls" class="toolbar-section toolbar-section--image" aria-live="polite" aria-hidden="true">
       <div class="toolbar-control">
         <label for="scaleSlider">Scale <span id="scaleValue">1.0x</span></label>
         <input type="range" id="scaleSlider" min="0.1" max="3" step="0.1" value="1.0">
@@ -51,7 +50,6 @@
         <button id="exportMP4" type="button" disabled>Preparing MP4…</button>
       </div>
 
-      <div class="control-hint" id="imagePositionHint">Drag canvas to reposition image</div>
       <div class="control-hint" id="exportStatus" aria-live="polite"></div>
     </div>
   </div>

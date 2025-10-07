@@ -9,7 +9,8 @@ let cols, rows;
 let grid;
 let pg; // Graphics buffer for better performance
 
-const asciiChars = " .:AkerBP";
+const DEFAULT_ASCII_CHARS = " .:AkerBP";
+let asciiChars = DEFAULT_ASCII_CHARS;
 let fadeAmount = 15;
 let inverted = false;
 let glitchEnabled = true;
@@ -58,6 +59,10 @@ const TARGET_FPS = 25;
 const PERFORMANCE_CHECK_INTERVAL = 30; // Check every 30 frames
 const MAX_ADJUSTMENTS = 5; // Stop after 5 adjustments
 let adjustmentCount = 0;
+
+function invertColor(col) {
+  return color(255 - red(col), 255 - green(col), 255 - blue(col));
+}
 
 async function setup() {
   createCanvas(windowWidth, windowHeight);
@@ -170,6 +175,7 @@ function setupUI() {
   ui.randomButton = document.getElementById('randomButton');
   ui.invertButton = document.getElementById('invertButton');
   ui.glitchButton = document.getElementById('glitchButton');
+  ui.asciiCharsInput = document.getElementById('asciiCharsInput');
   ui.scaleSlider = document.getElementById('scaleSlider');
   ui.scaleValue = document.getElementById('scaleValue');
   ui.greySlider = document.getElementById('greySlider');
@@ -264,6 +270,23 @@ function setupUI() {
     });
   }
 
+  if (ui.asciiCharsInput) {
+    ui.asciiCharsInput.addEventListener('input', (event) => {
+      const newValue = event.target.value;
+      asciiChars = newValue.length > 0 ? newValue : DEFAULT_ASCII_CHARS;
+      if (newValue.length === 0) {
+        event.target.value = asciiChars;
+      }
+    });
+
+    ui.asciiCharsInput.addEventListener('blur', (event) => {
+      if (event.target.value.length === 0) {
+        asciiChars = DEFAULT_ASCII_CHARS;
+        event.target.value = asciiChars;
+      }
+    });
+  }
+
   if (ui.scaleSlider) {
     ui.scaleSlider.addEventListener('input', (event) => {
       imageScale = parseFloat(event.target.value);
@@ -323,18 +346,23 @@ function setupUI() {
 
 function refreshToolbarIndicators() {
   if (ui.cameraModeButton) {
-    ui.cameraModeButton.textContent = inputMode === 'image' ? 'Back to Camera' : 'Camera Mode';
-    ui.cameraModeButton.disabled = inputMode !== 'image';
+    const showCameraButton = inputMode === 'image';
+    ui.cameraModeButton.style.display = showCameraButton ? 'inline-flex' : 'none';
+    ui.cameraModeButton.textContent = showCameraButton ? 'Back to Camera (C)' : 'Camera Mode (C)';
   }
 
   if (ui.swapCameraButton && isMobileDevice) {
-    ui.swapCameraButton.disabled = inputMode !== 'camera';
+    ui.swapCameraButton.style.display = inputMode === 'camera' ? 'inline-flex' : 'none';
   }
 
   if (ui.imageControls) {
     const imageControlsActive = inputMode === 'image';
-    ui.imageControls.classList.toggle('active', imageControlsActive);
+    ui.imageControls.style.display = imageControlsActive ? 'inline-flex' : 'none';
     ui.imageControls.setAttribute('aria-hidden', imageControlsActive ? 'false' : 'true');
+  }
+
+  if (ui.asciiCharsInput && ui.asciiCharsInput.value !== asciiChars) {
+    ui.asciiCharsInput.value = asciiChars;
   }
 
   if (ui.scaleSlider) {
@@ -353,7 +381,7 @@ function refreshToolbarIndicators() {
 
   if (ui.trailButton) {
     const trailLabel = fadeAmount === 15 ? 'short' : 'long';
-    ui.trailButton.textContent = `Trails: ${trailLabel}`;
+    ui.trailButton.textContent = `Trails: ${trailLabel} (T)`;
   }
 
   if (ui.randomButton) {
@@ -363,17 +391,19 @@ function refreshToolbarIndicators() {
       if (sampleCell.randomAmount < 0.15) randomLabel = 'low';
       else if (sampleCell.randomAmount > 0.35) randomLabel = 'high';
     }
-    ui.randomButton.textContent = `Random: ${randomLabel}`;
+    ui.randomButton.textContent = `Random: ${randomLabel} (R)`;
   }
 
   if (ui.invertButton) {
-    ui.invertButton.textContent = `Invert: ${inverted ? 'on' : 'off'}`;
+    ui.invertButton.textContent = `Invert: ${inverted ? 'on' : 'off'} (I)`;
   }
 
   if (ui.glitchButton) {
     ui.glitchButton.textContent = `Glitch: ${glitchEnabled ? 'on' : 'off'}`;
     ui.glitchButton.classList.toggle('active', glitchEnabled);
   }
+
+  document.body.classList.toggle('inverted', inverted);
 
   const exportsDisabled = inputMode !== 'image' || isExportingVideo;
   if (ui.exportSVGBtn) {
@@ -542,12 +572,15 @@ function draw() {
 
     // Optimized trail effect
     noStroke();
-    fill(0, fadeAmount);
+    fill(inverted ? 255 : 0, fadeAmount);
     rect(0, 0, width, height);
 
-    const magenta = color(219, 10, 91);
-    const cyan = color(23, 190, 157);
-    const orange = color(255, 152, 48);
+    const baseMagenta = color(219, 10, 91);
+    const baseCyan = color(23, 190, 157);
+    const baseOrange = color(255, 152, 48);
+    const magenta = inverted ? invertColor(baseMagenta) : baseMagenta;
+    const cyan = inverted ? invertColor(baseCyan) : baseCyan;
+    const orange = inverted ? invertColor(baseOrange) : baseOrange;
 
     inputSource.loadPixels();
 
@@ -841,7 +874,7 @@ class TrailCell {
       }
 
       fill(red(displayColor), green(displayColor), blue(displayColor), alpha);
-      textSize(size);
+      textSize(size * 1.3); // Larger text size for tighter spacing
       text(displayChar, x, y);
     }
   }
@@ -1092,7 +1125,7 @@ function exportSVG() {
           svgContent += `    <rect x="${(blockX - blockSize/2).toFixed(2)}" y="${(blockY - blockSize/2).toFixed(2)}" width="${blockSize.toFixed(2)}" height="${blockSize.toFixed(2)}" fill="rgb(${fill_r},${fill_g},${fill_b})"/>\n`;
         } else {
           // Export as text character
-          svgContent += `    <text x="${x.toFixed(2)}" y="${y.toFixed(2)}" font-size="${cellSize}" fill="rgb(${fill_r},${fill_g},${fill_b})">${displayChar}</text>\n`;
+          svgContent += `    <text x="${x.toFixed(2)}" y="${y.toFixed(2)}" font-size="${(cellSize * 1.3).toFixed(2)}" fill="rgb(${fill_r},${fill_g},${fill_b})">${displayChar}</text>\n`;
         }
       }
     }
@@ -1136,7 +1169,7 @@ function exportPDF() {
   // Set up text rendering
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = `${cellSize}px "Courier New", Courier, monospace`;
+  ctx.font = `${(cellSize * 1.3).toFixed(1)}px "Courier New", Courier, monospace`;
 
   // Export ALL frames from trail history (oldest to newest for proper layering)
   for (let frameIdx = 0; frameIdx < trailHistory.length; frameIdx++) {

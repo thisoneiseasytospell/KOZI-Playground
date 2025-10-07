@@ -8,7 +8,12 @@ body {
   padding: 0;
   overflow: hidden;
   background-color: #000;
-  font-family: 'ABCDiatype', monospace;
+  font-family: 'ABC-Diatype', monospace;
+}
+
+body.inverted {
+  background-color: #fff;
+  color: #000;
 }
 canvas {
   display: block;
@@ -27,13 +32,13 @@ canvas {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   z-index: 1000;
   pointer-events: none;
 }
 
 #toolbar .toolbar-section {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
@@ -67,14 +72,9 @@ canvas {
   cursor: not-allowed;
 }
 
-#swapCameraButton {
+#swapCameraButton,
+#cameraModeButton {
   display: none;
-}
-
-#toolbar .toolbar-shortcuts {
-  opacity: 0.65;
-  font-size: 11px;
-  white-space: nowrap;
 }
 
 #toolbar .toolbar-button-group {
@@ -97,6 +97,31 @@ canvas {
 
 #toolbarStats {
   opacity: 0.6;
+  margin-left: auto;
+}
+
+#toolbar .toolbar-inline-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+#toolbar .toolbar-inline-control input {
+  width: 110px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-family: 'ABCDiatype', monospace;
+  font-size: 12px;
+}
+
+#toolbar .toolbar-inline-control input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.16);
 }
 
 #glitchButton.active {
@@ -109,10 +134,7 @@ canvas {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-}
-
-#imageControls.active {
-  display: flex;
+  pointer-events: auto;
 }
 
 .toolbar-control {
@@ -188,7 +210,7 @@ canvas {
 
 @media (max-width: 680px) {
   #toolbar {
-    justify-content: center;
+    align-items: center;
   }
 
   .toolbar-control {
@@ -199,11 +221,5 @@ canvas {
   #toolbar button {
     font-size: 11px;
     padding: 6px 8px;
-  }
-
-  #toolbar .toolbar-shortcuts {
-    width: 100%;
-    text-align: center;
-    margin-top: 6px;
   }
 }

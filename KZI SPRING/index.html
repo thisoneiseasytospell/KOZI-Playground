@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KZI SPRING</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { overflow: hidden; width: 100%; height: 100%; background: #000; }
+    canvas { display: block; }
+    #controls {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: rgba(0,0,0,0.8);
+      padding: 15px;
+      border-radius: 8px;
+      color: #fff;
+      font-family: monospace;
+      font-size: 14px;
+      z-index: 1000;
+      cursor: default;
+    }
+    #controls label { display: block; margin-bottom: 8px; }
+    #controls input[type="range"] { width: 200px; }
+    #controls .value { color: #0f0; }
+  </style>
+</head>
+<body>
+<div id="controls" style="display: none;">
+  <label>
+    Font Size: <span id="fontValue" class="value">12</span>
+    <br><input type="range" id="fontSlider" min="8" max="40" value="12">
+  </label>
+  <label>
+    Letter Gap: <span id="gapValue" class="value">36</span>
+    <br><input type="range" id="gapSlider" min="10" max="60" value="36">
+  </label>
+  <label>
+    Displacement: <span id="dispValue" class="value">4</span>
+    <br><input type="range" id="dispSlider" min="0" max="30" value="4">
+  </label>
+  <label>
+    Squeeze: <span id="squeezeValue" class="value">30</span>
+    <br><input type="range" id="squeezeSlider" min="0" max="50" value="30">
+  </label>
+  <small>Press H to hide controls</small>
+</div>
+<script>
+// p5.js — Symbol grid with radial intro + water trail + invert toggle
+// ---------------------------------------------------------------------------
+// • Spotlight (3×3) follows the cursor.
+// • Press "R" to replay the ripple from the cursor position.
+// • Press "I" to toggle between inverted (black bg / light glyphs). Dark mode is default.
+// • Press "H" to hide/show controls.
+// • Click and drag for stronger displacement.
+// ---------------------------------------------------------------------------
+
+/************  ASSETS  ************/
+let font;
+function preload(){
+  font = loadFont('FKGroteskNeue-Regular.otf');
+}
+
+/************  DESIGN CONSTANTS  ************/
+const BASE_W = 1920, BASE_H = 1080;
+let BASE_CHAR_SIZE = 12;          // adjustable via slider
+let BASE_LETTER_GAP = 36;         // adjustable via slider
+const SPOTLIGHT_EXTENT = 1.5;
+
+// animation tuning
+const ALPHA_EASE = 0.08;
+const SCALE_EASE = 0.10;
+const MORPH_BRIGHT = 2;
+const MORPH_DARK   = 1;
+const NOISE_CHANCE = 0.001;
+const BASE_SCALE   = 1.0;
+const TARGET_SCALE = 1.6;
+
+// radial intro
+const INTRO_SPEED = 0.25;
+const INTRO_SOFT_EDGE = 2.0;
+
+// trail effect
+const TRAIL_LENGTH = 50;
+const TRAIL_FADE = 0.96;
+const TRAIL_RADIUS = 3.5;
+const TRAIL_BOOST = 0.5;
+
+// displacement
+let DISPLACEMENT_STRENGTH = 4;    // default for hover
+const DRAG_DISPLACEMENT = 15;     // stronger when dragging
+const DISPLACEMENT_EASE = 0.12;
+
+// fisheye effect around spotlight
+const FISHEYE_RADIUS = 4.0;       // radius of fisheye effect in cells
+const FISHEYE_STRENGTH = 6;       // how much cells are pushed outward
+
+// spotlight squeeze - letters pull together when moving
+let SQUEEZE_STRENGTH = 30;        // how much spotlight letters pull inward
+const BREATHE_STRENGTH = 4;       // how much letters expand when idle
+
+const SYMBOL_ROWS = ['KZI','STU','DIO'];
+const BG_ALPHA_MAX = 0.45;
+
+/************  STATE  ************/
+let scaleK, charSize, letterGap;
+let charW, charH, cellW, cellH;
+let gridCols, gridRows;
+
+let curChar = [], destChar = [], alpha = [], scaleVal = [];
+let displaceX = [], displaceY = [];
+let introActive = true, introRadius = 0, gridReady = false;
+let gotMouse = false;
+let isDragging = false;
+
+let anchorCol, anchorRow;
+let prevMouseX, prevMouseY;
+
+// trail state
+let trail = [];
+let moveIntensity = 0;  // tracks how fast mouse is moving (0-1)
+let breatheOut = 0;     // one-time breathe out effect (decays to 0)
+
+// colours
+let noiseCol, revealCol;
+
+// UI
+let controlsVisible = false;
+
+/************  INVERT MODE  ************/
+let invertMode = true;
+function setColors(){
+  if(invertMode){
+    noiseCol  = color(105);
+    revealCol = color(255);
+  } else {
+    noiseCol  = color(150);
+    revealCol = color(0);
+  }
+}
+
+/************  SETUP  ************/
+function setup(){
+  const cnv = createCanvas(windowWidth, windowHeight);
+  cnv.elt.setAttribute('tabindex','0');
+  cnv.elt.focus();
+
+  frameRate(60);
+  textFont(font);
+  noStroke();
+
+  setColors();
+  computeLayout();
+  initGrid();
+
+  anchorCol = floor(gridCols * 0.5);
+  anchorRow = floor(gridRows * 0.5);
+
+  prevMouseX = mouseX;
+  prevMouseY = mouseY;
+
+  // Setup slider listeners
+  const controls = document.getElementById('controls');
+  const fontSlider = document.getElementById('fontSlider');
+  const gapSlider = document.getElementById('gapSlider');
+  const dispSlider = document.getElementById('dispSlider');
+
+  // Prevent sliders from breaking canvas
+  controls.addEventListener('mousedown', e => e.stopPropagation());
+  controls.addEventListener('mouseup', e => e.stopPropagation());
+
+  fontSlider.addEventListener('input', function() {
+    BASE_CHAR_SIZE = parseInt(this.value);
+    document.getElementById('fontValue').textContent = this.value;
+    resizeGridSmooth();
+  });
+
+  gapSlider.addEventListener('input', function() {
+    BASE_LETTER_GAP = parseInt(this.value);
+    document.getElementById('gapValue').textContent = this.value;
+    resizeGridSmooth();
+  });
+
+  dispSlider.addEventListener('input', function() {
+    DISPLACEMENT_STRENGTH = parseInt(this.value);
+    document.getElementById('dispValue').textContent = this.value;
+  });
+
+  const squeezeSlider = document.getElementById('squeezeSlider');
+  squeezeSlider.addEventListener('input', function() {
+    SQUEEZE_STRENGTH = parseInt(this.value);
+    document.getElementById('squeezeValue').textContent = this.value;
+  });
+}
+
+/************  SMOOTH GRID RESIZE  ************/
+function resizeGridSmooth(){
+  const oldCols = gridCols;
+  const oldRows = gridRows;
+
+  computeLayout();
+
+  // Resize arrays to new dimensions
+  const newCurChar = [], newDestChar = [], newAlpha = [], newScaleVal = [];
+  const newDispX = [], newDispY = [];
+
+  for(let r = 0; r < gridRows; r++){
+    newCurChar[r] = []; newDestChar[r] = []; newAlpha[r] = []; newScaleVal[r] = [];
+    newDispX[r] = []; newDispY[r] = [];
+    for(let c = 0; c < gridCols; c++){
+      if(r < oldRows && c < oldCols){
+        // preserve existing data
+        newCurChar[r][c] = curChar[r][c];
+        newDestChar[r][c] = destChar[r][c];
+        newAlpha[r][c] = alpha[r][c];
+        newScaleVal[r][c] = scaleVal[r][c];
+        newDispX[r][c] = displaceX[r][c];
+        newDispY[r][c] = displaceY[r][c];
+      } else {
+        // new cells
+        const rnd = floor(random(33, 127));
+        newCurChar[r][c] = newDestChar[r][c] = rnd;
+        newAlpha[r][c] = BG_ALPHA_MAX;  // start visible
+        newScaleVal[r][c] = BASE_SCALE;
+        newDispX[r][c] = 0;
+        newDispY[r][c] = 0;
+      }
+    }
+  }
+
+  curChar = newCurChar;
+  destChar = newDestChar;
+  alpha = newAlpha;
+  scaleVal = newScaleVal;
+  displaceX = newDispX;
+  displaceY = newDispY;
+}
+
+/************  DRAW  ************/
+function draw(){
+  if(!gridReady){ introActive = true; introRadius = 0; gridReady = true; }
+
+  if(gotMouse){
+    anchorCol = mouseX / cellW;
+    anchorRow = mouseY / cellH;
+  }
+
+  if(introActive){
+    introRadius += INTRO_SPEED;
+    if(introRadius > max(gridCols, gridRows) + INTRO_SOFT_EDGE) introActive = false;
+  }
+
+  background(invertMode ? 0 : 255);
+
+  // update trail - fade out old points
+  for(let i = trail.length - 1; i >= 0; i--){
+    trail[i].strength *= TRAIL_FADE;
+    if(trail[i].strength < 0.01) trail.splice(i, 1);
+  }
+
+  // decay move intensity when not moving
+  const wasMoving = moveIntensity > 0.15;
+  moveIntensity *= 0.95;
+  const nowIdle = moveIntensity < 0.15;
+
+  // trigger one-time breathe out when stopping
+  if(wasMoving && nowIdle){
+    breatheOut = 1;
+  }
+
+  // decay breathe out
+  breatheOut *= 0.94;
+
+  // use stronger displacement when dragging
+  const currentDisp = isDragging ? DRAG_DISPLACEMENT : DISPLACEMENT_STRENGTH;
+
+  textAlign(CENTER, CENTER);
+  textSize(charSize);
+
+  for(let r = 0; r < gridRows; r++){
+    const cy = r * cellH + charH * 0.5;
+    for(let c = 0; c < gridCols; c++){
+      const cx = c * cellW + charW * 0.5;
+      const spotlight = abs(c - anchorCol) <= SPOTLIGHT_EXTENT &&
+                        abs(r - anchorRow) <= SPOTLIGHT_EXTENT;
+
+      // intro alpha factor
+      let aIntro = 1;
+      if(introActive){
+        const d = dist(c, r, anchorCol, anchorRow);
+        aIntro = constrain((introRadius - d) / INTRO_SOFT_EDGE, 0, 1);
+      }
+
+      // trail influence and displacement
+      let trailInfluence = 0;
+      let targetDispX = 0;
+      let targetDispY = 0;
+
+      for(let t of trail){
+        const dx = c - t.col;
+        const dy = r - t.row;
+        const d = sqrt(dx * dx + dy * dy);
+
+        if(d < TRAIL_RADIUS && d > 0.01){
+          const falloff = 1 - (d / TRAIL_RADIUS);
+          const influence = falloff * falloff * t.strength;
+
+          trailInfluence = max(trailInfluence, influence * TRAIL_BOOST);
+
+          // displacement: push away from trail point
+          const pushX = (dx / d) * influence * currentDisp;
+          const pushY = (dy / d) * influence * currentDisp;
+
+          // add some swirl based on trail velocity
+          targetDispX += pushX + t.vy * influence * 0.5;
+          targetDispY += pushY - t.vx * influence * 0.5;
+        }
+      }
+
+      // fisheye effect - push cells outward from spotlight center
+      const distToSpot = dist(c, r, anchorCol, anchorRow);
+      if(!spotlight && distToSpot < FISHEYE_RADIUS && distToSpot > 0.1){
+        const dx = c - anchorCol;
+        const dy = r - anchorRow;
+        const falloff = 1 - (distToSpot / FISHEYE_RADIUS);
+        const fisheyePush = falloff * falloff * FISHEYE_STRENGTH;
+        targetDispX += (dx / distToSpot) * fisheyePush;
+        targetDispY += (dy / distToSpot) * fisheyePush;
+      }
+
+      // ease displacement
+      if(!spotlight){
+        displaceX[r][c] += (targetDispX - displaceX[r][c]) * DISPLACEMENT_EASE;
+        displaceY[r][c] += (targetDispY - displaceY[r][c]) * DISPLACEMENT_EASE;
+      } else {
+        // spotlight letters: squeeze inward when moving, breathe out once when stopping
+        const dx = c - anchorCol;
+        const dy = r - anchorRow;
+
+        // squeeze inward (negative) + breathe out (positive)
+        const squeeze = -moveIntensity * SQUEEZE_STRENGTH;
+        const breathe = breatheOut * BREATHE_STRENGTH;
+        const targetX = dx * (squeeze + breathe);
+        const targetY = dy * (squeeze + breathe);
+
+        // faster easing for spotlight to avoid lag/double-step
+        const spotlightEase = 0.25;
+        displaceX[r][c] += (targetX - displaceX[r][c]) * spotlightEase;
+        displaceY[r][c] += (targetY - displaceY[r][c]) * spotlightEase;
+      }
+
+      // target alpha
+      const base = BG_ALPHA_MAX * aIntro;
+      const tAlpha = spotlight ? 1 : min(1, base + trailInfluence);
+      alpha[r][c] += (tAlpha - alpha[r][c]) * ALPHA_EASE;
+
+      // target scale
+      const tScale = spotlight ? TARGET_SCALE : (introActive ? BASE_SCALE * aIntro : BASE_SCALE);
+      scaleVal[r][c] += (tScale - scaleVal[r][c]) * SCALE_EASE;
+
+      // destination character logic
+      if(spotlight){
+        const sCol = constrain(round(c - anchorCol) + 1, 0, 2);
+        const sRow = constrain(round(r - anchorRow) + 1, 0, 2);
+        destChar[r][c] = SYMBOL_ROWS[sRow].charCodeAt(sCol);
+      } else if(trailInfluence > 0.1 && random() < 0.15){
+        destChar[r][c] = floor(random(33, 127));
+      } else if(random() < NOISE_CHANCE){
+        destChar[r][c] = floor(random(33, 127));
+      }
+
+      // morph current char toward destination
+      let cur = curChar[r][c];
+      const dst = destChar[r][c];
+      if(cur !== dst && !isNaN(dst)){
+        const step = spotlight ? MORPH_BRIGHT : MORPH_DARK;
+        const diff = dst - cur;
+        cur += diff > 0 ? min(step, diff) : max(-step, diff);
+        curChar[r][c] = cur;
+      }
+
+      if(alpha[r][c] < 0.01) continue;
+
+      fill(lerpColor(noiseCol, revealCol, alpha[r][c]));
+
+      push();
+      translate(cx + displaceX[r][c], cy + displaceY[r][c]);
+      scale(scaleVal[r][c]);
+      text(String.fromCharCode(curChar[r][c]), 0, 0);
+      pop();
+    }
+  }
+}
+
+/************  GRID INITIALISATION  ************/
+function initGrid(){
+  curChar = []; destChar = []; alpha = []; scaleVal = [];
+  displaceX = []; displaceY = [];
+  for(let r = 0; r < gridRows; r++){
+    curChar[r] = []; destChar[r] = []; alpha[r] = []; scaleVal[r] = [];
+    displaceX[r] = []; displaceY[r] = [];
+    for(let c = 0; c < gridCols; c++){
+      const rnd = floor(random(33, 127));
+      curChar[r][c]  = destChar[r][c] = rnd;
+      alpha[r][c]    = 0;
+      scaleVal[r][c] = 0;
+      displaceX[r][c] = 0;
+      displaceY[r][c] = 0;
+    }
+  }
+  introActive = true;
+  introRadius = 0;
+  gridReady   = false;
+}
+
+/************  COMPUTE LAYOUT  ************/
+function computeLayout(){
+  scaleK    = min(width / BASE_W, height / BASE_H);
+  charSize  = round(BASE_CHAR_SIZE * scaleK);
+  letterGap = BASE_LETTER_GAP * scaleK;
+
+  textSize(charSize);
+  charW   = textWidth('W');
+  charH   = textAscent() + textDescent();
+  cellW   = charW + letterGap;
+  cellH   = charH + letterGap;
+  gridCols = ceil(width / cellW) + 1;
+  gridRows = ceil(height / cellH) + 1;
+}
+
+/************  EVENT HANDLERS  ************/
+function mouseMoved(){
+  gotMouse = true;
+  addTrailPoint();
+}
+
+function mouseDragged(){
+  gotMouse = true;
+  addTrailPoint();
+}
+
+function addTrailPoint(){
+  const col = mouseX / cellW;
+  const row = mouseY / cellH;
+  const vx = (mouseX - prevMouseX) / cellW;
+  const vy = (mouseY - prevMouseY) / cellH;
+
+  // calculate movement speed
+  const speed = sqrt(vx * vx + vy * vy);
+  moveIntensity = max(moveIntensity, min(1, speed * 2));
+
+  trail.push({col, row, vx, vy, strength: 1});
+
+  if(trail.length > TRAIL_LENGTH) trail.shift();
+
+  prevMouseX = mouseX;
+  prevMouseY = mouseY;
+}
+
+function mousePressed(){
+  isDragging = true;
+}
+
+function mouseReleased(){
+  isDragging = false;
+}
+
+function keyPressed(){
+  if(key === 'r' || key === 'R'){
+    initGrid();
+    trail = [];
+    if(gotMouse){
+      anchorCol = mouseX / cellW;
+      anchorRow = mouseY / cellH;
+    } else {
+      anchorCol = floor(gridCols * 0.5);
+      anchorRow = floor(gridRows * 0.5);
+    }
+  } else if(key === 'i' || key === 'I'){
+    invertMode = !invertMode;
+    setColors();
+  } else if(key === 'h' || key === 'H'){
+    controlsVisible = !controlsVisible;
+    document.getElementById('controls').style.display = controlsVisible ? 'block' : 'none';
+  }
+}
+
+function windowResized(){
+  resizeCanvas(windowWidth, windowHeight);
+  computeLayout();
+  initGrid();
+  trail = [];
+  if(gotMouse){
+    anchorCol = mouseX / cellW;
+    anchorRow = mouseY / cellH;
+  } else {
+    anchorCol = floor(gridCols * 0.5);
+    anchorRow = floor(gridRows * 0.5);
+  }
+}
+</script>
+</body>
+</html>

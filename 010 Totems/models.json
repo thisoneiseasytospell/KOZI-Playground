@@ -1,0 +1,72 @@
+[
+  {
+    "id": "compressed-laugh2",
+    "title": "Compressed Laugh2",
+    "glb": "objs/compressed laugh2.glb",
+    "scale": 1,
+    "autoRotateSpeed": 0.25
+  },
+  {
+    "id": "compressed-loud-card",
+    "title": "Compressed Loud Card",
+    "glb": "objs/compressed loud card.glb",
+    "scale": 1,
+    "autoRotateSpeed": 0.25
+  },
+  {
+    "id": "compressed-1763391167896-bob",
+    "title": "Compressed 1763391167896 Bob",
+    "glb": "objs/compressed_1763391167896_bob.glb",
+    "scale": 1,
+    "autoRotateSpeed": 0.25
+  },
+  {
+    "id": "compressed-1763391168219-feyenoord",
+    "title": "Compressed 1763391168219 Feyenoord",
+    "glb": "objs/hooligans2 (1).glb",
+    "scale": 1,
+    "autoRotateSpeed": 0.25
+  },
+  {
+    "id": "compressed-1763391168221-erasmus",
+    "title": "Compressed 1763391168221 Erasmus",
+    "glb": "objs/compressed_1763391168221_erasmus.glb",
+    "scale": 1,
+    "autoRotateSpeed": 0.25
+  },
+  {
+    "id": "compressed-1763493199262-matchasurf",
+    "title": "Compressed 1763493199262 Matchasurf",
+    "glb": "objs/compressed_1763493199262_matchasurf.glb",
+    "scale": 1,
+    "autoRotateSpeed": 0.25
+  },
+  {
+    "id": "compressed-1763493233532-trashdude",
+    "title": "Compressed 1763493233532 Trashdude",
+    "glb": "objs/compressed_1763493233532_trashdude.glb",
+    "scale": 1,
+    "autoRotateSpeed": 0.25
+  },
+  {
+    "id": "compressed-1763493268226-pigeon-lady",
+    "title": "Compressed 1763493268226 Pigeon Lady",
+    "glb": "objs/compressed_1763493268226_pigeon lady.glb",
+    "scale": 1,
+    "autoRotateSpeed": 0.25
+  },
+  {
+    "id": "compressed-1763493291035-spiderdude",
+    "title": "Compressed 1763493291035 Spiderdude",
+    "glb": "objs/compressed_1763493291035_spiderdude.glb",
+    "scale": 1,
+    "autoRotateSpeed": 0.25
+  },
+  {
+    "id": "compressedwip",
+    "title": "Compressed WIP",
+    "glb": "objs/compressedWIP.glb",
+    "scale": 1,
+    "autoRotateSpeed": 0.25
+  }
+]

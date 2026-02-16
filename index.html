@@ -49,6 +49,18 @@
     .project-card h2 {
       font-size: 1em;
       font-weight: normal;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.28em;
+    }
+    .project-card h2::after {
+      content: "";
+      width: 0.95em;
+      height: 0.95em;
+      display: inline-block;
+      background: url("assets/arrow.svg") no-repeat center / contain;
+      line-height: 1;
+      transform: translateY(-0.01em);
     }
     .video-preview {
       display: none;
@@ -68,22 +80,46 @@
   <div class="container">
     <h1>KOZI Playground</h1>
     <div class="project-list">
-      <a href="ASCII/index.html" class="project-card">
+      <a href="ASCII/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>ASCII Camera Glitch</h2>
         <video class="video-preview" autoplay loop muted playsinline>
           <source src="demos/asciidemo.mp4" type="video/mp4">
         </video>
       </a>
-      <a href="GLGS/index.html" class="project-card">
+      <a href="GLGS/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>GLGS</h2>
       </a>
-      <a href="Grafitti/index.html" class="project-card">
+      <a href="Grafitti/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>Grafitti</h2>
+        <video class="video-preview" autoplay loop muted playsinline>
+          <source src="demos/grafittidemo.mp4" type="video/mp4">
+        </video>
       </a>
-      <a href="Thunderbolt/index.html" class="project-card">
+      <a href="Thunderbolt/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>Thunderbolt</h2>
         <video class="video-preview" autoplay loop muted playsinline>
           <source src="demos/thunderdemo.mp4" type="video/mp4">
+        </video>
+      </a>
+      <a href="010%20Totems/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
+        <h2>010 Totems</h2>
+        <video class="video-preview" autoplay loop muted playsinline>
+          <source src="demos/010demo.mp4" type="video/mp4">
+        </video>
+      </a>
+      <a href="T%23/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
+        <h2>T#</h2>
+        <video class="video-preview" autoplay loop muted playsinline>
+          <source src="demos/T%23demo.mp4" type="video/mp4">
+        </video>
+      </a>
+      <a href="KZI%20SPRING/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
+        <h2>KZI Spring</h2>
+      </a>
+      <a href="Flag/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
+        <h2>Flag</h2>
+        <video class="video-preview" autoplay loop muted playsinline>
+          <source src="demos/flagdemo.mp4" type="video/mp4">
         </video>
       </a>
     </div>
@@ -92,6 +128,7 @@
     document.querySelectorAll('.project-card').forEach(card => {
       const video = card.querySelector('.video-preview');
       card.addEventListener('mousemove', (e) => {
+        if (!video) return;
         video.style.left = (e.clientX + 20) + 'px';
         video.style.top = (e.clientY + 20) + 'px';
       });

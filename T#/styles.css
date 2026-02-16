@@ -1,0 +1,431 @@
+:root {
+  --bg: #000;
+  --panel-bg: rgba(6, 6, 8, 0.82);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --text: #e8e6e3;
+  --text-dim: rgba(255, 255, 255, 0.4);
+  --r: 3px;
+  --font-display: "Instrument Serif", serif;
+  --font-mono: "DM Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---- Canvas ---- */
+
+#board {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  background: #000;
+}
+
+#grid-lines line {
+  stroke: #fff;
+  stroke-width: 1;
+  stroke-opacity: 0.15;
+}
+
+#trail-layer line {
+  pointer-events: none;
+  stroke-linecap: round;
+}
+
+#hit-layer rect {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+#hit-layer rect:hover {
+  fill: rgba(255, 255, 255, 0.03);
+}
+
+.vector-mark {
+  transform-box: fill-box;
+  transform-origin: center center;
+}
+
+body.grid-hidden #grid-lines {
+  display: none;
+}
+
+/* ---- Drop overlay ---- */
+
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: none;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+body.drop-active .drop-overlay {
+  display: grid;
+}
+
+.drop-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2rem;
+  padding: 3rem 5rem;
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  animation: drop-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes drop-pulse {
+  0%,
+  100% {
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+  50% {
+    border-color: rgba(255, 255, 255, 0.4);
+  }
+}
+
+.drop-overlay-icon {
+  font-family: var(--font-display);
+  font-size: 3.2rem;
+  color: var(--text);
+  line-height: 1;
+}
+
+.drop-overlay-text {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+/* ---- UI toggle ---- */
+
+.ui-toggle {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 30;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--text-dim);
+  padding: 0.4rem 0.65rem;
+  border-radius: var(--r);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  line-height: 1;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.ui-toggle:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+/* ---- Panel ---- */
+
+.ui-panel {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  z-index: 25;
+  width: min(92vw, 320px);
+  display: grid;
+  gap: 0;
+  background: var(--panel-bg);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 0;
+  overflow: hidden;
+  transition: transform 200ms ease, opacity 160ms ease;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.55),
+    0 0 0 0.5px rgba(255, 255, 255, 0.04) inset;
+}
+
+body.ui-hidden .ui-panel {
+  transform: translateX(calc(-100% - 2rem));
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---- Panel header ---- */
+
+.panel-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.75rem 0.9rem 0.55rem;
+}
+
+.panel-header h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: #fff;
+  line-height: 1;
+}
+
+/* ---- Divider ---- */
+
+.panel-divider {
+  height: 1px;
+  background: var(--panel-border);
+}
+
+/* ---- Controls ---- */
+
+.control-row {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.55rem 0.9rem;
+}
+
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-weight: 500;
+}
+
+/* ---- Buttons ---- */
+
+.button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-dim);
+  border-radius: var(--r);
+  padding: 0.32rem 0.55rem;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  line-height: 1;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  transition: all 0.12s ease;
+}
+
+button:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+button:active {
+  transform: scale(0.97);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+button:disabled:hover {
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-dim);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+button.is-active,
+.toggle-btn.is-active,
+.driver-btn.is-active {
+  background: #fff;
+  color: #000;
+  border-color: #fff;
+  font-weight: 500;
+}
+
+button.is-active:hover,
+.toggle-btn.is-active:hover,
+.driver-btn.is-active:hover {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(255, 255, 255, 0.88);
+  color: #000;
+}
+
+/* ---- Range sliders ---- */
+
+.range-control {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--text-dim);
+  font-size: 0.6rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.range-control.is-hidden {
+  display: none;
+}
+
+.range-control.is-disabled {
+  opacity: 0.45;
+}
+
+.range-control input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 1px;
+  outline: none;
+  cursor: pointer;
+}
+
+.range-control input[type="range"]:disabled {
+  cursor: not-allowed;
+}
+
+.range-control input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.2);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.range-control input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.35);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.35);
+}
+
+.range-control input[type="range"]::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.2);
+}
+
+.range-control input[type="range"]::-moz-range-track {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 1px;
+}
+
+/* ---- Driver ---- */
+
+.driver-buttons {
+  gap: 0.28rem;
+}
+
+.driver-status {
+  margin: 0;
+  font-size: 0.55rem;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+  line-height: 1.5;
+}
+
+.panel-note {
+  margin: 0;
+  padding: 0.55rem 0.9rem 0.7rem;
+  font-size: 0.52rem;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+/* ---- Camera preview ---- */
+
+#camera-preview {
+  width: min(260px, 100%);
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r);
+  display: none;
+  transform: none;
+  filter: brightness(1.12) contrast(1.26);
+  margin-top: 0.3rem;
+}
+
+body.camera-on #camera-preview {
+  display: block;
+}
+
+body.camera-mirrored #camera-preview {
+  transform: scaleX(-1);
+}
+
+/* ---- Image preview ---- */
+
+#image-preview {
+  width: min(260px, 100%);
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--r);
+  display: none;
+  margin-top: 0.3rem;
+}
+
+body.image-on #image-preview {
+  display: block;
+}
+
+/* ---- Mobile ---- */
+
+@media (max-width: 760px) {
+  .ui-panel {
+    width: min(96vw, 300px);
+  }
+
+  .driver-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .drop-overlay-inner {
+    padding: 2rem 3rem;
+  }
+}

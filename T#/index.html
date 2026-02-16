@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KOZI for Tet#</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Instrument+Serif&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="grid-hidden">
+    <svg
+      id="board"
+      viewBox="0 0 1920 1080"
+      preserveAspectRatio="xMidYMid meet"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-label="Interactive board"
+    >
+      <rect width="1920" height="1080" fill="#000"></rect>
+      <image id="media-bg" width="1920" height="1080" preserveAspectRatio="xMidYMid slice" style="display:none" />
+      <g id="content-layer">
+        <g id="grid-lines"></g>
+        <g id="vector-layer"></g>
+        <g id="trail-layer"></g>
+        <g id="hit-layer"></g>
+      </g>
+    </svg>
+
+    <div id="drop-overlay" class="drop-overlay">
+      <div class="drop-overlay-inner">
+        <span class="drop-overlay-icon">+</span>
+        <span class="drop-overlay-text">Drop image or video</span>
+      </div>
+    </div>
+
+    <button id="toggle-ui" class="ui-toggle" type="button">Hide UI</button>
+
+    <aside id="ui-panel" class="ui-panel">
+      <header class="panel-header">
+        <h1>KOZI for Tet#</h1>
+      </header>
+
+      <div class="panel-divider"></div>
+
+      <section class="control-row">
+        <span class="section-label">Presets</span>
+        <div class="button-group">
+          <button id="load-sample">Sample</button>
+          <button id="random-fill">Random</button>
+          <button id="toggle-trails" class="toggle-btn">Veins</button>
+          <button id="toggle-clouds" class="toggle-btn">Clouds</button>
+          <button id="clear-all">(Free Draw)</button>
+          <button id="toggle-eraser" class="toggle-btn">Eraser</button>
+        </div>
+        <label id="vein-count-control" class="range-control is-hidden" for="vein-count-slider">
+          <span id="vein-count-label">Veins 6</span>
+          <input id="vein-count-slider" type="range" min="1" max="100" step="1" value="6" />
+        </label>
+        <label id="cloud-speed-control" class="range-control is-hidden" for="cloud-speed-slider">
+          <span id="cloud-speed-label">Cloud speed 100%</span>
+          <input id="cloud-speed-slider" type="range" min="10" max="350" step="1" value="100" />
+        </label>
+        <label id="brush-size-control" class="range-control is-hidden" for="brush-size-slider">
+          <span id="brush-size-label">Brush size 2</span>
+          <input id="brush-size-slider" type="range" min="1" max="7" step="1" value="2" />
+        </label>
+      </section>
+
+      <div class="panel-divider"></div>
+
+      <section class="control-row">
+        <span class="section-label">Scale</span>
+        <label class="range-control" for="node-size-slider">
+          <span id="size-label">Node 100%</span>
+          <input id="node-size-slider" type="range" min="35" max="280" step="0.5" value="100" />
+        </label>
+        <label class="range-control" for="grid-size-slider">
+          <span id="grid-size-label">Grid 100%</span>
+          <input id="grid-size-slider" type="range" min="2" max="260" step="0.1" value="35" />
+        </label>
+      </section>
+
+      <div class="panel-divider"></div>
+
+      <section class="control-row">
+        <span class="section-label">Driver</span>
+        <div class="button-group driver-buttons" role="group" aria-label="Motion driver">
+          <button class="driver-btn is-active" data-driver="hover">Hover</button>
+          <button class="driver-btn" data-driver="ripple">Ripple</button>
+          <button class="driver-btn" data-driver="arrow">Arrow</button>
+          <button class="driver-btn" data-driver="camera">Camera</button>
+        </div>
+      </section>
+
+      <div class="panel-divider"></div>
+
+      <section class="control-row">
+        <div class="button-group">
+          <button id="toggle-motion" class="toggle-btn is-active">Pause</button>
+        </div>
+        <p id="motion-status" class="driver-status">Hover active</p>
+        <video id="camera-preview" autoplay muted playsinline></video>
+        <img id="image-preview" style="display:none" />
+        <button id="toggle-media-bg" class="toggle-btn" style="display:none">Source</button>
+      </section>
+
+      <div class="panel-divider"></div>
+      <p class="panel-note">Backspace: step back</p>
+    </aside>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -1036,8 +1036,9 @@ function randomEntry() {
 }
 
 function sampleEntry(slot) {
-  const type = ((Math.abs(slot.i) + Math.abs(slot.j)) % 3) + 1;
-  const rotQ = ((((slot.i * 3 + slot.j * 5) % 4) + 4) % 4);
+  const h = (Math.imul(slot.i, 2654435761) ^ Math.imul(slot.j, 2246822519)) >>> 0;
+  const type = (h % 3) + 1;
+  const rotQ = (h >>> 2) & 3;
   return { type, rotQ };
 }
 

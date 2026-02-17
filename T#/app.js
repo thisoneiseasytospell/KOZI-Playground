@@ -888,7 +888,7 @@ function setFillMode(nextMode) {
 }
 
 function isMotionControlApplicable() {
-  return introRevealActive || driverMode !== "hover" || veinsActive || cloudsActive;
+  return driverMode !== "hover" || veinsActive || cloudsActive;
 }
 
 function updateMotionControlVisibility() {

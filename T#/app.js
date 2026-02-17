@@ -2013,20 +2013,28 @@ function levelArrow(item, nowMs) {
   return clamp01(level);
 }
 
+function cameraLumaAt(px, py, width) {
+  const idx = (py * width + px) * 4;
+  return (0.2126 * cameraPixels[idx] + 0.7152 * cameraPixels[idx + 1] + 0.0722 * cameraPixels[idx + 2]) / 255;
+}
+
 function levelCamera(item, nowMs) {
   if (!cameraPixels) return 0.25 * levelHover(item, nowMs);
 
   const width = cameraCanvas.width;
   const height = cameraCanvas.height;
   const xNorm = sampleMirrorX ? 1 - item.cx / SCENE_WIDTH : item.cx / SCENE_WIDTH;
-  const px = Math.max(0, Math.min(width - 1, Math.round(xNorm * (width - 1))));
-  const py = Math.max(0, Math.min(height - 1, Math.round((item.cy / SCENE_HEIGHT) * (height - 1))));
-  const index = (py * width + px) * 4;
-
-  const r = cameraPixels[index];
-  const g = cameraPixels[index + 1];
-  const b = cameraPixels[index + 2];
-  const luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  const fx = xNorm * (width - 1);
+  const fy = (item.cy / SCENE_HEIGHT) * (height - 1);
+  const x0 = Math.max(0, Math.min(width - 2, Math.floor(fx)));
+  const y0 = Math.max(0, Math.min(height - 2, Math.floor(fy)));
+  const tx = fx - x0;
+  const ty = fy - y0;
+  const luma = lerp(
+    lerp(cameraLumaAt(x0, y0, width), cameraLumaAt(x0 + 1, y0, width), tx),
+    lerp(cameraLumaAt(x0, y0 + 1, width), cameraLumaAt(x0 + 1, y0 + 1, width), tx),
+    ty
+  );
   const span = Math.max(0.08, cameraLumaMax - cameraLumaMin);
   const normalized = clamp01((luma - cameraLumaMin) / span);
   const enhanced = Math.pow(normalized, 0.6);

@@ -47,17 +47,7 @@ const DRIVER_LABELS = {
   camera: "Camera",
 };
 
-const LEGACY_VERTICAL_LINES = [66, 1854];
-for (let i = 0; i < 29; i += 1) {
-  LEGACY_VERTICAL_LINES.push(114 + i * 60, 126 + i * 60);
-}
-LEGACY_VERTICAL_LINES.sort((a, b) => a - b);
-
-const LEGACY_HORIZONTAL_LINES = [36, 1044];
-for (let i = 0; i < 16; i += 1) {
-  LEGACY_HORIZONTAL_LINES.push(84 + i * 60, 96 + i * 60);
-}
-LEGACY_HORIZONTAL_LINES.sort((a, b) => a - b);
+const gridLineData = [];
 
 let slots = [];
 const slotById = new Map();
@@ -113,11 +103,11 @@ const HOVER_TOGGLE_RADIUS_MULT = 3.1;
 const HOVER_TOGGLE_THRESHOLD = 0.09;
 const HOVER_TOGGLE_LIMIT = 22;
 const HOVER_TOGGLE_COOLDOWN_MS = 70;
-const CLICK_WAVE_DURATION_MS = 900;
-const CLICK_WAVE_MAX_RADIUS = 430;
-const CLICK_WAVE_THICKNESS_PX = 90;
+const CLICK_WAVE_DURATION_MS = 1400;
+const CLICK_WAVE_MAX_RADIUS = 560;
+const CLICK_WAVE_THICKNESS_PX = 160;
 const CLICK_WAVE_TOGGLE_LIMIT = 70;
-const CLICK_WAVE_TOGGLE_COOLDOWN_MS = 190;
+const CLICK_WAVE_TOGGLE_COOLDOWN_MS = 140;
 const SPLASH_RANGE_PX = 184;
 const SPLASH_VELOCITY_SCALE = 3;
 const SPLASH_FORCE_SCALE = 2;
@@ -610,7 +600,7 @@ function applyHoverFluidToggles(nowMs) {
 
 function addClickWave(x, y, nowMs = performance.now()) {
   addHoverBurst(x, y, nowMs);
-  injectFluidAtScene(x, y, 0, 0, HOVER_RADIUS_PX * 1.15, 0.09, 0.028);
+  injectFluidAtScene(x, y, 0, 0, HOVER_RADIUS_PX * 1.5, 0.18, 0.055);
 
   clickWaves.push({
     x,
@@ -640,18 +630,18 @@ function applyClickWaves(nowMs) {
     }
 
     const t = clamp01(ageMs / CLICK_WAVE_DURATION_MS);
-    const radius = wave.maxRadius * (1 - Math.pow(1 - t, 2.35));
-    const thickness = wave.thickness * (0.82 + t * 0.24);
+    const radius = wave.maxRadius * (1 - Math.pow(1 - t, 1.8));
+    const thickness = wave.thickness * (0.9 + t * 0.15);
 
-    const ringSegments = 14;
-    const impulse = (1 - t) * 130;
+    const ringSegments = 22;
+    const impulse = (1 - t * t) * 160;
     for (let segment = 0; segment < ringSegments; segment += 1) {
       const angle = (segment / ringSegments) * Math.PI * 2;
       const px = wave.x + Math.cos(angle) * radius;
       const py = wave.y + Math.sin(angle) * radius;
       const vx = Math.cos(angle) * impulse;
       const vy = Math.sin(angle) * impulse;
-      injectFluidAtScene(px, py, vx, vy, HOVER_RADIUS_PX * 0.88, 0.86, 0.008);
+      injectFluidAtScene(px, py, vx, vy, HOVER_RADIUS_PX * 1.1, 1.2, 0.014);
     }
 
     let toggledThisWave = 0;
@@ -1364,35 +1354,76 @@ function computeGeometry() {
   rippleRadiusMax = Math.hypot(SCENE_CENTER_X, SCENE_CENTER_Y);
 }
 
-function drawLegacyGridLines() {
+function drawGridLines() {
   gridLayer.replaceChildren();
+  gridLineData.length = 0;
   const fragment = document.createDocumentFragment();
+  const maxI = Math.ceil((SCENE_WIDTH / 2) / nodeStep) + 2;
+  const maxJ = Math.ceil((SCENE_HEIGHT / 2) / nodeStep) + 2;
 
-  for (const x of LEGACY_VERTICAL_LINES) {
-    fragment.appendChild(svg("line", { x1: x, y1: 36, x2: x, y2: 1044 }));
+  for (let i = -maxI; i <= maxI; i++) {
+    const x = SCENE_CENTER_X + i * nodeStep;
+    if (x < -nodeStep || x > SCENE_WIDTH + nodeStep) continue;
+    const el = svg("line", { x1: x, y1: 0, x2: x, y2: SCENE_HEIGHT });
+    fragment.appendChild(el);
+    gridLineData.push({ el, orientation: "v", pos: x });
   }
 
-  for (const y of LEGACY_HORIZONTAL_LINES) {
-    fragment.appendChild(svg("line", { x1: 66, y1: y, x2: 1854, y2: y }));
+  for (let j = -maxJ; j <= maxJ; j++) {
+    const y = SCENE_CENTER_Y + j * nodeStep;
+    if (y < -nodeStep || y > SCENE_HEIGHT + nodeStep) continue;
+    const el = svg("line", { x1: 0, y1: y, x2: SCENE_WIDTH, y2: y });
+    fragment.appendChild(el);
+    gridLineData.push({ el, orientation: "h", pos: y });
   }
 
   gridLayer.appendChild(fragment);
+}
+
+function updateGridOpacities() {
+  if (!isGridVisible || gridLineData.length === 0) return;
+
+  for (const line of gridLineData) {
+    let maxFluid = 0;
+    const SAMPLES = 5;
+
+    for (let s = 0; s <= SAMPLES; s++) {
+      const t = s / SAMPLES;
+      const sx = line.orientation === "v" ? line.pos : t * SCENE_WIDTH;
+      const sy = line.orientation === "h" ? line.pos : t * SCENE_HEIGHT;
+      const d = sampleFluidDensityAtScene(sx, sy);
+      if (d > maxFluid) maxFluid = d;
+    }
+
+    let pointerReveal = 0;
+    if (pointerState.inside) {
+      const dist = line.orientation === "v"
+        ? Math.abs(pointerState.x - line.pos)
+        : Math.abs(pointerState.y - line.pos);
+      pointerReveal = 1 - smoothstep(0, nodeStep * 5, dist);
+    }
+
+    const reveal = clamp01(Math.max(maxFluid * 1.6, pointerReveal));
+    const opacity = 0.025 + reveal * 0.2;
+    line.el.style.strokeOpacity = opacity.toFixed(3);
+  }
 }
 
 function rebuildSlots() {
   slots = [];
   slotById.clear();
 
-  const maxI = Math.ceil((SCENE_WIDTH / 2) / nodeStep) + 2;
-  const maxJ = Math.ceil((SCENE_HEIGHT / 2) / nodeStep) + 2;
+  const pad = nodeStep * 3;
+  const maxI = Math.ceil((SCENE_WIDTH / 2 + pad) / nodeStep);
+  const maxJ = Math.ceil((SCENE_HEIGHT / 2 + pad) / nodeStep);
 
   for (let i = -maxI; i <= maxI; i += 1) {
     const x = SCENE_CENTER_X + i * nodeStep;
-    if (x < -nodeStep || x > SCENE_WIDTH + nodeStep) continue;
+    if (x < -pad || x > SCENE_WIDTH + pad) continue;
 
     for (let j = -maxJ; j <= maxJ; j += 1) {
       const y = SCENE_CENTER_Y + j * nodeStep;
-      if (y < -nodeStep || y > SCENE_HEIGHT + nodeStep) continue;
+      if (y < -pad || y > SCENE_HEIGHT + pad) continue;
 
       const id = `n-${i}-${j}`;
       const slot = { id, i, j, x, y };
@@ -1410,6 +1441,7 @@ function rebuildSlots() {
 
 function rebuildGridGeometry() {
   computeGeometry();
+  drawGridLines();
   rebuildSlots();
   buildHitLayer();
   renderVectors();
@@ -1478,7 +1510,7 @@ function renderVectors() {
     const prev = previousState.get(slot.id);
     const startScale = prev ? prev.scale : baseScale;
     const startMotion = prev ? prev.motion : 0;
-    const startOpacity = prev ? prev.opacity : 1;
+    const startOpacity = prev ? prev.opacity : (introRevealActive ? 0 : 1);
     const item = { slot, entry, el: mark, cx: slot.x, cy: slot.y, phase, scale: startScale, motion: startMotion, opacity: startOpacity };
     applyTransform(item, startScale);
     renderedVectors.push(item);
@@ -1864,6 +1896,22 @@ function endDrag() {
   dragVisited.clear();
 }
 
+function clickWaveRingLevel(cx, cy, nowMs) {
+  let level = 0;
+  for (const wave of clickWaves) {
+    const ageMs = nowMs - wave.startMs;
+    if (ageMs >= CLICK_WAVE_DURATION_MS) continue;
+    const t = clamp01(ageMs / CLICK_WAVE_DURATION_MS);
+    const radius = wave.maxRadius * (1 - Math.pow(1 - t, 1.8));
+    const thickness = wave.thickness * (0.9 + t * 0.15);
+    const dist = Math.hypot(cx - wave.x, cy - wave.y);
+    const band = 1 - smoothstep(thickness * 0.3, thickness, Math.abs(dist - radius));
+    const fade = Math.pow(1 - t, 0.6);
+    level = Math.max(level, band * fade);
+  }
+  return level;
+}
+
 function levelHover(item, nowMs) {
   const fluidRaw = sampleFluidDensityAtScene(item.cx, item.cy);
   const organicMask = organicHoverMask(item.cx, item.cy, nowMs);
@@ -1873,7 +1921,8 @@ function levelHover(item, nowMs) {
     const distance = Math.hypot(item.cx - pointerState.x, item.cy - pointerState.y);
     pointerFocus = 1 - smoothstep(14, Math.max(240, nodeStep * 2.3), distance);
   }
-  return clamp01(Math.max(pointerFocus * 0.88, fluidLevel * 1.15));
+  const ringLevel = clickWaveRingLevel(item.cx, item.cy, nowMs);
+  return clamp01(Math.max(pointerFocus * 0.88, fluidLevel * 1.15, ringLevel * 0.95));
 }
 
 const RIPPLE_SPEED = 0.38;
@@ -1941,21 +1990,22 @@ function chevronLevel(item, tipX, spanX, thickness, blur) {
 }
 
 function levelArrow(item, nowMs) {
-  const speed = 0.68;
-  const travelPad = 760;
+  const speed = 0.52;
+  const travelPad = 900;
   const travel = SCENE_WIDTH + travelPad * 2;
-  const spacing = 620;
-  const count = 3;
+  const spacing = 480;
+  const count = 4;
 
-  const spanX = Math.max(220, SCENE_HEIGHT * 0.5);
-  const thickness = Math.max(14, nodeStep * 0.42);
-  const blur = Math.max(20, nodeStep * 0.62);
+  const spanX = Math.max(320, SCENE_HEIGHT * 0.6);
+  const thickness = Math.max(28, nodeStep * 0.9);
+  const blur = Math.max(36, nodeStep * 1.1);
 
   let level = 0;
 
   for (let i = 0; i < count; i += 1) {
     const tipX = ((nowMs * speed + i * spacing) % travel) - travelPad;
-    const chevron = chevronLevel(item, tipX, spanX, thickness, blur);
+    const strength = 1 - i * 0.12;
+    const chevron = chevronLevel(item, tipX, spanX, thickness, blur) * strength;
     level = Math.max(level, chevron);
   }
 
@@ -2092,9 +2142,9 @@ function animate(nowMs) {
       targetScale = Math.max(0.001, revealEased * (0.18 + item.motion * 2.0));
       targetOpacity = clamp01(0.12 + item.motion * 1.18);
     } else {
-      const hoverBoost = driverMode === "hover" ? 2.6 : driverMode === "ripple" ? 2.2 : 0.95;
+      const hoverBoost = driverMode === "hover" ? 2.6 : driverMode === "ripple" ? 2.2 : driverMode === "arrow" ? 2.4 : 0.95;
       targetScale = Math.max(0.001, revealEased * (1 + item.motion * hoverBoost));
-      targetOpacity = 1;
+      targetOpacity = introRevealActive ? clamp01(revealEased * 2.5) : 1;
     }
 
     if (veinsActive) {
@@ -2112,6 +2162,7 @@ function animate(nowMs) {
     applyTransform(item, item.scale);
   }
 
+  updateGridOpacities();
   requestAnimationFrame(animate);
 }
 
@@ -2364,7 +2415,7 @@ function wireControls() {
 }
 
 noiseSeed(Date.now());
-drawLegacyGridLines();
+drawGridLines();
 wireControls();
 wireDropImport();
 setUiVisible(true);

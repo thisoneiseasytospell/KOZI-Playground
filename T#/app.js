@@ -511,7 +511,7 @@ function applyRippleToggles(nowMs) {
   if (!canAutoToggleFromRipple()) return;
 
   const cycle = rippleRadiusMax + nodeStep * 8;
-  const base = (nowMs * RIPPLE_SPEED) % cycle;
+  const base = ((nowMs - rippleTimeOffset) * RIPPLE_SPEED) % cycle;
   const spacing = cycle / RIPPLE_WAVE_COUNT;
   const bandWidth = Math.max(30, nodeStep * 1.4);
   let toggled = 0;
@@ -1927,6 +1927,7 @@ function levelHover(item, nowMs) {
 
 const RIPPLE_SPEED = 0.38;
 const RIPPLE_WAVE_COUNT = 3;
+let rippleTimeOffset = 0;
 const RIPPLE_TOGGLE_COOLDOWN_MS = 110;
 const RIPPLE_TOGGLE_LIMIT = 40;
 const RIPPLE_TRAIL_DURATION_MS = 420;
@@ -1941,7 +1942,7 @@ function rippleDistortedRadius(baseRadius, angle, nowMs, waveIndex) {
 
 function levelRipple(item, nowMs) {
   const cycle = rippleRadiusMax + nodeStep * 8;
-  const base = (nowMs * RIPPLE_SPEED) % cycle;
+  const base = ((nowMs - rippleTimeOffset) * RIPPLE_SPEED) % cycle;
   const spacing = cycle / RIPPLE_WAVE_COUNT;
   const sigma = Math.max(24, nodeStep * 0.65);
   const dx = item.cx - SCENE_CENTER_X;
@@ -2402,7 +2403,13 @@ function wireControls() {
       return;
     }
     if (key === "l") loadSample();
-    if (key === "r") randomFill();
+    if (key === "r") {
+      if (driverMode === "ripple") {
+        rippleTimeOffset = performance.now();
+      } else {
+        randomFill();
+      }
+    }
     if (key === "c") clearAll();
     if (key === "g") setGridVisibility(!isGridVisible);
     if (key === "m") setMotion(!motionEnabled);

@@ -2403,7 +2403,7 @@ function wireControls() {
       return;
     }
     if (key === "l") loadSample();
-    if (key === "r") rippleTimeOffset = performance.now();
+    if (key === "r") restartIntroReveal();
     if (key === "c") clearAll();
     if (key === "g") setGridVisibility(!isGridVisible);
     if (key === "m") setMotion(!motionEnabled);

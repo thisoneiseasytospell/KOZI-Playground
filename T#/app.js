@@ -2149,7 +2149,9 @@ function animate(nowMs) {
 
     let targetScale, targetOpacity;
     if (isCameraActive) {
-      targetScale = Math.max(0.001, revealEased * (0.18 + item.motion * 2.0));
+      let camScale = 0.18 + item.motion * 2.0;
+      if (item.entry.type === 3) camScale *= 2.3;
+      targetScale = Math.max(0.001, revealEased * camScale);
       targetOpacity = clamp01(0.12 + item.motion * 1.18);
     } else {
       const hoverBoost = driverMode === "hover" ? 2.6 : driverMode === "ripple" ? 2.2 : driverMode === "arrow" ? 2.4 : 0.95;

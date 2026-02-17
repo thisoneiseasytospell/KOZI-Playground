@@ -2403,13 +2403,7 @@ function wireControls() {
       return;
     }
     if (key === "l") loadSample();
-    if (key === "r") {
-      if (driverMode === "ripple") {
-        rippleTimeOffset = performance.now();
-      } else {
-        randomFill();
-      }
-    }
+    if (key === "r") rippleTimeOffset = performance.now();
     if (key === "c") clearAll();
     if (key === "g") setGridVisibility(!isGridVisible);
     if (key === "m") setMotion(!motionEnabled);

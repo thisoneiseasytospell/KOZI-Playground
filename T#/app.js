@@ -528,7 +528,7 @@ function applyRippleToggles(nowMs) {
     let hit = false;
     for (let w = 0; w < RIPPLE_WAVE_COUNT; w += 1) {
       const ringRadius = (base + w * spacing) % cycle;
-      const distorted = rippleDistortedRadius(ringRadius, angle, nowMs, w);
+      const distorted = rippleDistortedRadius(ringRadius);
       if (Math.abs(distance - distorted) < bandWidth) {
         hit = true;
         break;
@@ -995,6 +995,21 @@ async function setDriverMode(nextMode) {
   updateDriverButtons();
 
   if (driverMode === "camera") {
+    for (const slot of slots) {
+      placed.set(slot.id, entryForNewSlot(slot));
+    }
+    renderedVectors.length = 0;
+    fluidDensity.fill(0);
+    fluidDensitySmoothed.fill(0);
+    fluidVelX.fill(0);
+    fluidVelY.fill(0);
+    renderVectors();
+    for (const item of renderedVectors) {
+      item.scale = 0.001;
+      item.motion = 0;
+      item.opacity = 0;
+      applyTransform(item, item.scale);
+    }
     if (droppedMediaType) {
       if (cameraEnabled) {
         stopCamera();
@@ -1933,12 +1948,8 @@ const RIPPLE_TOGGLE_COOLDOWN_MS = 110;
 const RIPPLE_TOGGLE_LIMIT = 40;
 const RIPPLE_TRAIL_DURATION_MS = 420;
 
-function rippleDistortedRadius(baseRadius, angle, nowMs, waveIndex) {
-  const seed = waveIndex * 137.5;
-  const n1 = noise2d(angle * 1.8 + seed, nowMs * 0.00025 + waveIndex * 3.7);
-  const n2 = noise2d(angle * 3.1 + seed + 50, nowMs * 0.00018 - waveIndex * 2.1);
-  const warp = n1 * 0.18 + n2 * 0.08;
-  return baseRadius * (1 + warp);
+function rippleDistortedRadius(baseRadius) {
+  return baseRadius;
 }
 
 function levelRipple(item, nowMs) {
@@ -1954,7 +1965,7 @@ function levelRipple(item, nowMs) {
   let level = 0;
   for (let w = 0; w < RIPPLE_WAVE_COUNT; w += 1) {
     const ringRadius = (base + w * spacing) % cycle;
-    const distorted = rippleDistortedRadius(ringRadius, angle, nowMs, w);
+    const distorted = rippleDistortedRadius(ringRadius);
     const strength = w === 0 ? 1 : (w === 1 ? 0.82 : 0.65);
     const wave = gaussian(distance - distorted, sigma);
     // Trailing wake: asymmetric falloff behind the wavefront
@@ -1966,15 +1977,7 @@ function levelRipple(item, nowMs) {
     level = Math.max(level, (wave + trail) * strength);
   }
 
-  // Noise-driven speckle in the trail zone for randomness
-  const trailNoise = fbm2d(
-    item.cx * 0.007 + nowMs * 0.00035,
-    item.cy * 0.007 - nowMs * 0.00025,
-    2
-  );
-  const speckle = clamp01((trailNoise + 0.3) * 0.6) * level * 0.3;
-
-  return clamp01(level + speckle);
+  return clamp01(level);
 }
 
 function chevronStrokeLevel(item, x1, y1, x2, y2, thickness, blur) {
@@ -2149,9 +2152,7 @@ function animate(nowMs) {
 
     let targetScale, targetOpacity;
     if (isCameraActive) {
-      let camScale = 0.18 + item.motion * 2.0;
-      if (item.entry.type === 3) camScale *= 2.3;
-      targetScale = Math.max(0.001, revealEased * camScale);
+      targetScale = Math.max(0.001, revealEased * (0.18 + item.motion * 2.0));
       targetOpacity = clamp01(0.12 + item.motion * 1.18);
     } else {
       const hoverBoost = driverMode === "hover" ? 2.6 : driverMode === "ripple" ? 2.2 : driverMode === "arrow" ? 2.4 : 0.95;

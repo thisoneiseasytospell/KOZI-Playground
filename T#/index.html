@@ -1,14 +1,6 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <!-- Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-119K8L8N8H"></script>
-    <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-119K8L8N8H');
-    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>KOZI for Tet#</title>
@@ -25,7 +17,7 @@
       xmlns="http://www.w3.org/2000/svg"
       aria-label="Interactive board"
     >
-      <rect width="1920" height="1080" fill="#000"></rect>
+      <rect width="1920" height="1080" fill="#1A112C"></rect>
       <image id="media-bg" width="1920" height="1080" preserveAspectRatio="xMidYMid slice" style="display:none" />
       <g id="content-layer">
         <g id="grid-lines"></g>
@@ -46,7 +38,7 @@
 
     <aside id="ui-panel" class="ui-panel">
       <header class="panel-header">
-        <h1><a href="https://kozi.studio/" target="_blank" rel="noopener">KOZI</a> for Tet#</h1>
+        <h1>KOZI for Tet#</h1>
       </header>
 
       <div class="panel-divider"></div>
@@ -54,13 +46,16 @@
       <section class="control-row">
         <span class="section-label">Presets</span>
         <div class="button-group">
-          <button id="load-sample">Sample</button>
           <button id="random-fill">Random</button>
+          <button id="solo-1" class="icon-btn" aria-label="Circles"><svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="5.5" fill="currentColor"/></svg></button>
+          <button id="solo-2" class="icon-btn" aria-label="Squares"><svg viewBox="0 0 16 16" width="14" height="14"><rect x="2.5" y="2.5" width="11" height="11" fill="currentColor"/></svg></button>
+          <button id="solo-3" class="icon-btn" aria-label="Dashes"><svg viewBox="0 0 16 16" width="14" height="14"><rect x="1" y="6" width="14" height="4" rx="1" fill="currentColor"/></svg></button>
           <button id="toggle-trails" class="toggle-btn">Veins</button>
           <button id="toggle-clouds" class="toggle-btn">Clouds</button>
           <button id="clear-all">(Free Draw)</button>
           <button id="toggle-eraser" class="toggle-btn">Eraser</button>
-          <button id="toggle-grid" class="toggle-btn">Grid</button>
+          <button id="rainbow-fill">Rainbow</button>
+          <button id="random-loop">Loop</button>
         </div>
         <label id="vein-count-control" class="range-control is-hidden" for="vein-count-slider">
           <span id="vein-count-label">Veins 6</span>
@@ -86,7 +81,7 @@
         </label>
         <label class="range-control" for="grid-size-slider">
           <span id="grid-size-label">Grid 100%</span>
-          <input id="grid-size-slider" type="range" min="5" max="260" step="0.1" value="35" />
+          <input id="grid-size-slider" type="range" min="2" max="260" step="0.1" value="35" />
         </label>
       </section>
 
@@ -107,6 +102,10 @@
       <section class="control-row">
         <div class="button-group">
           <button id="toggle-motion" class="toggle-btn is-active">Pause</button>
+          <button id="toggle-hover-scale" class="toggle-btn is-active">Scale</button>
+          <button id="toggle-morph" class="toggle-btn is-active">Morph</button>
+          <button id="toggle-auto-rotate" class="toggle-btn">Rotate</button>
+          <button id="toggle-cursor-off" class="toggle-btn">No Cursor</button>
         </div>
         <p id="motion-status" class="driver-status">Hover active</p>
         <video id="camera-preview" autoplay muted playsinline></video>
@@ -115,8 +114,75 @@
       </section>
 
       <div class="panel-divider"></div>
+
+      <section class="control-row">
+        <span class="section-label">Colors</span>
+        <div class="color-row">
+          <div class="color-control">
+            <span class="color-label">BG</span>
+            <input id="bg-color-picker" type="color" value="#1A112C" />
+            <input id="bg-color-hex" type="text" class="hex-input" value="#1A112C" spellcheck="false" />
+          </div>
+          <button id="swap-colors" class="swap-btn" type="button" aria-label="Swap colors"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2L2 5L5 8"/><path d="M2 5h12"/><path d="M11 8l3 3-3 3"/><path d="M14 11H2"/></svg></button>
+          <div class="color-control">
+            <span class="color-label">Node</span>
+            <input id="node-color-picker" type="color" value="#998ED2" />
+            <input id="node-color-hex" type="text" class="hex-input" value="#998ED2" spellcheck="false" />
+          </div>
+        </div>
+        <div id="brand-palette" class="brand-palette">
+          <button type="button" class="combo-swatch" data-bg="#1C1528" data-node="#8B80B3" style="background:#1C1528"><span style="background:#8B80B3"></span></button>
+          <button type="button" class="combo-swatch" data-bg="#312B56" data-node="#C9C3E5" style="background:#312B56"><span style="background:#C9C3E5"></span></button>
+          <button type="button" class="combo-swatch" data-bg="#8B80B3" data-node="#C9C3E5" style="background:#8B80B3"><span style="background:#C9C3E5"></span></button>
+          <button type="button" class="combo-swatch" data-bg="#1E2624" data-node="#C5CFC8" style="background:#1E2624"><span style="background:#C5CFC8"></span></button>
+          <button type="button" class="combo-swatch" data-bg="#3D4B44" data-node="#C5CFC8" style="background:#3D4B44"><span style="background:#C5CFC8"></span></button>
+          <button type="button" class="combo-swatch" data-bg="#929E94" data-node="#1E2624" style="background:#929E94"><span style="background:#1E2624"></span></button>
+        </div>
+      </section>
+
+      <div class="panel-divider"></div>
       <p class="panel-note">Backspace: step back</p>
     </aside>
+
+    <!-- Keyframe Timeline -->
+    <div id="timeline-panel" class="timeline-panel">
+      <div class="timeline-header">
+        <button id="timeline-toggle" class="timeline-collapse-btn" type="button">Timeline</button>
+        <div class="timeline-controls">
+          <button id="tl-play" class="tl-btn" type="button">Play</button>
+          <button id="tl-add-kf" class="tl-btn" type="button">+ Key</button>
+          <span id="tl-time" class="tl-time">0.00s</span>
+          <label class="tl-duration-label">
+            <span>Dur</span>
+            <input id="tl-duration" type="number" min="1" max="120" step="0.5" value="10" class="tl-duration-input" />
+            <span>s</span>
+          </label>
+          <label class="tl-loop-label">
+            <input id="tl-loop" type="checkbox" checked /> Loop
+          </label>
+        </div>
+      </div>
+      <div id="timeline-body" class="timeline-body">
+        <div class="timeline-track" data-param="nodeScale">
+          <span class="track-label">Node</span>
+          <div class="track-bar" data-param="nodeScale">
+            <div class="track-bar-inner"></div>
+          </div>
+        </div>
+        <div class="timeline-track" data-param="gridScale">
+          <span class="track-label">Grid</span>
+          <div class="track-bar" data-param="gridScale">
+            <div class="track-bar-inner"></div>
+          </div>
+        </div>
+        <div class="timeline-playhead-area">
+          <div class="timeline-ruler" id="tl-ruler"></div>
+          <div class="timeline-scrub" id="tl-scrub">
+            <div class="tl-playhead" id="tl-playhead"></div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="./app.js"></script>
   </body>

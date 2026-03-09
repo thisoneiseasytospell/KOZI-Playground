@@ -15,7 +15,6 @@ const toggleTrailsBtn = document.getElementById("toggle-trails");
 const toggleEraserBtn = document.getElementById("toggle-eraser");
 
 const driverButtons = Array.from(document.querySelectorAll(".driver-btn"));
-const sampleBtn = document.getElementById("load-sample");
 const randomFillBtn = document.getElementById("random-fill");
 const clearBtn = document.getElementById("clear-all");
 const toggleGridBtn = document.getElementById("toggle-grid");
@@ -39,6 +38,10 @@ const mediaBgEl = document.getElementById("media-bg");
 const toggleMediaBgBtn = document.getElementById("toggle-media-bg");
 const motionStatusEl = document.getElementById("motion-status");
 const toggleUiBtn = document.getElementById("toggle-ui");
+const bgColorPicker = document.getElementById("bg-color-picker");
+const nodeColorPicker = document.getElementById("node-color-picker");
+const bgColorHex = document.getElementById("bg-color-hex");
+const nodeColorHex = document.getElementById("node-color-hex");
 
 const DRIVER_LABELS = {
   hover: "Hover",
@@ -47,7 +50,17 @@ const DRIVER_LABELS = {
   camera: "Camera",
 };
 
-const gridLineData = [];
+const LEGACY_VERTICAL_LINES = [66, 1854];
+for (let i = 0; i < 29; i += 1) {
+  LEGACY_VERTICAL_LINES.push(114 + i * 60, 126 + i * 60);
+}
+LEGACY_VERTICAL_LINES.sort((a, b) => a - b);
+
+const LEGACY_HORIZONTAL_LINES = [36, 1044];
+for (let i = 0; i < 16; i += 1) {
+  LEGACY_HORIZONTAL_LINES.push(84 + i * 60, 96 + i * 60);
+}
+LEGACY_HORIZONTAL_LINES.sort((a, b) => a - b);
 
 let slots = [];
 const slotById = new Map();
@@ -70,7 +83,11 @@ let driverMode = "hover";
 let dragAction = null;
 const dragVisited = new Set();
 let uiVisible = true;
-let fillMode = "sample";
+let fillMode = "random";
+let soloMode = false;
+let soloType = 0;
+let morphEnabled = true;
+let hoverScaleEnabled = true;
 let introRevealActive = true;
 let introRevealStartMs = null;
 const INTRO_REVEAL_DURATION = 2600;
@@ -85,62 +102,19 @@ let cloudSpeedPercent = Number(cloudSpeedSlider?.value ?? 100);
 let eraserActive = false;
 let mediaBgVisible = true;
 let brushSize = Number(brushSizeSlider?.value ?? 2);
+var tlScrubbing = false;
+var tlPlaying = false;
+var tlBaseNodeScale = 100;
+let cursorInfluenceOff = false;
+let autoRotateActive = false;
 
-const FLUID_COLS = 120;
-const FLUID_ROWS = 68;
-const FLUID_SIZE = FLUID_COLS * FLUID_ROWS;
-const FLUID_DIFFUSION = 1.05;
-const FLUID_ITERATIONS = 5;
-const FLUID_PROJECT_ITERATIONS = 10;
-const FLUID_VELOCITY_DISSIPATION = 0.19;
-const FLUID_DENSITY_DISSIPATION = 0.44;
-const FLUID_STRENGTH = 1.28;
-const HOVER_RADIUS_PX = 40;
-const DRAG_BOOST_SCALE = 0.03;
-const DRAG_BOOST_MAX_PX = 60;
-const DRAG_THRESHOLD_PX = 6;
-const HOVER_TOGGLE_RADIUS_MULT = 3.1;
-const HOVER_TOGGLE_THRESHOLD = 0.09;
-const HOVER_TOGGLE_LIMIT = 22;
-const HOVER_TOGGLE_COOLDOWN_MS = 70;
-const CLICK_WAVE_DURATION_MS = 1400;
-const CLICK_WAVE_MAX_RADIUS = 560;
-const CLICK_WAVE_THICKNESS_PX = 160;
-const CLICK_WAVE_TOGGLE_LIMIT = 70;
-const CLICK_WAVE_TOGGLE_COOLDOWN_MS = 140;
-const SPLASH_RANGE_PX = 184;
-const SPLASH_VELOCITY_SCALE = 3;
-const SPLASH_FORCE_SCALE = 2;
-const SPLASH_DENSITY = 0.048;
-const SPLASH_RANDOMNESS = 0.14;
-const SPLASH_THICKNESS_PX = 100;
-const SPLASH_TRAVEL_EASE_POWER = 2.5;
-const SPLASH_FORCE_DECAY_POWER = 1.2;
-const SPLASH_DENSITY_DECAY_POWER = 2;
-const SPLASH_DURATION_MS = 460;
-
-const fluidDensity = new Float32Array(FLUID_SIZE);
-const fluidDensityPrev = new Float32Array(FLUID_SIZE);
-const fluidVelX = new Float32Array(FLUID_SIZE);
-const fluidVelY = new Float32Array(FLUID_SIZE);
-const fluidVelXPrev = new Float32Array(FLUID_SIZE);
-const fluidVelYPrev = new Float32Array(FLUID_SIZE);
-const fluidPressure = new Float32Array(FLUID_SIZE);
-const fluidDivergence = new Float32Array(FLUID_SIZE);
-const fluidDensitySmoothed = new Float32Array(FLUID_SIZE);
-const DENSITY_SMOOTHING_MS = 300;
-const hoverSplashes = [];
-const clickWaves = [];
-const slotToggleCooldownById = new Map();
-
-let hoverPointerDown = false;
-let hoverPrevX = pointerState.x;
-let hoverPrevY = pointerState.y;
-let hoverPrevMs = 0;
-let hoverWaveStampMs = 0;
-let hoverIdleMs = 0;
-const HOVER_SETTLE_MS = 400;
-const HOVER_SETTLE_FADE_MS = 600;
+const HOVER_RADIUS = 360;
+const CLICK_RIPPLE_WAVELENGTH = 180;
+const CLICK_RIPPLE_SPEED = 0.9;
+const CLICK_RIPPLE_DURATION_MS = 2400;
+const CLICK_RIPPLE_DISPLACE_PX = 8;
+const CLICK_RIPPLE_DISPLACE_RADIUS = 280;
+const clickRipples = [];
 
 let cellSize = BASE_CELL;
 let cellMargin = BASE_CELL / 4;
@@ -158,6 +132,41 @@ let droppedMediaName = "";
 let droppedMediaUrl = null;
 let droppedImage = null;
 let dropDepth = 0;
+let DEFAULT_MARK_COLOR = "#998ed2";
+const MIN_NODE_VARIANT_SCALE = 0.55;
+const MAX_NODE_VARIANT_SCALE = 1.9;
+const MEDIA_PALETTE_FALLBACK = ["#19002f", "#9584d1", "#bbb3d5", "#1a341f", "#6a8665", "#b1c0b3"];
+let activeNodePalette = MEDIA_PALETTE_FALLBACK.slice();
+
+const BRAND_COLORS = [
+  "#1C1528", "#312B56", "#8B80B3", "#C9C3E5", "#EDE8CA", "#F4F0D8", "#FDFBF0",
+  "#1E2624", "#3D4B44", "#929E94", "#C5CFC8", "#E4E0DC", "#EAE8E4", "#F8F6F2",
+];
+const BRAND_COMBOS = [
+  { bg: "#1C1528", node: "#8B80B3" },
+  { bg: "#312B56", node: "#C9C3E5" },
+  { bg: "#8B80B3", node: "#C9C3E5" },
+  { bg: "#1E2624", node: "#C5CFC8" },
+  { bg: "#3D4B44", node: "#C5CFC8" },
+  { bg: "#929E94", node: "#1E2624" },
+];
+const bgRect = board.querySelector("rect");
+
+function applyBgColor(hex) {
+  bgRect.setAttribute("fill", hex);
+  board.style.background = hex;
+  document.body.style.background = hex;
+}
+
+function applyNodeColor(hex) {
+  DEFAULT_MARK_COLOR = hex.toLowerCase();
+  for (const [id, entry] of placed) {
+    if (entry.type !== 0) {
+      entry.color = hex;
+    }
+  }
+  renderVectors();
+}
 
 const cameraCanvas = document.createElement("canvas");
 cameraCanvas.width = 640;
@@ -174,6 +183,10 @@ function svg(tag, attrs) {
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function lerp(a, b, t) {
@@ -207,301 +220,58 @@ function pointToSegmentDistance(px, py, x1, y1, x2, y2) {
   return Math.hypot(px - cx, py - cy);
 }
 
-function fluidIndex(x, y) {
-  return x + y * FLUID_COLS;
+function addClickRipple(x, y) {
+  // In solo mode with morph, cycle to next vector type
+  if (soloMode && morphEnabled) {
+    soloType = soloType >= 3 ? 1 : soloType + 1;
+  }
+  clickRipples.push({ x, y, startMs: performance.now(), swapType: (soloMode && morphEnabled) ? soloType : 0, swapped: new Set() });
+  if (clickRipples.length > 8) clickRipples.shift();
 }
 
-function fluidClampX(x) {
-  return Math.max(0, Math.min(FLUID_COLS - 1, x));
+function clickRippleLevel(item, nowMs) {
+  let level = 0;
+  for (const rip of clickRipples) {
+    const age = nowMs - rip.startMs;
+    if (age > CLICK_RIPPLE_DURATION_MS) continue;
+    const t = age / CLICK_RIPPLE_DURATION_MS;
+    const dx = item.cx - rip.x;
+    const dy = item.cy - rip.y;
+    const dist = Math.hypot(dx, dy);
+    const frontRadius = age * CLICK_RIPPLE_SPEED;
+    const behind = dist - frontRadius;
+    if (behind > CLICK_RIPPLE_WAVELENGTH * 0.5) continue;
+    const phase = dist / CLICK_RIPPLE_WAVELENGTH - age * CLICK_RIPPLE_SPEED * 0.01;
+    const wave = Math.sin(phase * Math.PI * 2);
+    const fadeIn = smoothstep(frontRadius - CLICK_RIPPLE_WAVELENGTH * 3, frontRadius, dist);
+    const fadeTime = 1 - t * t;
+    level = Math.max(level, (wave * 0.5 + 0.5) * fadeIn * fadeTime);
+  }
+  return clamp01(level);
 }
 
-function fluidClampY(y) {
-  return Math.max(0, Math.min(FLUID_ROWS - 1, y));
+function clickRippleDisplacement(item, nowMs) {
+  let totalX = 0, totalY = 0;
+  for (const rip of clickRipples) {
+    const age = nowMs - rip.startMs;
+    if (age > CLICK_RIPPLE_DURATION_MS) continue;
+    const t = age / CLICK_RIPPLE_DURATION_MS;
+    const dx = item.cx - rip.x;
+    const dy = item.cy - rip.y;
+    const dist = Math.max(1, Math.hypot(dx, dy));
+    if (dist > CLICK_RIPPLE_DISPLACE_RADIUS) continue;
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const proximity = 1 - smoothstep(0, CLICK_RIPPLE_DISPLACE_RADIUS, dist);
+    // Single outward pulse that settles quickly
+    const pulse = Math.sin(t * Math.PI) * (1 - t);
+    const push = pulse * proximity * proximity * CLICK_RIPPLE_DISPLACE_PX;
+    totalX += nx * push;
+    totalY += ny * push;
+  }
+  return { x: totalX, y: totalY };
 }
 
-function fluidSetBoundary(type, field) {
-  for (let x = 1; x < FLUID_COLS - 1; x += 1) {
-    field[fluidIndex(x, 0)] = type === 2 ? -field[fluidIndex(x, 1)] : field[fluidIndex(x, 1)];
-    field[fluidIndex(x, FLUID_ROWS - 1)] = type === 2 ? -field[fluidIndex(x, FLUID_ROWS - 2)] : field[fluidIndex(x, FLUID_ROWS - 2)];
-  }
-
-  for (let y = 1; y < FLUID_ROWS - 1; y += 1) {
-    field[fluidIndex(0, y)] = type === 1 ? -field[fluidIndex(1, y)] : field[fluidIndex(1, y)];
-    field[fluidIndex(FLUID_COLS - 1, y)] = type === 1 ? -field[fluidIndex(FLUID_COLS - 2, y)] : field[fluidIndex(FLUID_COLS - 2, y)];
-  }
-
-  field[fluidIndex(0, 0)] = 0.5 * (field[fluidIndex(1, 0)] + field[fluidIndex(0, 1)]);
-  field[fluidIndex(0, FLUID_ROWS - 1)] = 0.5 * (field[fluidIndex(1, FLUID_ROWS - 1)] + field[fluidIndex(0, FLUID_ROWS - 2)]);
-  field[fluidIndex(FLUID_COLS - 1, 0)] = 0.5 * (field[fluidIndex(FLUID_COLS - 2, 0)] + field[fluidIndex(FLUID_COLS - 1, 1)]);
-  field[fluidIndex(FLUID_COLS - 1, FLUID_ROWS - 1)] = 0.5 * (
-    field[fluidIndex(FLUID_COLS - 2, FLUID_ROWS - 1)] + field[fluidIndex(FLUID_COLS - 1, FLUID_ROWS - 2)]
-  );
-}
-
-function fluidLinearSolve(type, field, prevField, a, c, iterations) {
-  for (let k = 0; k < iterations; k += 1) {
-    for (let y = 1; y < FLUID_ROWS - 1; y += 1) {
-      for (let x = 1; x < FLUID_COLS - 1; x += 1) {
-        const idx = fluidIndex(x, y);
-        field[idx] = (
-          prevField[idx]
-          + a * (
-            field[fluidIndex(x - 1, y)]
-            + field[fluidIndex(x + 1, y)]
-            + field[fluidIndex(x, y - 1)]
-            + field[fluidIndex(x, y + 1)]
-          )
-        ) / c;
-      }
-    }
-    fluidSetBoundary(type, field);
-  }
-}
-
-function fluidDiffuse(type, field, prevField, diff, dt) {
-  const a = dt * diff * Math.min(FLUID_COLS, FLUID_ROWS);
-  fluidLinearSolve(type, field, prevField, a, 1 + 4 * a, FLUID_ITERATIONS);
-}
-
-function fluidAdvect(type, field, prevField, velXField, velYField, dt) {
-  const dtX = dt * (FLUID_COLS - 2);
-  const dtY = dt * (FLUID_ROWS - 2);
-
-  for (let y = 1; y < FLUID_ROWS - 1; y += 1) {
-    for (let x = 1; x < FLUID_COLS - 1; x += 1) {
-      const idx = fluidIndex(x, y);
-      let backX = x - dtX * velXField[idx];
-      let backY = y - dtY * velYField[idx];
-
-      backX = Math.max(0.5, Math.min(FLUID_COLS - 1.5, backX));
-      backY = Math.max(0.5, Math.min(FLUID_ROWS - 1.5, backY));
-
-      const x0 = Math.floor(backX);
-      const x1 = x0 + 1;
-      const y0 = Math.floor(backY);
-      const y1 = y0 + 1;
-
-      const sx = backX - x0;
-      const sy = backY - y0;
-
-      const v00 = prevField[fluidIndex(x0, y0)];
-      const v10 = prevField[fluidIndex(x1, y0)];
-      const v01 = prevField[fluidIndex(x0, y1)];
-      const v11 = prevField[fluidIndex(x1, y1)];
-
-      field[idx] = (
-        (1 - sx) * ((1 - sy) * v00 + sy * v01)
-        + sx * ((1 - sy) * v10 + sy * v11)
-      );
-    }
-  }
-
-  fluidSetBoundary(type, field);
-}
-
-function fluidProject(velXField, velYField, pressureField, divergenceField) {
-  for (let y = 1; y < FLUID_ROWS - 1; y += 1) {
-    for (let x = 1; x < FLUID_COLS - 1; x += 1) {
-      const idx = fluidIndex(x, y);
-      divergenceField[idx] = -0.5 * (
-        (velXField[fluidIndex(x + 1, y)] - velXField[fluidIndex(x - 1, y)]) / FLUID_COLS
-        + (velYField[fluidIndex(x, y + 1)] - velYField[fluidIndex(x, y - 1)]) / FLUID_ROWS
-      );
-      pressureField[idx] = 0;
-    }
-  }
-
-  fluidSetBoundary(0, divergenceField);
-  fluidSetBoundary(0, pressureField);
-  fluidLinearSolve(0, pressureField, divergenceField, 1, 4, FLUID_PROJECT_ITERATIONS);
-
-  for (let y = 1; y < FLUID_ROWS - 1; y += 1) {
-    for (let x = 1; x < FLUID_COLS - 1; x += 1) {
-      const idx = fluidIndex(x, y);
-      velXField[idx] -= 0.5 * FLUID_COLS * (pressureField[fluidIndex(x + 1, y)] - pressureField[fluidIndex(x - 1, y)]);
-      velYField[idx] -= 0.5 * FLUID_ROWS * (pressureField[fluidIndex(x, y + 1)] - pressureField[fluidIndex(x, y - 1)]);
-    }
-  }
-
-  fluidSetBoundary(1, velXField);
-  fluidSetBoundary(2, velYField);
-}
-
-function fluidStep(dt) {
-  const stepDt = Math.max(0.001, Math.min(0.033, dt));
-
-  fluidVelXPrev.set(fluidVelX);
-  fluidVelYPrev.set(fluidVelY);
-  fluidDiffuse(1, fluidVelX, fluidVelXPrev, FLUID_DIFFUSION, stepDt);
-  fluidDiffuse(2, fluidVelY, fluidVelYPrev, FLUID_DIFFUSION, stepDt);
-  fluidProject(fluidVelX, fluidVelY, fluidPressure, fluidDivergence);
-
-  fluidVelXPrev.set(fluidVelX);
-  fluidVelYPrev.set(fluidVelY);
-  fluidAdvect(1, fluidVelX, fluidVelXPrev, fluidVelXPrev, fluidVelYPrev, stepDt);
-  fluidAdvect(2, fluidVelY, fluidVelYPrev, fluidVelXPrev, fluidVelYPrev, stepDt);
-  fluidProject(fluidVelX, fluidVelY, fluidPressure, fluidDivergence);
-
-  fluidDensityPrev.set(fluidDensity);
-  fluidDiffuse(0, fluidDensity, fluidDensityPrev, FLUID_DIFFUSION, stepDt);
-  fluidDensityPrev.set(fluidDensity);
-  fluidAdvect(0, fluidDensity, fluidDensityPrev, fluidVelX, fluidVelY, stepDt);
-
-  const velDecay = Math.exp(-FLUID_VELOCITY_DISSIPATION * stepDt * 3.2);
-  const densityDecay = Math.exp(-FLUID_DENSITY_DISSIPATION * stepDt * 3.6);
-  for (let i = 0; i < FLUID_SIZE; i += 1) {
-    fluidVelX[i] *= velDecay;
-    fluidVelY[i] *= velDecay;
-    fluidDensity[i] *= densityDecay;
-  }
-}
-
-function injectFluidAtScene(sceneX, sceneY, velSceneX, velSceneY, radiusPx, forceScale, densityAmount) {
-  const gx = (sceneX / SCENE_WIDTH) * (FLUID_COLS - 1);
-  const gy = (sceneY / SCENE_HEIGHT) * (FLUID_ROWS - 1);
-  const radius = Math.max(1, (
-    (radiusPx / SCENE_WIDTH) * FLUID_COLS
-    + (radiusPx / SCENE_HEIGHT) * FLUID_ROWS
-  ) * 0.5);
-
-  const minX = fluidClampX(Math.floor(gx - radius));
-  const maxX = fluidClampX(Math.ceil(gx + radius));
-  const minY = fluidClampY(Math.floor(gy - radius));
-  const maxY = fluidClampY(Math.ceil(gy + radius));
-
-  const velGridX = (velSceneX / SCENE_WIDTH) * FLUID_COLS;
-  const velGridY = (velSceneY / SCENE_HEIGHT) * FLUID_ROWS;
-
-  for (let y = minY; y <= maxY; y += 1) {
-    for (let x = minX; x <= maxX; x += 1) {
-      const dx = x - gx;
-      const dy = y - gy;
-      const dist = Math.hypot(dx, dy);
-      if (dist > radius) continue;
-      const influence = 1 - smoothstep(0, radius, dist);
-      const idx = fluidIndex(x, y);
-      fluidVelX[idx] += velGridX * forceScale * influence;
-      fluidVelY[idx] += velGridY * forceScale * influence;
-      fluidDensity[idx] = Math.min(0.82, fluidDensity[idx] + densityAmount * influence);
-    }
-  }
-}
-
-function addHoverBurst(x, y, nowMs = performance.now()) {
-  hoverSplashes.push({ x, y, startMs: nowMs, seed: Math.random() * 1000 });
-  if (hoverSplashes.length > 10) {
-    hoverSplashes.shift();
-  }
-}
-
-function applyHoverSplashes(nowMs) {
-  for (let index = hoverSplashes.length - 1; index >= 0; index -= 1) {
-    const splash = hoverSplashes[index];
-    const ageMs = nowMs - splash.startMs;
-    if (ageMs >= SPLASH_DURATION_MS) {
-      hoverSplashes.splice(index, 1);
-      continue;
-    }
-
-    const t = clamp01(ageMs / SPLASH_DURATION_MS);
-    const travel = 1 - Math.pow(1 - t, SPLASH_TRAVEL_EASE_POWER);
-    const radius = SPLASH_RANGE_PX * travel;
-    const forceDrop = Math.pow(1 - t, SPLASH_FORCE_DECAY_POWER);
-    const densityDrop = Math.pow(1 - t, SPLASH_DENSITY_DECAY_POWER);
-    const segments = 24;
-
-    for (let segment = 0; segment < segments; segment += 1) {
-      const angle = (segment / segments) * Math.PI * 2;
-      const wave = (
-        0.5 * Math.sin(6 * angle + splash.seed)
-        + 0.25 * Math.sin(3 * angle + 0.05 * radius + 0.3 * splash.seed)
-        + 0.5
-      );
-      const randomFactor = 1 + SPLASH_RANDOMNESS * (wave * 2 - 1);
-      const ringRadius = radius + (wave - 0.5) * SPLASH_THICKNESS_PX * 0.35;
-      const px = splash.x + Math.cos(angle) * ringRadius;
-      const py = splash.y + Math.sin(angle) * ringRadius;
-      const velocity = 240 * SPLASH_VELOCITY_SCALE * SPLASH_FORCE_SCALE * forceDrop * randomFactor;
-      const vx = Math.cos(angle) * velocity;
-      const vy = Math.sin(angle) * velocity;
-      const density = SPLASH_DENSITY * densityDrop * randomFactor;
-      injectFluidAtScene(px, py, vx, vy, HOVER_RADIUS_PX * 0.95, 1.05, density);
-    }
-  }
-}
-
-function applyHoverPointerFluid(nowMs) {
-  if (!pointerState.inside || driverMode !== "hover") return;
-
-  if (hoverPrevMs === 0) {
-    hoverPrevMs = nowMs;
-    hoverPrevX = pointerState.x;
-    hoverPrevY = pointerState.y;
-    injectFluidAtScene(pointerState.x, pointerState.y, 0, 0, HOVER_RADIUS_PX * 0.92, 0.12, 0.045);
-    return;
-  }
-
-  const dtMs = Math.max(1, nowMs - hoverPrevMs);
-  const dx = pointerState.x - hoverPrevX;
-  const dy = pointerState.y - hoverPrevY;
-  const speedPx = Math.hypot(dx, dy);
-  const velX = (dx / dtMs) * 1000;
-  const velY = (dy / dtMs) * 1000;
-
-  // Track idle time and compute activity fade
-  if (speedPx > 1.5 || hoverPointerDown) {
-    hoverIdleMs = 0;
-  } else {
-    hoverIdleMs += dtMs;
-  }
-  const idleProgress = clamp01((hoverIdleMs - HOVER_SETTLE_MS) / HOVER_SETTLE_FADE_MS);
-  const activity = 1 - idleProgress;
-
-  if (activity <= 0) {
-    hoverPrevX = pointerState.x;
-    hoverPrevY = pointerState.y;
-    hoverPrevMs = nowMs;
-    return;
-  }
-
-  const dragBoost = speedPx > DRAG_THRESHOLD_PX ? Math.min(DRAG_BOOST_MAX_PX, speedPx * DRAG_BOOST_SCALE * 0.7) : 0;
-  const radius = HOVER_RADIUS_PX + dragBoost + (hoverPointerDown ? 16 : 6);
-  let density = hoverPointerDown ? 0.075 : 0.038;
-  let force = hoverPointerDown ? 2.05 : 1.35;
-  if (!hoverPointerDown && speedPx < 0.12) {
-    density *= 0.65;
-    force *= 0.6;
-  }
-  density *= activity;
-  force *= activity;
-
-  const speedDampen = smoothstep(0, 14, speedPx);
-  const swirl = (organicHoverMask(pointerState.x, pointerState.y, nowMs) - 0.5) * 2;
-  const swirlAmt = lerp(0.03, 1, speedDampen) * activity;
-  const swirlVx = Math.cos(nowMs * 0.004 + pointerState.y * 0.011) * 115 * swirl * swirlAmt;
-  const swirlVy = Math.sin(nowMs * 0.004 + pointerState.x * 0.011) * 115 * swirl * swirlAmt;
-
-  injectFluidAtScene(pointerState.x, pointerState.y, velX + swirlVx, velY + swirlVy, radius, force, density);
-  if (speedPx > DRAG_THRESHOLD_PX * 0.75 && nowMs - hoverWaveStampMs > 120) {
-    addHoverBurst(pointerState.x, pointerState.y, nowMs);
-    hoverWaveStampMs = nowMs;
-  }
-
-  hoverPrevX = pointerState.x;
-  hoverPrevY = pointerState.y;
-  hoverPrevMs = nowMs;
-}
-
-function resetHoverPointerState() {
-  hoverPointerDown = false;
-  hoverPrevMs = 0;
-  hoverWaveStampMs = 0;
-  hoverIdleMs = 0;
-}
-
-function canAutoToggleFromHover() {
-  return driverMode === "hover" && fillMode !== "clear" && !eraserActive;
-}
 
 function canAutoToggleFromRipple() {
   return driverMode === "ripple" && fillMode !== "clear" && !eraserActive;
@@ -509,188 +279,21 @@ function canAutoToggleFromRipple() {
 
 function applyRippleToggles(nowMs) {
   if (!canAutoToggleFromRipple()) return;
-
-  const cycle = rippleRadiusMax + nodeStep * 8;
-  const base = ((nowMs - rippleTimeOffset) * RIPPLE_SPEED) % cycle;
-  const spacing = cycle / RIPPLE_WAVE_COUNT;
-  const bandWidth = Math.max(30, nodeStep * 1.4);
   let toggled = 0;
-
   for (const slot of slots) {
-    if (toggled >= RIPPLE_TOGGLE_LIMIT) break;
-    if (!canToggleSlotNow(slot.id, nowMs, RIPPLE_TOGGLE_COOLDOWN_MS)) continue;
-
+    if (toggled >= 12) break;
     const dx = slot.x - SCENE_CENTER_X;
     const dy = slot.y - SCENE_CENTER_Y;
     const distance = Math.hypot(dx, dy);
-    const angle = Math.atan2(dy, dx);
-
-    let hit = false;
-    for (let w = 0; w < RIPPLE_WAVE_COUNT; w += 1) {
-      const ringRadius = (base + w * spacing) % cycle;
-      const distorted = rippleDistortedRadius(ringRadius);
-      if (Math.abs(distance - distorted) < bandWidth) {
-        hit = true;
-        break;
-      }
-    }
-
-    if (!hit) continue;
-    advanceSlotType(slot);
-    toggled += 1;
-  }
-
-  if (toggled > 0) {
-    queueRender();
-  }
-}
-
-function advanceSlotType(slot) {
-  const current = placed.get(slot.id) ?? entryForNewSlot(slot);
-  const nextType = current.type <= 0 ? 1 : (current.type >= 3 ? 1 : current.type + 1);
-  placed.set(slot.id, { type: nextType, rotQ: current.rotQ });
-}
-
-function canToggleSlotNow(slotId, nowMs, cooldownMs) {
-  const lastMs = slotToggleCooldownById.get(slotId) ?? -Infinity;
-  if (nowMs - lastMs < cooldownMs) return false;
-  slotToggleCooldownById.set(slotId, nowMs);
-  return true;
-}
-
-function applyHoverFluidToggles(nowMs) {
-  if (!canAutoToggleFromHover() || !pointerState.inside) return;
-
-  const radius = Math.max(nodeStep * 1.8, HOVER_RADIUS_PX * HOVER_TOGGLE_RADIUS_MULT);
-  const maxDist = radius * radius;
-  const candidates = [];
-
-  for (const slot of slots) {
-    const dx = slot.x - pointerState.x;
-    const dy = slot.y - pointerState.y;
-    const dist2 = dx * dx + dy * dy;
-    if (dist2 > maxDist) continue;
-
-    const dist = Math.sqrt(dist2);
-    const local = 1 - smoothstep(0, radius, dist);
-    const fluid = sampleFluidDensityAtScene(slot.x, slot.y);
-    const signal = fluid * (0.55 + local * 1.2);
-    if (signal < HOVER_TOGGLE_THRESHOLD) continue;
-    candidates.push({ slot, signal });
-  }
-
-  if (candidates.length === 0) return;
-  candidates.sort((a, b) => b.signal - a.signal);
-
-  const limit = hoverPointerDown ? Math.round(HOVER_TOGGLE_LIMIT * 1.6) : HOVER_TOGGLE_LIMIT;
-  const cooldown = hoverPointerDown ? Math.round(HOVER_TOGGLE_COOLDOWN_MS * 0.72) : HOVER_TOGGLE_COOLDOWN_MS;
-  let toggled = 0;
-
-  for (const candidate of candidates) {
-    if (!canToggleSlotNow(candidate.slot.id, nowMs, cooldown)) continue;
-    advanceSlotType(candidate.slot);
-    toggled += 1;
-    if (toggled >= limit) break;
-  }
-
-  if (toggled > 0) {
-    queueRender();
-  }
-}
-
-function addClickWave(x, y, nowMs = performance.now()) {
-  addHoverBurst(x, y, nowMs);
-  injectFluidAtScene(x, y, 0, 0, HOVER_RADIUS_PX * 1.5, 0.18, 0.055);
-
-  clickWaves.push({
-    x,
-    y,
-    startMs: nowMs,
-    maxRadius: Math.max(CLICK_WAVE_MAX_RADIUS, nodeStep * 8.8),
-    thickness: Math.max(CLICK_WAVE_THICKNESS_PX, nodeStep * 1.4),
-    allowToggle: canAutoToggleFromHover(),
-    toggled: new Set(),
-  });
-  if (clickWaves.length > 5) {
-    clickWaves.shift();
-  }
-}
-
-function applyClickWaves(nowMs) {
-  if (clickWaves.length === 0) return;
-
-  let changed = false;
-
-  for (let waveIndex = clickWaves.length - 1; waveIndex >= 0; waveIndex -= 1) {
-    const wave = clickWaves[waveIndex];
-    const ageMs = nowMs - wave.startMs;
-    if (ageMs >= CLICK_WAVE_DURATION_MS) {
-      clickWaves.splice(waveIndex, 1);
-      continue;
-    }
-
-    const t = clamp01(ageMs / CLICK_WAVE_DURATION_MS);
-    const radius = wave.maxRadius * (1 - Math.pow(1 - t, 1.8));
-    const thickness = wave.thickness * (0.9 + t * 0.15);
-
-    const ringSegments = 22;
-    const impulse = (1 - t * t) * 160;
-    for (let segment = 0; segment < ringSegments; segment += 1) {
-      const angle = (segment / ringSegments) * Math.PI * 2;
-      const px = wave.x + Math.cos(angle) * radius;
-      const py = wave.y + Math.sin(angle) * radius;
-      const vx = Math.cos(angle) * impulse;
-      const vy = Math.sin(angle) * impulse;
-      injectFluidAtScene(px, py, vx, vy, HOVER_RADIUS_PX * 1.1, 1.2, 0.014);
-    }
-
-    let toggledThisWave = 0;
-    if (!wave.allowToggle) {
-      continue;
-    }
-    for (const slot of slots) {
-      if (wave.toggled.has(slot.id)) continue;
-      if (!canToggleSlotNow(slot.id, nowMs, CLICK_WAVE_TOGGLE_COOLDOWN_MS)) continue;
-      const dist = Math.hypot(slot.x - wave.x, slot.y - wave.y);
-      const ringBand = 1 - smoothstep(thickness * 0.45, thickness, Math.abs(dist - radius));
-      if (ringBand < 0.74) continue;
-      advanceSlotType(slot);
-      wave.toggled.add(slot.id);
-      toggledThisWave += 1;
-      changed = true;
-      if (toggledThisWave >= CLICK_WAVE_TOGGLE_LIMIT) break;
+    const wave = rippleWave(distance, nowMs);
+    if (wave > 0.7) {
+      const current = normalizeEntry(placed.get(slot.id) ?? entryForNewSlot(slot), slot);
+      const nextType = current.type <= 0 ? 1 : (current.type >= 3 ? 1 : current.type + 1);
+      placed.set(slot.id, makeEntry(nextType, current.rotQ, current.size, current.color));
+      toggled += 1;
     }
   }
-
-  if (changed) {
-    queueRender();
-  }
-}
-
-function sampleFluidDensityAtScene(sceneX, sceneY) {
-  const gx = (sceneX / SCENE_WIDTH) * (FLUID_COLS - 1);
-  const gy = (sceneY / SCENE_HEIGHT) * (FLUID_ROWS - 1);
-  const x0 = Math.floor(gx);
-  const y0 = Math.floor(gy);
-  const x1 = Math.min(FLUID_COLS - 1, x0 + 1);
-  const y1 = Math.min(FLUID_ROWS - 1, y0 + 1);
-  const tx = gx - x0;
-  const ty = gy - y0;
-
-  const d00 = fluidDensitySmoothed[fluidIndex(x0, y0)];
-  const d10 = fluidDensitySmoothed[fluidIndex(x1, y0)];
-  const d01 = fluidDensitySmoothed[fluidIndex(x0, y1)];
-  const d11 = fluidDensitySmoothed[fluidIndex(x1, y1)];
-
-  const d0 = d00 + (d10 - d00) * tx;
-  const d1 = d01 + (d11 - d01) * tx;
-  return clamp01((d0 + (d1 - d0) * ty) * FLUID_STRENGTH);
-}
-
-function organicHoverMask(sceneX, sceneY, nowMs) {
-  const t = nowMs * 0.00009;
-  const noise = fbm2d(sceneX * 0.0032 + t, sceneY * 0.0032 - t * 0.7, 3);
-  return clamp01((noise + 1) * 0.5);
+  if (toggled > 0) queueRender();
 }
 
 /* ---- 2D gradient noise ---- */
@@ -796,6 +399,7 @@ function updatePreviewState() {
 function setUiVisible(nextVisible) {
   uiVisible = nextVisible;
   document.body.classList.toggle("ui-hidden", !nextVisible);
+  toggleUiBtn.style.display = nextVisible ? "" : "none";
   toggleUiBtn.textContent = nextVisible ? "Hide UI" : "Show UI";
 }
 
@@ -888,7 +492,7 @@ function setFillMode(nextMode) {
 }
 
 function isMotionControlApplicable() {
-  return driverMode !== "hover" || veinsActive || cloudsActive;
+  return introRevealActive || driverMode !== "hover" || veinsActive || cloudsActive;
 }
 
 function updateMotionControlVisibility() {
@@ -995,21 +599,6 @@ async function setDriverMode(nextMode) {
   updateDriverButtons();
 
   if (driverMode === "camera") {
-    for (const slot of slots) {
-      placed.set(slot.id, entryForNewSlot(slot));
-    }
-    renderedVectors.length = 0;
-    fluidDensity.fill(0);
-    fluidDensitySmoothed.fill(0);
-    fluidVelX.fill(0);
-    fluidVelY.fill(0);
-    renderVectors();
-    for (const item of renderedVectors) {
-      item.scale = 0.001;
-      item.motion = 0;
-      item.opacity = 0;
-      applyTransform(item, item.scale);
-    }
     if (droppedMediaType) {
       if (cameraEnabled) {
         stopCamera();
@@ -1030,9 +619,6 @@ async function setDriverMode(nextMode) {
     cameraPreview.pause();
   }
 
-  if (driverMode !== "hover") {
-    resetHoverPointerState();
-  }
 
   if (driverMode === "hover" && !motionEnabled) {
     setMotion(true);
@@ -1043,23 +629,268 @@ async function setDriverMode(nextMode) {
   updateMotionControlVisibility();
 }
 
-function randomEntry() {
+function isValidHexColor(value) {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+}
+
+function rgbToHex(r, g, b) {
+  const hex = (value) => clamp(Math.round(value), 0, 255).toString(16).padStart(2, "0");
+  return `#${hex(r)}${hex(g)}${hex(b)}`;
+}
+
+function hexToRgb(hex) {
+  if (!isValidHexColor(hex)) return null;
+  const clean = hex.slice(1);
   return {
-    type: Math.floor(Math.random() * 3) + 1,
-    rotQ: Math.floor(Math.random() * 4),
+    r: parseInt(clean.slice(0, 2), 16),
+    g: parseInt(clean.slice(2, 4), 16),
+    b: parseInt(clean.slice(4, 6), 16),
+    hex: `#${clean.toLowerCase()}`,
   };
 }
 
+function colorLuma01(color) {
+  return (0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b) / 255;
+}
+
+function ensureColorVisibility(hex, minLuma = 0.22) {
+  const parsed = hexToRgb(hex);
+  if (!parsed) return DEFAULT_MARK_COLOR;
+  const luma = colorLuma01(parsed);
+  if (luma >= minLuma) return parsed.hex;
+  const mix = clamp((minLuma - luma) / Math.max(0.0001, 1 - luma), 0, 1);
+  return rgbToHex(
+    lerp(parsed.r, 236, mix),
+    lerp(parsed.g, 236, mix),
+    lerp(parsed.b, 236, mix)
+  );
+}
+
+function colorDistanceSq(a, b) {
+  const dr = a.r - b.r;
+  const dg = a.g - b.g;
+  const db = a.b - b.b;
+  return dr * dr + dg * dg + db * db;
+}
+
+function paletteAsRgb(paletteHex = activeNodePalette) {
+  const parsed = paletteHex.map(hexToRgb).filter(Boolean);
+  if (parsed.length > 0) return parsed;
+  return MEDIA_PALETTE_FALLBACK.map(hexToRgb).filter(Boolean);
+}
+
+function nearestPaletteColor(r, g, b, paletteRgb = paletteAsRgb()) {
+  if (!paletteRgb.length) return null;
+  const input = { r, g, b };
+  let best = paletteRgb[0];
+  let bestDist = colorDistanceSq(input, best);
+  for (let i = 1; i < paletteRgb.length; i += 1) {
+    const candidate = paletteRgb[i];
+    const distance = colorDistanceSq(input, candidate);
+    if (distance < bestDist) {
+      bestDist = distance;
+      best = candidate;
+    }
+  }
+  return best;
+}
+
+function entryStyleForSlot(slot) {
+  const organic = fbm2d(slot.x * 0.013 + 930, slot.y * 0.013 - 640, 2);
+  const size = clamp(1 + organic * 0.12, MIN_NODE_VARIANT_SCALE, MAX_NODE_VARIANT_SCALE);
+  return { size, color: DEFAULT_MARK_COLOR };
+}
+
+function makeEntry(type, rotQ, size = 1, color = DEFAULT_MARK_COLOR) {
+  return {
+    type: clamp(Math.round(type), 0, 3),
+    rotQ: ((Math.round(rotQ) % 4) + 4) % 4,
+    size: clamp(Number.isFinite(size) ? size : 1, MIN_NODE_VARIANT_SCALE, MAX_NODE_VARIANT_SCALE),
+    color: isValidHexColor(color) ? color.toLowerCase() : DEFAULT_MARK_COLOR,
+  };
+}
+
+function normalizeEntry(entry, slot = null) {
+  const source = entry && typeof entry === "object" ? entry : null;
+  const type = clamp(Math.round(Number(source?.type ?? 0)), 0, 3);
+  const rotQ = ((Math.round(Number(source?.rotQ ?? 0)) % 4) + 4) % 4;
+  const defaultStyle = slot ? entryStyleForSlot(slot) : { size: 1, color: DEFAULT_MARK_COLOR };
+  const size = Number.isFinite(source?.size) ? source.size : defaultStyle.size;
+  const color = isValidHexColor(source?.color) ? source.color : defaultStyle.color;
+  return makeEntry(type, rotQ, size, color);
+}
+
+function randomEntry(slot = null) {
+  const style = slot ? entryStyleForSlot(slot) : { size: 1, color: DEFAULT_MARK_COLOR };
+  return makeEntry(Math.floor(Math.random() * 3) + 1, Math.floor(Math.random() * 4), style.size, style.color);
+}
+
 function sampleEntry(slot) {
-  const h = (Math.imul(slot.i, 2654435761) ^ Math.imul(slot.j, 2246822519)) >>> 0;
-  const type = (h % 3) + 1;
-  const rotQ = (h >>> 2) & 3;
-  return { type, rotQ };
+  const type = ((Math.abs(slot.i) + Math.abs(slot.j)) % 3) + 1;
+  const rotQ = ((((slot.i * 3 + slot.j * 5) % 4) + 4) % 4);
+  const style = entryStyleForSlot(slot);
+  return makeEntry(type, rotQ, style.size, style.color);
 }
 
 function entryForNewSlot(slot) {
-  if (fillMode === "clear") return { type: 0, rotQ: 0 };
-  return fillMode === "random" ? randomEntry() : sampleEntry(slot);
+  if (fillMode === "clear") return makeEntry(0, 0);
+  return fillMode === "random" ? randomEntry(slot) : sampleEntry(slot);
+}
+
+function extractPaletteFromCameraPixels(maxColors = 6) {
+  if (!cameraPixels || cameraPixels.length < 4) {
+    return MEDIA_PALETTE_FALLBACK.slice(0, maxColors);
+  }
+
+  const buckets = new Map();
+  const pixelCount = cameraCanvas.width * cameraCanvas.height;
+  const stridePx = clamp(Math.floor(pixelCount / 2200), 1, 14);
+  const stride = stridePx * 4;
+  const quant = 24;
+
+  for (let index = 0; index < cameraPixels.length; index += stride) {
+    const r = cameraPixels[index];
+    const g = cameraPixels[index + 1];
+    const b = cameraPixels[index + 2];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const sat = max === 0 ? 0 : (max - min) / max;
+    const luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    const centerBias = 1 - Math.abs(luma - 0.46);
+    const weight = Math.max(0.2, 0.6 + sat * 1.55 + centerBias * 0.45);
+
+    const qr = clamp(Math.round(r / quant) * quant, 0, 255);
+    const qg = clamp(Math.round(g / quant) * quant, 0, 255);
+    const qb = clamp(Math.round(b / quant) * quant, 0, 255);
+    const key = `${qr},${qg},${qb}`;
+
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { w: 0, r: 0, g: 0, b: 0 };
+      buckets.set(key, bucket);
+    }
+
+    bucket.w += weight;
+    bucket.r += r * weight;
+    bucket.g += g * weight;
+    bucket.b += b * weight;
+  }
+
+  const candidates = [];
+  for (const bucket of buckets.values()) {
+    if (bucket.w <= 1.2) continue;
+    const r = bucket.r / bucket.w;
+    const g = bucket.g / bucket.w;
+    const b = bucket.b / bucket.w;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const sat = max === 0 ? 0 : (max - min) / max;
+    candidates.push({
+      r,
+      g,
+      b,
+      sat,
+      score: bucket.w * (0.45 + sat * 2.2),
+    });
+  }
+  candidates.sort((a, b) => b.score - a.score);
+
+  const chosen = [];
+  const minDistanceSq = 42 * 42;
+  for (const candidate of candidates) {
+    if (chosen.length >= maxColors) break;
+    if (chosen.every((current) => colorDistanceSq(candidate, current) >= minDistanceSq)) {
+      chosen.push(candidate);
+    }
+  }
+
+  const fallbackRgb = MEDIA_PALETTE_FALLBACK.map(hexToRgb).filter(Boolean);
+  for (const fallback of fallbackRgb) {
+    if (chosen.length >= maxColors) break;
+    if (chosen.every((current) => colorDistanceSq(fallback, current) >= 26 * 26)) {
+      chosen.push(fallback);
+    }
+  }
+
+  if (chosen.length === 0) {
+    return MEDIA_PALETTE_FALLBACK.slice(0, maxColors);
+  }
+
+  return chosen.slice(0, maxColors).map((color) => rgbToHex(color.r, color.g, color.b));
+}
+
+function sampleMediaPixelAtScene(sceneX, sceneY) {
+  if (!cameraPixels || cameraCanvas.width < 1 || cameraCanvas.height < 1) return null;
+  const width = cameraCanvas.width;
+  const height = cameraCanvas.height;
+  const xNormRaw = sampleMirrorX ? 1 - sceneX / SCENE_WIDTH : sceneX / SCENE_WIDTH;
+  const xNorm = clamp01(xNormRaw);
+  const yNorm = clamp01(sceneY / SCENE_HEIGHT);
+  const px = clamp(Math.round(xNorm * (width - 1)), 0, width - 1);
+  const py = clamp(Math.round(yNorm * (height - 1)), 0, height - 1);
+  const index = (py * width + px) * 4;
+  const r = cameraPixels[index];
+  const g = cameraPixels[index + 1];
+  const b = cameraPixels[index + 2];
+  return {
+    r,
+    g,
+    b,
+    luma: (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255,
+  };
+}
+
+function imageEntryForSlot(slot, paletteRgb = paletteAsRgb()) {
+  const center = sampleMediaPixelAtScene(slot.x, slot.y);
+  if (!center) {
+    return sampleEntry(slot);
+  }
+
+  const offset = Math.max(8, nodeStep * 0.65);
+  const left = sampleMediaPixelAtScene(slot.x - offset, slot.y) ?? center;
+  const right = sampleMediaPixelAtScene(slot.x + offset, slot.y) ?? center;
+  const up = sampleMediaPixelAtScene(slot.x, slot.y - offset) ?? center;
+  const down = sampleMediaPixelAtScene(slot.x, slot.y + offset) ?? center;
+
+  const gradX = right.luma - left.luma;
+  const gradY = down.luma - up.luma;
+  const gradient = clamp01(Math.hypot(gradX, gradY) * 2.1);
+
+  let type;
+  if (center.luma < 0.34) {
+    type = 3;
+  } else if (center.luma < 0.65) {
+    type = gradient > 0.34 ? 2 : 3;
+  } else {
+    type = gradient > 0.3 ? 1 : 2;
+  }
+
+  const angle = Math.atan2(gradY, gradX);
+  const rotQ = ((Math.round(angle / (Math.PI * 0.5)) % 4) + 4) % 4;
+  const noise = fbm2d(slot.x * 0.017 + 2100, slot.y * 0.017 - 1300, 2);
+  const size = clamp(
+    0.9 + (1 - center.luma) * 0.52 + gradient * 0.95 + noise * 0.14,
+    0.78,
+    MAX_NODE_VARIANT_SCALE
+  );
+  const paletteColor = nearestPaletteColor(center.r, center.g, center.b, paletteRgb);
+  return makeEntry(type, rotQ, size, ensureColorVisibility(paletteColor?.hex ?? DEFAULT_MARK_COLOR, 0.2));
+}
+
+function paintDroppedImageToSlots() {
+  if (droppedMediaType !== "image" || !cameraPixels || slots.length === 0) return false;
+  const extracted = extractPaletteFromCameraPixels(6);
+  const blendedPalette = [];
+  for (let i = 0; i < Math.max(extracted.length, MEDIA_PALETTE_FALLBACK.length); i += 1) {
+    if (i < extracted.length) blendedPalette.push(extracted[i]);
+    if (i < MEDIA_PALETTE_FALLBACK.length) blendedPalette.push(MEDIA_PALETTE_FALLBACK[i]);
+  }
+  activeNodePalette = [...new Set(blendedPalette)].slice(0, 6);
+  const paletteRgb = paletteAsRgb(activeNodePalette);
+  for (const slot of slots) {
+    placed.set(slot.id, imageEntryForSlot(slot, paletteRgb));
+  }
+  return true;
 }
 
 function restartIntroReveal() {
@@ -1075,8 +906,13 @@ function stopIntroReveal() {
 function clonePlacedState() {
   const snapshot = new Map();
   for (const slot of slots) {
-    const entry = placed.get(slot.id) ?? { type: 0, rotQ: 0 };
-    snapshot.set(slot.id, { type: entry.type, rotQ: entry.rotQ });
+    const entry = normalizeEntry(placed.get(slot.id), slot);
+    snapshot.set(slot.id, {
+      type: entry.type,
+      rotQ: entry.rotQ,
+      size: entry.size,
+      color: entry.color,
+    });
   }
   return snapshot;
 }
@@ -1084,8 +920,8 @@ function clonePlacedState() {
 function restorePlacedState(snapshot) {
   placed.clear();
   for (const slot of slots) {
-    const entry = snapshot.get(slot.id) ?? { type: 0, rotQ: 0 };
-    placed.set(slot.id, { type: entry.type, rotQ: entry.rotQ });
+    const entry = snapshot.get(slot.id) ?? makeEntry(0, 0);
+    placed.set(slot.id, normalizeEntry(entry, slot));
   }
 }
 
@@ -1216,6 +1052,7 @@ function releaseDroppedMedia() {
   droppedMediaName = "";
   droppedImage = null;
   cameraPixels = null;
+  activeNodePalette = MEDIA_PALETTE_FALLBACK.slice();
 
   imagePreview.removeAttribute("src");
   mediaBgEl.style.display = "none";
@@ -1284,8 +1121,16 @@ async function loadDroppedImage(file) {
   setSamplingCanvasSize(image.naturalWidth, image.naturalHeight);
   drawSourceToSamplingCanvas(image);
   adaptLumaRange();
+  if (slots.length > 0) {
+    pushUndoState();
+  }
+  stopRandomizer();
+  setFillMode("sample");
+  if (paintDroppedImageToSlots()) {
+    stopIntroReveal();
+    renderVectors();
+  }
 
-  stopIntroReveal();
   if (!motionEnabled) {
     setMotion(true);
   }
@@ -1370,76 +1215,35 @@ function computeGeometry() {
   rippleRadiusMax = Math.hypot(SCENE_CENTER_X, SCENE_CENTER_Y);
 }
 
-function drawGridLines() {
+function drawLegacyGridLines() {
   gridLayer.replaceChildren();
-  gridLineData.length = 0;
   const fragment = document.createDocumentFragment();
-  const maxI = Math.ceil((SCENE_WIDTH / 2) / nodeStep) + 2;
-  const maxJ = Math.ceil((SCENE_HEIGHT / 2) / nodeStep) + 2;
 
-  for (let i = -maxI; i <= maxI; i++) {
-    const x = SCENE_CENTER_X + i * nodeStep;
-    if (x < -nodeStep || x > SCENE_WIDTH + nodeStep) continue;
-    const el = svg("line", { x1: x, y1: 0, x2: x, y2: SCENE_HEIGHT });
-    fragment.appendChild(el);
-    gridLineData.push({ el, orientation: "v", pos: x });
+  for (const x of LEGACY_VERTICAL_LINES) {
+    fragment.appendChild(svg("line", { x1: x, y1: 36, x2: x, y2: 1044 }));
   }
 
-  for (let j = -maxJ; j <= maxJ; j++) {
-    const y = SCENE_CENTER_Y + j * nodeStep;
-    if (y < -nodeStep || y > SCENE_HEIGHT + nodeStep) continue;
-    const el = svg("line", { x1: 0, y1: y, x2: SCENE_WIDTH, y2: y });
-    fragment.appendChild(el);
-    gridLineData.push({ el, orientation: "h", pos: y });
+  for (const y of LEGACY_HORIZONTAL_LINES) {
+    fragment.appendChild(svg("line", { x1: 66, y1: y, x2: 1854, y2: y }));
   }
 
   gridLayer.appendChild(fragment);
-}
-
-function updateGridOpacities() {
-  if (!isGridVisible || gridLineData.length === 0) return;
-
-  for (const line of gridLineData) {
-    let maxFluid = 0;
-    const SAMPLES = 5;
-
-    for (let s = 0; s <= SAMPLES; s++) {
-      const t = s / SAMPLES;
-      const sx = line.orientation === "v" ? line.pos : t * SCENE_WIDTH;
-      const sy = line.orientation === "h" ? line.pos : t * SCENE_HEIGHT;
-      const d = sampleFluidDensityAtScene(sx, sy);
-      if (d > maxFluid) maxFluid = d;
-    }
-
-    let pointerReveal = 0;
-    if (pointerState.inside) {
-      const dist = line.orientation === "v"
-        ? Math.abs(pointerState.x - line.pos)
-        : Math.abs(pointerState.y - line.pos);
-      pointerReveal = 1 - smoothstep(0, nodeStep * 5, dist);
-    }
-
-    const reveal = clamp01(Math.max(maxFluid * 1.6, pointerReveal));
-    const opacity = 0.025 + reveal * 0.2;
-    line.el.style.strokeOpacity = opacity.toFixed(3);
-  }
 }
 
 function rebuildSlots() {
   slots = [];
   slotById.clear();
 
-  const pad = nodeStep * 3;
-  const maxI = Math.ceil((SCENE_WIDTH / 2 + pad) / nodeStep);
-  const maxJ = Math.ceil((SCENE_HEIGHT / 2 + pad) / nodeStep);
+  const maxI = Math.ceil((SCENE_WIDTH / 2) / nodeStep) + 2;
+  const maxJ = Math.ceil((SCENE_HEIGHT / 2) / nodeStep) + 2;
 
   for (let i = -maxI; i <= maxI; i += 1) {
     const x = SCENE_CENTER_X + i * nodeStep;
-    if (x < -pad || x > SCENE_WIDTH + pad) continue;
+    if (x < -nodeStep || x > SCENE_WIDTH + nodeStep) continue;
 
     for (let j = -maxJ; j <= maxJ; j += 1) {
       const y = SCENE_CENTER_Y + j * nodeStep;
-      if (y < -pad || y > SCENE_HEIGHT + pad) continue;
+      if (y < -nodeStep || y > SCENE_HEIGHT + nodeStep) continue;
 
       const id = `n-${i}-${j}`;
       const slot = { id, i, j, x, y };
@@ -1448,16 +1252,24 @@ function rebuildSlots() {
 
       if (!placed.has(id)) {
         placed.set(id, entryForNewSlot(slot));
+      } else {
+        placed.set(id, normalizeEntry(placed.get(id), slot));
       }
     }
   }
 
   slots.sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y));
+
+  if (droppedMediaType === "image" && cameraPixels && fillMode !== "clear") {
+    const paletteRgb = paletteAsRgb(activeNodePalette);
+    for (const slot of slots) {
+      placed.set(slot.id, imageEntryForSlot(slot, paletteRgb));
+    }
+  }
 }
 
 function rebuildGridGeometry() {
   computeGeometry();
-  drawGridLines();
   rebuildSlots();
   buildHitLayer();
   renderVectors();
@@ -1465,7 +1277,10 @@ function rebuildGridGeometry() {
 
 function makeVectorGraphic(entry, slot) {
   const baseNode = cellSize - cellMargin * 2;
-  const scaled = Math.max(1.2, baseNode * (nodeScalePercent / 100));
+  const variant = clamp(Number.isFinite(entry.size) ? entry.size : 1, MIN_NODE_VARIANT_SCALE, MAX_NODE_VARIANT_SCALE);
+  const scaled = Math.max(1.2, baseNode * (nodeScalePercent / 100) * variant);
+  const rawColor = isValidHexColor(entry.color) ? entry.color : DEFAULT_MARK_COLOR;
+  const fillColor = droppedMediaType === "image" ? ensureColorVisibility(rawColor, 0.2) : rawColor;
   let mark;
 
   if (entry.type === 1) {
@@ -1473,7 +1288,7 @@ function makeVectorGraphic(entry, slot) {
       cx: slot.x.toFixed(2),
       cy: slot.y.toFixed(2),
       r: (scaled / 2).toFixed(2),
-      fill: "#fff",
+      fill: fillColor,
     });
   } else if (entry.type === 2) {
     mark = svg("rect", {
@@ -1481,17 +1296,19 @@ function makeVectorGraphic(entry, slot) {
       y: (slot.y - scaled / 2).toFixed(2),
       width: scaled.toFixed(2),
       height: scaled.toFixed(2),
-      fill: "#fff",
+      fill: fillColor,
     });
   } else {
     const width = scaled;
-    const height = scaled * 0.18;
+    const barRatio = droppedMediaType === "image" ? 0.3 : 0.18;
+    const minHeight = droppedMediaType === "image" ? 1.6 : 0.9;
+    const height = Math.max(minHeight, scaled * barRatio);
     mark = svg("rect", {
       x: (slot.x - width / 2).toFixed(2),
       y: (slot.y - height / 2).toFixed(2),
       width: width.toFixed(2),
       height: height.toFixed(2),
-      fill: "#fff",
+      fill: fillColor,
     });
   }
 
@@ -1500,25 +1317,51 @@ function makeVectorGraphic(entry, slot) {
 }
 
 function applyTransform(item, scale) {
-  const rotation = item.entry.rotQ * 90;
-  item.el.style.transform = `rotate(${rotation}deg) scale(${scale.toFixed(3)})`;
-  item.el.style.opacity = item.opacity.toFixed(3);
+  const rotation = item.rot ?? item.entry.rotQ * 90;
+  const useImageCrispMode = droppedMediaType === "image";
+  // During timeline playback, apply node scale ratio as a multiplier
+  let nodeRatio = 1;
+  if (tlBaseNodeScale > 0 && (tlPlaying || tlScrubbing)) {
+    nodeRatio = nodeScalePercent / tlBaseNodeScale;
+  }
+  const finalScale = scale * nodeRatio;
+  const safeScale = useImageCrispMode ? Math.round(finalScale * 24) / 24 : finalScale;
+  const tx = item.dx || 0;
+  const ty = item.dy || 0;
+  const translate = (tx !== 0 || ty !== 0) ? `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) ` : "";
+  item.el.style.transform = `${translate}rotate(${rotation.toFixed(1)}deg) scale(${safeScale.toFixed(3)})`;
+  const alpha = useImageCrispMode ? 1 : item.opacity;
+  item.el.style.opacity = alpha.toFixed(3);
 }
 
 function renderVectors() {
   const previousState = new Map();
   for (const item of renderedVectors) {
-    previousState.set(item.slot.id, { scale: item.scale, motion: item.motion, opacity: item.opacity });
+    previousState.set(item.slot.id, { scale: item.scale, motion: item.motion, opacity: item.opacity, dx: item.dx, dy: item.dy, rot: item.rot });
   }
 
   vectorLayer.replaceChildren();
   renderedVectors.length = 0;
 
   const fragment = document.createDocumentFragment();
+  const imagePalette = droppedMediaType === "image" ? paletteAsRgb(activeNodePalette) : null;
 
   for (const slot of slots) {
-    const entry = placed.get(slot.id);
-    if (!entry || entry.type === 0) continue;
+    const rawEntry = placed.get(slot.id);
+    let entry = normalizeEntry(rawEntry, slot);
+    if ((!rawEntry || entry.type === 0) && droppedMediaType === "image" && cameraPixels && fillMode !== "clear") {
+      entry = imageEntryForSlot(slot, imagePalette ?? paletteAsRgb(activeNodePalette));
+      placed.set(slot.id, entry);
+    } else if (
+      !rawEntry
+      || rawEntry.type !== entry.type
+      || rawEntry.rotQ !== entry.rotQ
+      || rawEntry.size !== entry.size
+      || rawEntry.color !== entry.color
+    ) {
+      placed.set(slot.id, entry);
+    }
+    if (entry.type === 0) continue;
 
     const mark = makeVectorGraphic(entry, slot);
     const phase = ((slot.x * 0.021 + slot.y * 0.017) * Math.PI) / 180;
@@ -1526,8 +1369,11 @@ function renderVectors() {
     const prev = previousState.get(slot.id);
     const startScale = prev ? prev.scale : baseScale;
     const startMotion = prev ? prev.motion : 0;
-    const startOpacity = prev ? prev.opacity : (introRevealActive ? 0 : 1);
-    const item = { slot, entry, el: mark, cx: slot.x, cy: slot.y, phase, scale: startScale, motion: startMotion, opacity: startOpacity };
+    const startOpacity = prev ? prev.opacity : 1;
+    const startDx = prev ? (prev.dx || 0) : 0;
+    const startDy = prev ? (prev.dy || 0) : 0;
+    const startRot = prev ? (prev.rot ?? entry.rotQ * 90) : entry.rotQ * 90;
+    const item = { slot, entry, el: mark, cx: slot.x, cy: slot.y, phase, scale: startScale, motion: startMotion, opacity: startOpacity, dx: startDx, dy: startDy, rot: startRot };
     applyTransform(item, startScale);
     renderedVectors.push(item);
     fragment.appendChild(mark);
@@ -1537,9 +1383,9 @@ function renderVectors() {
 }
 
 function cycleSlot(slot, direction, defer = false) {
-  const current = placed.get(slot.id) ?? entryForNewSlot(slot);
+  const current = normalizeEntry(placed.get(slot.id) ?? entryForNewSlot(slot), slot);
   const nextType = ((current.type + direction) % 4 + 4) % 4;
-  placed.set(slot.id, { type: nextType, rotQ: current.rotQ });
+  placed.set(slot.id, makeEntry(nextType, current.rotQ, current.size, current.color));
   if (defer) {
     queueRender();
   } else {
@@ -1563,7 +1409,7 @@ function loadSample(skipUndo = false) {
 function randomizeOneNode() {
   if (slots.length === 0) return;
   const slot = slots[Math.floor(Math.random() * slots.length)];
-  const newEntry = randomEntry();
+  const newEntry = randomEntry(slot);
   placed.set(slot.id, newEntry);
 
   const item = renderedVectors.find(r => r.slot.id === slot.id);
@@ -1604,6 +1450,9 @@ function randomFill() {
 
   pushUndoState();
 
+  soloMode = false;
+  hoverScaleEnabled = true;
+  document.getElementById("toggle-hover-scale").classList.add("is-active");
   setFillMode("random");
 
   // Organic noise fill as the base
@@ -1620,15 +1469,33 @@ function randomFill() {
     const n2 = fbm2d(slot.x * rotScale + offsetX + 300, slot.y * rotScale + offsetY + 300, 2);
     const type = n1 < -0.15 ? 1 : n1 < 0.2 ? 3 : 2;
     const rotQ = ((Math.floor((n2 + 1) * 2) % 4) + 4) % 4;
-    placed.set(slot.id, { type, rotQ });
+    const style = entryStyleForSlot(slot);
+    placed.set(slot.id, makeEntry(type, rotQ, style.size, style.color));
   }
   stopIntroReveal();
   renderVectors();
+}
 
-  // Start randomizer on top
-  randomizerActive = true;
-  randomFillBtn.classList.add("is-active");
-  randomizerTimer = setInterval(randomizerTick, 80);
+function soloFill(type) {
+  pushUndoState();
+  soloMode = true;
+  soloType = type;
+  hoverScaleEnabled = false;
+  document.getElementById("toggle-hover-scale").classList.remove("is-active");
+  setFillMode("random");
+  const seed = Math.floor(Math.random() * 100000);
+  noiseSeed(seed);
+  const rotScale = 0.008 + Math.random() * 0.014;
+  const offsetX = Math.random() * 500;
+  const offsetY = Math.random() * 500;
+  for (const slot of slots) {
+    const n = fbm2d(slot.x * rotScale + offsetX, slot.y * rotScale + offsetY, 2);
+    const rotQ = ((Math.floor((n + 1) * 2) % 4) + 4) % 4;
+    const style = entryStyleForSlot(slot);
+    placed.set(slot.id, makeEntry(type, rotQ, style.size, style.color));
+  }
+  stopIntroReveal();
+  renderVectors();
 }
 
 const veins = [];
@@ -1750,7 +1617,7 @@ function toggleClouds() {
 function toggleEraser() {
   eraserActive = !eraserActive;
   if (eraserActive && fillMode === "clear") {
-    setFillMode("sample");
+    setFillMode("random");
   }
   toggleEraserBtn.classList.toggle("is-active", eraserActive);
 }
@@ -1761,7 +1628,7 @@ function emptyCanvas(skipUndo = false) {
     pushUndoState();
   }
   for (const slot of slots) {
-    placed.set(slot.id, { type: 0, rotQ: 0 });
+    placed.set(slot.id, makeEntry(0, 0));
   }
   stopIntroReveal();
   renderVectors();
@@ -1784,6 +1651,9 @@ function updateCameraPixels() {
     if (!cameraPixels) {
       drawSourceToSamplingCanvas(droppedImage);
       adaptLumaRange();
+      if (paintDroppedImageToSlots()) {
+        queueRender();
+      }
     }
     return;
   }
@@ -1848,27 +1718,27 @@ function paintSingleSlot(slot) {
   dragVisited.add(slot.id);
 
   if (eraserActive) {
-    placed.set(slot.id, { type: 0, rotQ: 0 });
+    placed.set(slot.id, makeEntry(0, 0));
     queueRender();
     return;
   }
 
   if (fillMode === "clear" && dragAction === "forward") {
-    const current = placed.get(slot.id);
+    const current = placed.get(slot.id) ? normalizeEntry(placed.get(slot.id), slot) : null;
     if (!current || current.type === 0) {
-      placed.set(slot.id, randomEntry());
+      placed.set(slot.id, randomEntry(slot));
     } else {
       const nextType = current.type >= 3 ? 1 : current.type + 1;
-      placed.set(slot.id, { type: nextType, rotQ: current.rotQ });
+      placed.set(slot.id, makeEntry(nextType, current.rotQ, current.size, current.color));
     }
     queueRender();
     return;
   }
 
   if (dragAction === "forward") {
-    const current = placed.get(slot.id) ?? entryForNewSlot(slot);
+    const current = normalizeEntry(placed.get(slot.id) ?? entryForNewSlot(slot), slot);
     const nextType = current.type <= 0 ? 1 : (current.type >= 3 ? 1 : current.type + 1);
-    placed.set(slot.id, { type: nextType, rotQ: current.rotQ });
+    placed.set(slot.id, makeEntry(nextType, current.rotQ, current.size, current.color));
     queueRender();
     return;
   }
@@ -1912,72 +1782,50 @@ function endDrag() {
   dragVisited.clear();
 }
 
-function clickWaveRingLevel(cx, cy, nowMs) {
-  let level = 0;
-  for (const wave of clickWaves) {
-    const ageMs = nowMs - wave.startMs;
-    if (ageMs >= CLICK_WAVE_DURATION_MS) continue;
-    const t = clamp01(ageMs / CLICK_WAVE_DURATION_MS);
-    const radius = wave.maxRadius * (1 - Math.pow(1 - t, 1.8));
-    const thickness = wave.thickness * (0.9 + t * 0.15);
-    const dist = Math.hypot(cx - wave.x, cy - wave.y);
-    const band = 1 - smoothstep(thickness * 0.3, thickness, Math.abs(dist - radius));
-    const fade = Math.pow(1 - t, 0.6);
-    level = Math.max(level, band * fade);
-  }
-  return level;
-}
-
 function levelHover(item, nowMs) {
-  const fluidRaw = sampleFluidDensityAtScene(item.cx, item.cy);
-  const organicMask = organicHoverMask(item.cx, item.cy, nowMs);
-  const fluidLevel = smoothstep(0.03, 0.5, fluidRaw) * (0.82 + organicMask * 0.5);
-  let pointerFocus = 0;
-  if (pointerState.inside) {
+  let level = 0;
+  if (hoverScaleEnabled && pointerState.inside && !cursorInfluenceOff) {
     const distance = Math.hypot(item.cx - pointerState.x, item.cy - pointerState.y);
-    pointerFocus = 1 - smoothstep(14, Math.max(240, nodeStep * 2.3), distance);
+    level = 1 - smoothstep(0, HOVER_RADIUS, distance);
   }
-  const ringLevel = clickWaveRingLevel(item.cx, item.cy, nowMs);
-  return clamp01(Math.max(pointerFocus * 0.88, fluidLevel * 1.15, ringLevel * 0.95));
+  if (!cursorInfluenceOff) {
+    const clickLevel = clickRippleLevel(item, nowMs);
+    level = Math.max(level, clickLevel);
+  }
+  return clamp01(level);
 }
 
-const RIPPLE_SPEED = 0.38;
-const RIPPLE_WAVE_COUNT = 3;
-let rippleTimeOffset = 0;
-const RIPPLE_TOGGLE_COOLDOWN_MS = 110;
-const RIPPLE_TOGGLE_LIMIT = 40;
-const RIPPLE_TRAIL_DURATION_MS = 420;
+const RIPPLE_SPEED = 0.22;
+const RIPPLE_WAVELENGTH = 160;
+const RIPPLE_TOGGLE_COOLDOWN_MS = 400;
+const RIPPLE_TOGGLE_LIMIT = 12;
+const RIPPLE_DISPLACE_PX = 18;
 
-function rippleDistortedRadius(baseRadius) {
-  return baseRadius;
+function rippleWave(distance, nowMs) {
+  const phase = distance / RIPPLE_WAVELENGTH - nowMs * RIPPLE_SPEED * 0.01;
+  const wave = Math.sin(phase * Math.PI * 2);
+  const decay = Math.exp(-distance * 0.0004);
+  const envelope = smoothstep(0, RIPPLE_WAVELENGTH * 0.3, distance);
+  return wave * decay * envelope;
 }
 
 function levelRipple(item, nowMs) {
-  const cycle = rippleRadiusMax + nodeStep * 8;
-  const base = ((nowMs - rippleTimeOffset) * RIPPLE_SPEED) % cycle;
-  const spacing = cycle / RIPPLE_WAVE_COUNT;
-  const sigma = Math.max(24, nodeStep * 0.65);
   const dx = item.cx - SCENE_CENTER_X;
   const dy = item.cy - SCENE_CENTER_Y;
   const distance = Math.hypot(dx, dy);
-  const angle = Math.atan2(dy, dx);
+  const raw = rippleWave(distance, nowMs);
+  return clamp01(raw * 0.5 + 0.5);
+}
 
-  let level = 0;
-  for (let w = 0; w < RIPPLE_WAVE_COUNT; w += 1) {
-    const ringRadius = (base + w * spacing) % cycle;
-    const distorted = rippleDistortedRadius(ringRadius);
-    const strength = w === 0 ? 1 : (w === 1 ? 0.82 : 0.65);
-    const wave = gaussian(distance - distorted, sigma);
-    // Trailing wake: asymmetric falloff behind the wavefront
-    const behind = distance - distorted;
-    const trailSigma = sigma * 2.8;
-    const trail = behind > 0 && behind < trailSigma
-      ? smoothstep(trailSigma, 0, behind) * 0.35
-      : 0;
-    level = Math.max(level, (wave + trail) * strength);
-  }
-
-  return clamp01(level);
+function rippleDisplacement(item, nowMs) {
+  const dx = item.cx - SCENE_CENTER_X;
+  const dy = item.cy - SCENE_CENTER_Y;
+  const distance = Math.max(1, Math.hypot(dx, dy));
+  const nx = dx / distance;
+  const ny = dy / distance;
+  const wave = rippleWave(distance, nowMs);
+  const push = wave * RIPPLE_DISPLACE_PX;
+  return { x: nx * push, y: ny * push };
 }
 
 function chevronStrokeLevel(item, x1, y1, x2, y2, thickness, blur) {
@@ -1995,55 +1843,41 @@ function chevronLevel(item, tipX, spanX, thickness, blur) {
 }
 
 function levelArrow(item, nowMs) {
-  const speed = 0.52;
-  const travelPad = 900;
+  const speed = 0.68;
+  const travelPad = 760;
   const travel = SCENE_WIDTH + travelPad * 2;
-  const spacing = 480;
-  const count = 4;
+  const spacing = 620;
+  const count = 3;
 
-  const spanX = Math.max(320, SCENE_HEIGHT * 0.6);
-  const thickness = Math.max(28, nodeStep * 0.9);
-  const blur = Math.max(36, nodeStep * 1.1);
+  const spanX = Math.max(220, SCENE_HEIGHT * 0.5);
+  const thickness = Math.max(14, nodeStep * 0.42);
+  const blur = Math.max(20, nodeStep * 0.62);
 
   let level = 0;
 
   for (let i = 0; i < count; i += 1) {
     const tipX = ((nowMs * speed + i * spacing) % travel) - travelPad;
-    const strength = 1 - i * 0.12;
-    const chevron = chevronLevel(item, tipX, spanX, thickness, blur) * strength;
+    const chevron = chevronLevel(item, tipX, spanX, thickness, blur);
     level = Math.max(level, chevron);
   }
 
   return clamp01(level);
 }
 
-function cameraLumaAt(px, py, width) {
-  const idx = (py * width + px) * 4;
-  return (0.2126 * cameraPixels[idx] + 0.7152 * cameraPixels[idx + 1] + 0.0722 * cameraPixels[idx + 2]) / 255;
-}
-
 function levelCamera(item, nowMs) {
   if (!cameraPixels) return 0.25 * levelHover(item, nowMs);
-
-  const width = cameraCanvas.width;
-  const height = cameraCanvas.height;
-  const xNorm = sampleMirrorX ? 1 - item.cx / SCENE_WIDTH : item.cx / SCENE_WIDTH;
-  const fx = xNorm * (width - 1);
-  const fy = (item.cy / SCENE_HEIGHT) * (height - 1);
-  const x0 = Math.max(0, Math.min(width - 2, Math.floor(fx)));
-  const y0 = Math.max(0, Math.min(height - 2, Math.floor(fy)));
-  const tx = fx - x0;
-  const ty = fy - y0;
-  const luma = lerp(
-    lerp(cameraLumaAt(x0, y0, width), cameraLumaAt(x0 + 1, y0, width), tx),
-    lerp(cameraLumaAt(x0, y0 + 1, width), cameraLumaAt(x0 + 1, y0 + 1, width), tx),
-    ty
-  );
+  const sample = sampleMediaPixelAtScene(item.cx, item.cy);
+  if (!sample) return 0.25 * levelHover(item, nowMs);
+  const luma = sample.luma;
   const span = Math.max(0.08, cameraLumaMax - cameraLumaMin);
   const normalized = clamp01((luma - cameraLumaMin) / span);
   const enhanced = Math.pow(normalized, 0.6);
   const pulse = 0.5 + 0.5 * Math.sin(nowMs * 0.003 + item.phase);
-  return clamp01(smoothstep(0.03, 0.94, enhanced) * (0.96 + pulse * 0.04));
+  const signal = clamp01(smoothstep(0.03, 0.94, enhanced) * (0.96 + pulse * 0.04));
+  if (droppedMediaType === "image") {
+    return clamp01(0.3 + signal * 0.7);
+  }
+  return signal;
 }
 
 function driverLevel(item, nowMs) {
@@ -2082,67 +1916,48 @@ function animate(nowMs) {
   const deltaMs = lastFrameMs === null ? 16 : Math.max(1, Math.min(64, nowMs - lastFrameMs));
   lastFrameMs = nowMs;
   const isRipple = driverMode === "ripple";
-  const levelFollow = 1 - Math.exp(-deltaMs / (isRipple ? 80 : 190));
-  const scaleFollow = 1 - Math.exp(-deltaMs / (isRipple ? 75 : 170));
+  const levelFollow = 1 - Math.exp(-deltaMs / (isRipple ? 100 : 60));
+  const scaleFollow = 1 - Math.exp(-deltaMs / (isRipple ? 90 : 55));
 
   if (driverMode === "camera") updateCameraPixels();
   if (veinsActive) updateVeins(deltaMs);
-  if (driverMode === "hover") {
-    applyHoverPointerFluid(nowMs);
-    applyHoverSplashes(nowMs);
-    applyClickWaves(nowMs);
-  }
-  fluidStep(deltaMs / 1000);
-
-  // Smooth density for stable visual output (like Codex luma smoothing)
-  const smoothAlpha = 1 - Math.exp(-deltaMs / DENSITY_SMOOTHING_MS);
-  for (let i = 0; i < FLUID_SIZE; i += 1) {
-    fluidDensitySmoothed[i] += (fluidDensity[i] - fluidDensitySmoothed[i]) * smoothAlpha;
-  }
-
-  // Ambient noise-driven currents near pointer for organic flow
-  const ambientActivity = clamp01(1 - (hoverIdleMs - HOVER_SETTLE_MS) / HOVER_SETTLE_FADE_MS);
-  if (pointerState.inside && driverMode === "hover" && ambientActivity > 0) {
-    const pgx = (pointerState.x / SCENE_WIDTH) * (FLUID_COLS - 1);
-    const pgy = (pointerState.y / SCENE_HEIGHT) * (FLUID_ROWS - 1);
-    const ambientRadius = 14;
-    const ambientStr = 0.06 * ambientActivity;
-    const minAX = Math.max(1, Math.floor(pgx - ambientRadius));
-    const maxAX = Math.min(FLUID_COLS - 2, Math.ceil(pgx + ambientRadius));
-    const minAY = Math.max(1, Math.floor(pgy - ambientRadius));
-    const maxAY = Math.min(FLUID_ROWS - 2, Math.ceil(pgy + ambientRadius));
-    for (let ay = minAY; ay <= maxAY; ay += 2) {
-      for (let ax = minAX; ax <= maxAX; ax += 2) {
-        const dist = Math.hypot(ax - pgx, ay - pgy);
-        if (dist > ambientRadius) continue;
-        const falloff = 1 - smoothstep(0, ambientRadius, dist);
-        const nx = ax * 0.11 + nowMs * 0.00013;
-        const ny = ay * 0.11 - nowMs * 0.00009;
-        const n = noise2d(nx, ny);
-        const angle = n * Math.PI * 2;
-        const idx = fluidIndex(ax, ay);
-        fluidVelX[idx] += Math.cos(angle) * ambientStr * falloff;
-        fluidVelY[idx] += Math.sin(angle) * ambientStr * falloff;
-      }
-    }
-  }
-
-  if (driverMode === "hover") {
-    applyHoverFluidToggles(nowMs);
-  }
   if (driverMode === "ripple") {
     applyRippleToggles(nowMs);
   }
-  if (driverMode === "hover" && !pointerState.inside && hoverSplashes.length === 0) {
-    for (let i = 0; i < FLUID_SIZE; i += 1) {
-      fluidDensity[i] *= 0.93;
-      fluidVelX[i] *= 0.9;
-      fluidVelY[i] *= 0.9;
+
+  // Clean up expired click ripples & swap vector types at wavefront
+  let rippleSwapped = false;
+  for (let i = clickRipples.length - 1; i >= 0; i--) {
+    const rip = clickRipples[i];
+    const age = nowMs - rip.startMs;
+    if (age > CLICK_RIPPLE_DURATION_MS) {
+      clickRipples.splice(i, 1);
+      continue;
+    }
+    if (rip.swapType && driverMode === "hover") {
+      const frontRadius = age * CLICK_RIPPLE_SPEED;
+      const bandInner = Math.max(0, frontRadius - CLICK_RIPPLE_WAVELENGTH * 0.6);
+      for (const slot of slots) {
+        if (rip.swapped.has(slot.id)) continue;
+        const dist = Math.hypot(slot.x - rip.x, slot.y - rip.y);
+        if (dist < frontRadius && dist > bandInner) {
+          const entry = placed.get(slot.id);
+          if (entry && entry.type !== rip.swapType) {
+            placed.set(slot.id, makeEntry(rip.swapType, entry.rotQ, entry.size, entry.color));
+            rippleSwapped = true;
+          }
+          rip.swapped.add(slot.id);
+        }
+      }
     }
   }
+  if (rippleSwapped) renderVectors();
 
   const isCameraActive = driverMode === "camera" && !introRevealActive;
   const opacityFollow = 1 - Math.exp(-deltaMs / 140);
+
+  // Timeline tick
+  if (typeof tlTick === "function") tlTick(nowMs);
 
   for (const item of renderedVectors) {
     const level = clamp01(driverLevel(item, nowMs));
@@ -2153,11 +1968,11 @@ function animate(nowMs) {
     let targetScale, targetOpacity;
     if (isCameraActive) {
       targetScale = Math.max(0.001, revealEased * (0.18 + item.motion * 2.0));
-      targetOpacity = clamp01(0.12 + item.motion * 1.18);
+      targetOpacity = droppedMediaType === "image" ? 1 : clamp01(0.12 + item.motion * 1.18);
     } else {
-      const hoverBoost = driverMode === "hover" ? 2.6 : driverMode === "ripple" ? 2.2 : driverMode === "arrow" ? 2.4 : 0.95;
+      const hoverBoost = driverMode === "hover" ? 1.2 : driverMode === "ripple" ? 3.5 : 0.95;
       targetScale = Math.max(0.001, revealEased * (1 + item.motion * hoverBoost));
-      targetOpacity = introRevealActive ? clamp01(revealEased * 2.5) : 1;
+      targetOpacity = 1;
     }
 
     if (veinsActive) {
@@ -2172,10 +1987,56 @@ function animate(nowMs) {
 
     item.scale += (targetScale - item.scale) * scaleFollow;
     item.opacity += (targetOpacity - item.opacity) * opacityFollow;
+
+    let targetDx = 0, targetDy = 0;
+    if (driverMode === "ripple") {
+      const disp = rippleDisplacement(item, nowMs);
+      targetDx += disp.x;
+      targetDy += disp.y;
+    }
+    if (driverMode === "hover" && clickRipples.length > 0) {
+      const disp = clickRippleDisplacement(item, nowMs);
+      targetDx += disp.x;
+      targetDy += disp.y;
+    }
+    item.dx += (targetDx - item.dx) * scaleFollow;
+    item.dy += (targetDy - item.dy) * scaleFollow;
+
+    // Dashes rotate toward pointer or auto-animate
+    let targetRot = item.entry.rotQ * 90;
+    if (item.entry.type === 3) {
+      if (autoRotateActive && motionEnabled) {
+        // Organic wavy rotation — multi-octave noise with phase offset
+        const t1 = nowMs * 0.0006;
+        const t2 = nowMs * 0.0003;
+        const n1 = fbm2d(item.cx * 0.003 + t1, item.cy * 0.003 - t1 * 0.7, 3);
+        const n2 = noise2d(item.cx * 0.008 - t2, item.cy * 0.008 + t2 * 1.3);
+        const wave = Math.sin(item.cx * 0.005 + item.cy * 0.003 + nowMs * 0.001) * 0.3;
+        targetRot = (n1 * 280 + n2 * 80 + wave * 60);
+      } else if (driverMode === "hover") {
+        if (pointerState.inside && !cursorInfluenceOff) {
+          const angle = Math.atan2(pointerState.y - item.cy, pointerState.x - item.cx) * (180 / Math.PI);
+          const n = noise2d(
+            item.cx * 0.005 + pointerState.x * 0.0003,
+            item.cy * 0.005 + pointerState.y * 0.0003
+          );
+          targetRot = angle + n * 55;
+        } else if (motionEnabled) {
+          const n = noise2d(
+            item.cx * 0.004 + nowMs * 0.00008,
+            item.cy * 0.004 - nowMs * 0.00006
+          );
+          targetRot = n * 180;
+        }
+      }
+    }
+    // Shortest-path rotation lerp
+    let rotDiff = ((targetRot - item.rot) % 360 + 540) % 360 - 180;
+    item.rot += rotDiff * scaleFollow;
+
     applyTransform(item, item.scale);
   }
 
-  updateGridOpacities();
   requestAnimationFrame(animate);
 }
 
@@ -2198,9 +2059,8 @@ function buildHitLayer() {
       event.stopPropagation();
       pointerState.inside = true;
       pointerToScene(event);
-      hoverPointerDown = driverMode === "hover" && event.button === 0;
-      if (hoverPointerDown) {
-        addHoverBurst(pointerState.x, pointerState.y, performance.now());
+      if (driverMode === "hover" && event.button === 0) {
+        addClickRipple(pointerState.x, pointerState.y);
       }
 
       if (canPaintNodes()) {
@@ -2299,8 +2159,12 @@ function wireControls() {
     });
   }
 
-  sampleBtn.addEventListener("click", loadSample);
   randomFillBtn.addEventListener("click", randomFill);
+  document.getElementById("solo-1").addEventListener("click", () => soloFill(1));
+  document.getElementById("solo-2").addEventListener("click", () => soloFill(2));
+  document.getElementById("solo-3").addEventListener("click", () => soloFill(3));
+  document.getElementById("rainbow-fill").addEventListener("click", rainbowFill);
+  document.getElementById("random-loop").addEventListener("click", generateRandomLoop);
   clearBtn.addEventListener("click", clearAll);
 
   toggleMediaBgBtn.addEventListener("click", () => {
@@ -2347,18 +2211,131 @@ function wireControls() {
     setMotion(!motionEnabled);
   });
 
+  const hoverScaleBtn = document.getElementById("toggle-hover-scale");
+  hoverScaleBtn.addEventListener("click", () => {
+    hoverScaleEnabled = !hoverScaleEnabled;
+    hoverScaleBtn.classList.toggle("is-active", hoverScaleEnabled);
+  });
+
+  const morphBtn = document.getElementById("toggle-morph");
+  morphBtn.addEventListener("click", () => {
+    morphEnabled = !morphEnabled;
+    morphBtn.classList.toggle("is-active", morphEnabled);
+  });
+
+  const autoRotateBtn = document.getElementById("toggle-auto-rotate");
+  autoRotateBtn.addEventListener("click", () => {
+    autoRotateActive = !autoRotateActive;
+    autoRotateBtn.classList.toggle("is-active", autoRotateActive);
+  });
+
+  const cursorOffBtn = document.getElementById("toggle-cursor-off");
+  cursorOffBtn.addEventListener("click", () => {
+    cursorInfluenceOff = !cursorInfluenceOff;
+    cursorOffBtn.classList.toggle("is-active", cursorInfluenceOff);
+  });
+
+  const swapColorsBtn = document.getElementById("swap-colors");
+  swapColorsBtn.addEventListener("click", () => {
+    const currentBg = bgColorPicker.value;
+    const currentNode = nodeColorPicker.value;
+    bgColorPicker.value = currentNode;
+    bgColorHex.value = currentNode.toUpperCase();
+    nodeColorPicker.value = currentBg;
+    nodeColorHex.value = currentBg.toUpperCase();
+    applyBgColor(currentNode);
+    applyNodeColor(currentBg);
+  });
+
   toggleUiBtn.addEventListener("click", () => {
     setUiVisible(!uiVisible);
   });
+
+
+
+  function normalizeHexInput(raw) {
+    let v = raw.trim().replace(/^#?/, "#");
+    if (/^#[0-9a-f]{3}$/i.test(v)) {
+      v = `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}`;
+    }
+    return isValidHexColor(v) ? v.toLowerCase() : null;
+  }
+
+  bgColorPicker.addEventListener("input", () => {
+    const c = bgColorPicker.value;
+    bgColorHex.value = c.toUpperCase();
+    bgColorHex.classList.remove("is-invalid");
+    clearSwatchActive();
+    applyBgColor(c);
+  });
+
+  bgColorHex.addEventListener("input", () => {
+    const hex = normalizeHexInput(bgColorHex.value);
+    if (hex) {
+      bgColorHex.classList.remove("is-invalid");
+      bgColorPicker.value = hex;
+      clearSwatchActive();
+      applyBgColor(hex);
+    } else {
+      bgColorHex.classList.add("is-invalid");
+    }
+  });
+
+  bgColorHex.addEventListener("keydown", (e) => { e.stopPropagation(); });
+
+  function clearSwatchActive() {
+    for (const s of document.querySelectorAll("#brand-palette .combo-swatch")) s.classList.remove("is-active");
+  }
+
+  nodeColorPicker.addEventListener("input", () => {
+    const c = nodeColorPicker.value;
+    nodeColorHex.value = c.toUpperCase();
+    nodeColorHex.classList.remove("is-invalid");
+    clearSwatchActive();
+    applyNodeColor(c);
+  });
+
+  nodeColorHex.addEventListener("input", () => {
+    const hex = normalizeHexInput(nodeColorHex.value);
+    if (hex) {
+      nodeColorHex.classList.remove("is-invalid");
+      nodeColorPicker.value = hex;
+      clearSwatchActive();
+      applyNodeColor(hex);
+    } else {
+      nodeColorHex.classList.add("is-invalid");
+    }
+  });
+
+  nodeColorHex.addEventListener("keydown", (e) => { e.stopPropagation(); });
+
+  // Brand combo swatches
+  const comboSwatches = document.querySelectorAll("#brand-palette .combo-swatch");
+  for (const sw of comboSwatches) {
+    sw.addEventListener("click", () => {
+      const bg = sw.dataset.bg;
+      const node = sw.dataset.node;
+      if (!bg || !node) return;
+      bgColorPicker.value = bg;
+      bgColorHex.value = bg.toUpperCase();
+      bgColorHex.classList.remove("is-invalid");
+      applyBgColor(bg);
+      nodeColorPicker.value = node;
+      nodeColorHex.value = node.toUpperCase();
+      nodeColorHex.classList.remove("is-invalid");
+      applyNodeColor(node);
+      for (const s of comboSwatches) s.classList.remove("is-active");
+      sw.classList.add("is-active");
+    });
+  }
 
   board.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 && event.button !== 2) return;
     if (dragAction) return;
     pointerState.inside = true;
     pointerToScene(event);
-    hoverPointerDown = driverMode === "hover" && event.button === 0;
-    if (hoverPointerDown) {
-      addHoverBurst(pointerState.x, pointerState.y, performance.now());
+    if (driverMode === "hover" && event.button === 0) {
+      addClickRipple(pointerState.x, pointerState.y);
     }
     const slot = slotFromPoint(pointerState.x, pointerState.y);
     if (!slot) return;
@@ -2386,7 +2363,6 @@ function wireControls() {
 
   board.addEventListener("pointerleave", () => {
     pointerState.inside = false;
-    resetHoverPointerState();
   });
 
   board.addEventListener("contextmenu", (event) => {
@@ -2394,15 +2370,10 @@ function wireControls() {
   });
 
   window.addEventListener("pointerup", () => {
-    if (hoverPointerDown && driverMode === "hover") {
-      addClickWave(pointerState.x, pointerState.y, performance.now());
-    }
-    resetHoverPointerState();
     endDrag();
   });
 
   window.addEventListener("blur", () => {
-    resetHoverPointerState();
     endDrag();
     pointerState.inside = false;
   });
@@ -2411,11 +2382,28 @@ function wireControls() {
     const key = event.key.toLowerCase();
     if (key === "backspace") {
       event.preventDefault();
+      // If a keyframe is selected or timeline has undo history, undo keyframe action
+      if (timeline.selectedKf) {
+        tlRemoveKeyframe(timeline.selectedKf.param, timeline.selectedKf.index);
+        timeline.selectedKf = null;
+        tlRenderAllTracks();
+        return;
+      }
+      if (timeline.undoStack.length > 0) {
+        tlPopUndo();
+        return;
+      }
       stepBack();
       return;
     }
-    if (key === "l") loadSample();
-    if (key === "r") restartIntroReveal();
+    if (key === "delete" && timeline.selectedKf) {
+      event.preventDefault();
+      tlRemoveKeyframe(timeline.selectedKf.param, timeline.selectedKf.index);
+      timeline.selectedKf = null;
+      tlRenderAllTracks();
+      return;
+    }
+    if (key === "r") randomFill();
     if (key === "c") clearAll();
     if (key === "g") setGridVisibility(!isGridVisible);
     if (key === "m") setMotion(!motionEnabled);
@@ -2424,11 +2412,518 @@ function wireControls() {
     if (key === "q") toggleClouds();
     if (key === "e") toggleEraser();
     if (key === "h") await setDriverMode("hover");
+    if (key === "k") tlAddKeyframeAtCurrent();
+    if (key === " ") {
+      event.preventDefault();
+      tlTogglePlay();
+    }
   });
 }
 
+/* ===================== Keyframe Timeline ===================== */
+
+const tlPanel = document.getElementById("timeline-panel");
+const tlToggle = document.getElementById("timeline-toggle");
+const tlBody = document.getElementById("timeline-body");
+const tlPlayBtn = document.getElementById("tl-play");
+const tlAddKfBtn = document.getElementById("tl-add-kf");
+const tlTimeLabel = document.getElementById("tl-time");
+const tlDurationInput = document.getElementById("tl-duration");
+const tlLoopCheckbox = document.getElementById("tl-loop");
+const tlScrub = document.getElementById("tl-scrub");
+const tlPlayhead = document.getElementById("tl-playhead");
+const tlRuler = document.getElementById("tl-ruler");
+const contentLayer = document.getElementById("content-layer");
+
+const timeline = {
+  duration: 10,
+  currentTime: 0,
+  playing: false,
+  loop: true,
+  lastTickMs: null,
+  tracks: {
+    nodeScale: [],
+    gridScale: [],
+  },
+  selectedKf: null,
+  // Smooth playback state — avoids expensive DOM rebuilds per frame
+  smoothNodeScale: null,   // current smoothed value
+  smoothGridScale: null,
+  baseNodeScale: null,     // value at last full rebuild
+  baseGridScale: null,
+  undoStack: [],           // [{tracks snapshot}]
+};
+
+const TL_MAX_UNDO = 50;
+
+// Easy ease (cubic bezier approximation — slow start, slow end, fast middle)
+function easyEase(t) {
+  // Classic After Effects easy ease: sine-based
+  return t * t * t * (t * (t * 6 - 15) + 10); // quintic smoothstep
+}
+
+function tlInitDefaults() {
+  timeline.tracks.nodeScale = [{ time: 0, value: nodeScalePercent }];
+  timeline.tracks.gridScale = [{ time: 0, value: gridScalePercent }];
+  timeline.baseNodeScale = nodeScalePercent;
+  timeline.baseGridScale = gridScalePercent;
+  timeline.smoothNodeScale = nodeScalePercent;
+  timeline.smoothGridScale = gridScalePercent;
+  tlBaseNodeScale = nodeScalePercent;
+}
+
+function tlPushUndo() {
+  const snapshot = {
+    nodeScale: timeline.tracks.nodeScale.map(kf => ({ ...kf })),
+    gridScale: timeline.tracks.gridScale.map(kf => ({ ...kf })),
+  };
+  timeline.undoStack.push(snapshot);
+  if (timeline.undoStack.length > TL_MAX_UNDO) timeline.undoStack.shift();
+}
+
+function tlPopUndo() {
+  if (timeline.undoStack.length === 0) return false;
+  const snapshot = timeline.undoStack.pop();
+  timeline.tracks.nodeScale = snapshot.nodeScale;
+  timeline.tracks.gridScale = snapshot.gridScale;
+  timeline.selectedKf = null;
+  tlRenderAllTracks();
+  return true;
+}
+
+function tlInsertKeyframe(param, time, value) {
+  const track = timeline.tracks[param];
+  if (!track) return;
+  tlPushUndo();
+  const existing = track.findIndex(kf => Math.abs(kf.time - time) < 0.02);
+  if (existing >= 0) {
+    track[existing].value = value;
+  } else {
+    track.push({ time, value });
+  }
+  track.sort((a, b) => a.time - b.time);
+  tlRenderTrack(param);
+}
+
+function tlRemoveKeyframe(param, index) {
+  const track = timeline.tracks[param];
+  if (!track || index < 0 || index >= track.length) return;
+  tlPushUndo();
+  track.splice(index, 1);
+  tlRenderTrack(param);
+}
+
+function tlLerpTrack(param, t) {
+  const track = timeline.tracks[param];
+  if (!track || track.length === 0) return null;
+  if (track.length === 1) return track[0].value;
+  if (t <= track[0].time) return track[0].value;
+  if (t >= track[track.length - 1].time) return track[track.length - 1].value;
+  for (let i = 0; i < track.length - 1; i++) {
+    const a = track[i];
+    const b = track[i + 1];
+    if (t >= a.time && t <= b.time) {
+      const frac = (t - a.time) / (b.time - a.time);
+      const s = easyEase(frac);
+      return a.value + (b.value - a.value) * s;
+    }
+  }
+  return track[track.length - 1].value;
+}
+
+// Lightweight apply: only updates internal scale values, NO DOM rebuilds.
+// The animate loop picks up nodeScalePercent changes via applyTransform.
+// Grid scale is applied as a CSS transform on the content layer.
+function tlApplySmooth(t) {
+  const nodeVal = tlLerpTrack("nodeScale", t);
+  if (nodeVal !== null) {
+    timeline.smoothNodeScale = nodeVal;
+    nodeScalePercent = nodeVal;
+    nodeSizeSlider.value = String(Math.round(nodeVal));
+    nodeSizeLabel.textContent = `Node ${nodeVal.toFixed(0)}%`;
+  }
+  const gridVal = tlLerpTrack("gridScale", t);
+  if (gridVal !== null) {
+    timeline.smoothGridScale = gridVal;
+    gridScalePercent = gridVal;
+    gridSizeSlider.value = String(gridVal.toFixed(1));
+    gridSizeLabel.textContent = `Grid ${gridVal.toFixed(1)}%`;
+    // Apply grid scale as a CSS transform ratio vs the base rebuild scale
+    const ratio = gridVal / timeline.baseGridScale;
+    contentLayer.style.transformOrigin = "960px 540px";
+    contentLayer.style.transform = `scale(${ratio})`;
+  }
+}
+
+// Full commit: does the expensive rebuilds, resets base values
+function tlCommitValues() {
+  contentLayer.style.transform = "";
+  contentLayer.style.transformOrigin = "";
+  timeline.baseNodeScale = nodeScalePercent;
+  timeline.baseGridScale = gridScalePercent;
+  setNodeScale(nodeScalePercent);
+  setGridScale(gridScalePercent);
+}
+
+function tlSetTime(t) {
+  timeline.currentTime = Math.max(0, Math.min(timeline.duration, t));
+  tlUpdatePlayhead();
+  tlTimeLabel.textContent = timeline.currentTime.toFixed(2) + "s";
+}
+
+function tlUpdatePlayhead() {
+  const pct = (timeline.currentTime / timeline.duration) * 100;
+  tlPlayhead.style.left = pct + "%";
+}
+
+function tlPlay() {
+  if (timeline.tracks.nodeScale.length < 2 && timeline.tracks.gridScale.length < 2) return;
+  timeline.baseNodeScale = nodeScalePercent;
+  timeline.baseGridScale = gridScalePercent;
+  tlBaseNodeScale = nodeScalePercent;
+  timeline.playing = true;
+  tlPlaying = true;
+  timeline.lastTickMs = null;
+  tlPlayBtn.textContent = "Stop";
+  tlPlayBtn.classList.add("is-active");
+}
+
+function tlStop() {
+  timeline.playing = false;
+  tlPlaying = false;
+  timeline.lastTickMs = null;
+  tlPlayBtn.textContent = "Play";
+  tlPlayBtn.classList.remove("is-active");
+  tlCommitValues();
+}
+
+function tlTogglePlay() {
+  if (timeline.playing) {
+    tlStop();
+  } else {
+    tlPlay();
+  }
+}
+
+function tlTick(nowMs) {
+  if (!timeline.playing) return;
+  if (timeline.lastTickMs === null) {
+    timeline.lastTickMs = nowMs;
+    return;
+  }
+  const delta = (nowMs - timeline.lastTickMs) / 1000;
+  timeline.lastTickMs = nowMs;
+  let next = timeline.currentTime + delta;
+  if (next >= timeline.duration) {
+    if (timeline.loop) {
+      next = next % timeline.duration;
+    } else {
+      next = timeline.duration;
+      tlStop();
+      return;
+    }
+  }
+  tlSetTime(next);
+  tlApplySmooth(next);
+}
+
+function tlRenderTrack(param) {
+  const bar = document.querySelector(`.track-bar[data-param="${param}"] .track-bar-inner`);
+  if (!bar) return;
+  bar.innerHTML = "";
+  const track = timeline.tracks[param];
+  for (let i = 0; i < track.length; i++) {
+    const kf = track[i];
+    const pct = (kf.time / timeline.duration) * 100;
+    const diamond = document.createElement("div");
+    diamond.className = "kf-diamond";
+    diamond.style.left = pct + "%";
+    diamond.title = `${kf.time.toFixed(2)}s \u2192 ${kf.value.toFixed(1)}`;
+
+    if (timeline.selectedKf && timeline.selectedKf.param === param && timeline.selectedKf.index === i) {
+      diamond.classList.add("is-selected");
+    }
+
+    diamond.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      if (e.button === 2) {
+        e.preventDefault();
+        tlRemoveKeyframe(param, i);
+        if (timeline.selectedKf?.param === param && timeline.selectedKf?.index === i) {
+          timeline.selectedKf = null;
+        }
+        return;
+      }
+      timeline.selectedKf = { param, index: i };
+      tlRenderAllTracks();
+
+      const barRect = bar.closest(".track-bar").getBoundingClientRect();
+      const onMove = (me) => {
+        const x = me.clientX - barRect.left;
+        const pctNew = Math.max(0, Math.min(1, x / barRect.width));
+        const newTime = pctNew * timeline.duration;
+        kf.time = Math.round(newTime * 50) / 50;
+        track.sort((a, b) => a.time - b.time);
+        const newIdx = track.indexOf(kf);
+        timeline.selectedKf = { param, index: newIdx };
+        tlRenderTrack(param);
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+
+    diamond.addEventListener("contextmenu", (e) => e.preventDefault());
+    bar.appendChild(diamond);
+  }
+}
+
+function tlRenderAllTracks() {
+  tlRenderTrack("nodeScale");
+  tlRenderTrack("gridScale");
+}
+
+function tlRenderRuler() {
+  tlRuler.innerHTML = "";
+  const dur = timeline.duration;
+  const step = dur <= 5 ? 0.5 : dur <= 20 ? 1 : 2;
+  for (let t = 0; t <= dur; t += step) {
+    const pct = (t / dur) * 100;
+    const isMajor = Math.abs(t - Math.round(t)) < 0.01;
+    const tick = document.createElement("div");
+    tick.className = "ruler-tick" + (isMajor ? " is-major" : "");
+    tick.style.left = pct + "%";
+    tlRuler.appendChild(tick);
+    if (isMajor) {
+      const label = document.createElement("span");
+      label.className = "ruler-label";
+      label.style.left = pct + "%";
+      label.textContent = t + "s";
+      tlRuler.appendChild(label);
+    }
+  }
+}
+
+function tlAddKeyframeAtCurrent() {
+  const t = timeline.currentTime;
+  tlInsertKeyframe("nodeScale", t, nodeScalePercent);
+  tlInsertKeyframe("gridScale", t, gridScalePercent);
+  tlRenderAllTracks();
+}
+
+// Scrub — uses smooth apply (no rebuild)
+function tlScrubFromEvent(e) {
+  const rect = tlScrub.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const pct = Math.max(0, Math.min(1, x / rect.width));
+  const t = pct * timeline.duration;
+  tlSetTime(t);
+  tlApplySmooth(t);
+}
+
+tlScrub.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  tlScrubbing = true;
+  timeline.baseNodeScale = nodeScalePercent;
+  timeline.baseGridScale = gridScalePercent;
+  tlBaseNodeScale = nodeScalePercent;
+  tlScrubFromEvent(e);
+  const onMove = (me) => tlScrubFromEvent(me);
+  const onUp = () => {
+    tlScrubbing = false;
+    tlCommitValues();
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+});
+
+// Track bar click to add keyframe at position
+document.querySelectorAll(".track-bar").forEach((bar) => {
+  bar.addEventListener("pointerdown", (e) => {
+    if (e.target.classList.contains("kf-diamond")) return;
+    const param = bar.dataset.param;
+    const rect = bar.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const pct = Math.max(0, Math.min(1, x / rect.width));
+    const t = pct * timeline.duration;
+    const currentValue = param === "nodeScale" ? nodeScalePercent : gridScalePercent;
+    tlInsertKeyframe(param, t, currentValue);
+  });
+});
+
+tlToggle.addEventListener("click", () => {
+  tlPanel.classList.toggle("is-collapsed");
+});
+
+tlPlayBtn.addEventListener("click", tlTogglePlay);
+tlAddKfBtn.addEventListener("click", tlAddKeyframeAtCurrent);
+
+tlDurationInput.addEventListener("change", () => {
+  const v = parseFloat(tlDurationInput.value);
+  if (v >= 1 && v <= 120) {
+    timeline.duration = v;
+    tlRenderRuler();
+    tlRenderAllTracks();
+    tlUpdatePlayhead();
+  }
+});
+
+tlDurationInput.addEventListener("keydown", (e) => e.stopPropagation());
+
+tlLoopCheckbox.addEventListener("change", () => {
+  timeline.loop = tlLoopCheckbox.checked;
+});
+
+/* ===================== End Keyframe Timeline ===================== */
+
+/* ===================== Rainbow Fill ===================== */
+
+function rainbowFill() {
+  pushUndoState();
+  const seed = Math.floor(Math.random() * 100000);
+  noiseSeed(seed);
+
+  // Sort brand colors by luminance so we can map image brightness to them
+  const brandWithLuma = BRAND_COLORS.map(c => {
+    const rgb = hexToRgb(c);
+    return { hex: ensureColorVisibility(c, 0.18), luma: rgb ? colorLuma01(rgb) : 0.5 };
+  });
+  brandWithLuma.sort((a, b) => a.luma - b.luma);
+
+  const hasImage = droppedMediaType === "image" && cameraPixels;
+  const noiseOffset = Math.random() * 500;
+
+  for (const slot of slots) {
+    const existing = placed.get(slot.id);
+    let color;
+
+    if (hasImage) {
+      // Sample the image at this slot, pick brand color by luminance match + jitter
+      const pixel = sampleMediaPixelAtScene(slot.x, slot.y);
+      const luma = pixel ? pixel.luma : 0.5;
+      const jitter = fbm2d(slot.x * 0.01 + noiseOffset, slot.y * 0.01 + noiseOffset, 2) * 0.15;
+      const t = clamp01(luma + jitter);
+      const idx = clamp(Math.round(t * (brandWithLuma.length - 1)), 0, brandWithLuma.length - 1);
+      color = brandWithLuma[idx].hex;
+    } else {
+      // No image — use noise-based color
+      const nc = fbm2d(slot.x * 0.008 + noiseOffset, slot.y * 0.008 + noiseOffset, 3);
+      const idx = Math.floor(((nc + 1) / 2) * brandWithLuma.length) % brandWithLuma.length;
+      color = brandWithLuma[idx].hex;
+    }
+
+    if (existing && existing.type !== 0) {
+      existing.color = color;
+    } else {
+      const nt = fbm2d(slot.x * 0.008 + noiseOffset + 999, slot.y * 0.008 + noiseOffset + 999, 2);
+      const type = nt < -0.15 ? 1 : nt < 0.2 ? 3 : 2;
+      const rotQ = ((Math.floor((nt + 1) * 2) % 4) + 4) % 4;
+      const organic = fbm2d(slot.x * 0.013 + 930, slot.y * 0.013 - 640, 2);
+      const size = clamp(1 + organic * 0.12, MIN_NODE_VARIANT_SCALE, MAX_NODE_VARIANT_SCALE);
+      placed.set(slot.id, makeEntry(type, rotQ, size, color));
+    }
+  }
+  stopIntroReveal();
+  renderVectors();
+}
+
+/* ===================== Random Loop ===================== */
+
+function generateRandomLoop() {
+  if (timeline.playing) tlStop();
+  const dur = 5 + Math.random() * 10;
+  timeline.duration = Math.round(dur * 2) / 2;
+  document.getElementById("tl-duration").value = String(timeline.duration);
+  timeline.loop = true;
+  document.getElementById("tl-loop").checked = true;
+
+  const kfCount = 3 + Math.floor(Math.random() * 3);
+
+  // Pick a center value for each param, then vary around it
+  const nodeMid = 70 + Math.random() * 80;
+  const nodeSwing = 20 + Math.random() * 40;
+  const gridMid = 25 + Math.random() * 25;
+  const gridSwing = 5 + Math.random() * 15;
+
+  timeline.tracks.nodeScale = [];
+  timeline.tracks.gridScale = [];
+
+  for (let i = 0; i < kfCount; i++) {
+    const t = (i / (kfCount - 1)) * timeline.duration;
+    const nodeVal = nodeMid + (Math.random() * 2 - 1) * nodeSwing;
+    const gridVal = gridMid + (Math.random() * 2 - 1) * gridSwing;
+    timeline.tracks.nodeScale.push({ time: Math.round(t * 100) / 100, value: Math.round(nodeVal * 10) / 10 });
+    timeline.tracks.gridScale.push({ time: Math.round(t * 100) / 100, value: Math.round(gridVal * 10) / 10 });
+  }
+
+  // Ensure loop continuity: last keyframe matches first
+  timeline.tracks.nodeScale[kfCount - 1].value = timeline.tracks.nodeScale[0].value;
+  timeline.tracks.gridScale[kfCount - 1].value = timeline.tracks.gridScale[0].value;
+
+  // Set current scale to first keyframe values so the base matches
+  const startNode = timeline.tracks.nodeScale[0].value;
+  const startGrid = timeline.tracks.gridScale[0].value;
+  nodeSizeSlider.value = String(Math.round(startNode));
+  setNodeScale(startNode);
+  gridSizeSlider.value = String(startGrid.toFixed(1));
+  setGridScale(startGrid);
+
+  tlSetTime(0);
+  tlRenderRuler();
+  tlRenderAllTracks();
+  tlUpdatePlayhead();
+  tlPlay();
+}
+
+/* ===================== Random Init on Load ===================== */
+
+function applyCombo(combo) {
+  applyBgColor(combo.bg);
+  bgColorPicker.value = combo.bg;
+  bgColorHex.value = combo.bg.toUpperCase();
+  applyNodeColor(combo.node);
+  nodeColorPicker.value = combo.node;
+  nodeColorHex.value = combo.node.toUpperCase();
+}
+
+function randomizeOnLoad() {
+  // Random brand combo
+  const combo = BRAND_COMBOS[Math.floor(Math.random() * BRAND_COMBOS.length)];
+  applyCombo(combo);
+
+  // Random slider values
+  const nodeVal = 60 + Math.random() * 120;
+  const gridVal = 15 + Math.random() * 55;
+  nodeSizeSlider.value = String(Math.round(nodeVal));
+  setNodeScale(Math.round(nodeVal));
+  gridSizeSlider.value = String(Math.round(gridVal * 10) / 10);
+  setGridScale(Math.round(gridVal * 10) / 10);
+
+  // Random preset
+  const presets = ["random", "solo1", "solo2", "solo3", "rainbow"];
+  const pick = presets[Math.floor(Math.random() * presets.length)];
+  if (pick === "solo1") soloFill(1);
+  else if (pick === "solo2") soloFill(2);
+  else if (pick === "solo3") soloFill(3);
+  else if (pick === "rainbow") rainbowFill();
+  else randomFill();
+
+  // Highlight matching swatch
+  const swatches = document.querySelectorAll("#brand-palette .combo-swatch");
+  for (const s of swatches) {
+    s.classList.toggle("is-active", s.dataset.bg === combo.bg && s.dataset.node === combo.node);
+  }
+}
+
+/* ===================== Boot ===================== */
+
 noiseSeed(Date.now());
-drawGridLines();
+drawLegacyGridLines();
 wireControls();
 wireDropImport();
 setUiVisible(true);
@@ -2446,8 +2941,14 @@ setMotion(true);
 setDriverMode("hover");
 updateDriverButtons();
 updateMotionStatus();
-setFillMode("sample");
-loadSample(true);
+setFillMode("random");
+randomizeOnLoad();
 clearUndoState();
+
+// Init timeline
+tlInitDefaults();
+tlRenderRuler();
+tlRenderAllTracks();
+tlUpdatePlayhead();
 
 requestAnimationFrame(animate);

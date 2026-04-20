@@ -1319,13 +1319,7 @@ function makeVectorGraphic(entry, slot) {
 function applyTransform(item, scale) {
   const rotation = item.rot ?? item.entry.rotQ * 90;
   const useImageCrispMode = droppedMediaType === "image";
-  // During timeline playback, apply node scale ratio as a multiplier
-  let nodeRatio = 1;
-  if (tlBaseNodeScale > 0 && (tlPlaying || tlScrubbing)) {
-    nodeRatio = nodeScalePercent / tlBaseNodeScale;
-  }
-  const finalScale = scale * nodeRatio;
-  const safeScale = useImageCrispMode ? Math.round(finalScale * 24) / 24 : finalScale;
+  const safeScale = useImageCrispMode ? Math.round(scale * 24) / 24 : scale;
   const tx = item.dx || 0;
   const ty = item.dy || 0;
   const translate = (tx !== 0 || ty !== 0) ? `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) ` : "";
@@ -2165,6 +2159,7 @@ function wireControls() {
   document.getElementById("solo-3").addEventListener("click", () => soloFill(3));
   document.getElementById("rainbow-fill").addEventListener("click", rainbowFill);
   document.getElementById("random-loop").addEventListener("click", generateRandomLoop);
+  document.getElementById("stop-loop").addEventListener("click", stopRandomLoop);
   clearBtn.addEventListener("click", clearAll);
 
   toggleMediaBgBtn.addEventListener("click", () => {
@@ -2531,16 +2526,19 @@ function tlLerpTrack(param, t) {
   return track[track.length - 1].value;
 }
 
-// Lightweight apply: only updates internal scale values, NO DOM rebuilds.
-// The animate loop picks up nodeScalePercent changes via applyTransform.
-// Grid scale is applied as a CSS transform on the content layer.
+// Apply timeline values by rebuilding geometry (same approach as sliders)
+// so nodes always fill the viewport instead of CSS-scaling the whole canvas.
 function tlApplySmooth(t) {
+  let nodeChanged = false;
+  let gridChanged = false;
+
   const nodeVal = tlLerpTrack("nodeScale", t);
   if (nodeVal !== null) {
     timeline.smoothNodeScale = nodeVal;
     nodeScalePercent = nodeVal;
     nodeSizeSlider.value = String(Math.round(nodeVal));
     nodeSizeLabel.textContent = `Node ${nodeVal.toFixed(0)}%`;
+    nodeChanged = true;
   }
   const gridVal = tlLerpTrack("gridScale", t);
   if (gridVal !== null) {
@@ -2548,21 +2546,20 @@ function tlApplySmooth(t) {
     gridScalePercent = gridVal;
     gridSizeSlider.value = String(gridVal.toFixed(1));
     gridSizeLabel.textContent = `Grid ${gridVal.toFixed(1)}%`;
-    // Apply grid scale as a CSS transform ratio vs the base rebuild scale
-    const ratio = gridVal / timeline.baseGridScale;
-    contentLayer.style.transformOrigin = "960px 540px";
-    contentLayer.style.transform = `scale(${ratio})`;
+    gridChanged = true;
+  }
+  // Rebuild geometry so grid slots always cover the viewport
+  if (gridChanged) {
+    rebuildGridGeometry(); // includes renderVectors()
+  } else if (nodeChanged) {
+    renderVectors();
   }
 }
 
-// Full commit: does the expensive rebuilds, resets base values
+// Commit: clear any stale CSS transforms (geometry is already up to date)
 function tlCommitValues() {
   contentLayer.style.transform = "";
   contentLayer.style.transformOrigin = "";
-  timeline.baseNodeScale = nodeScalePercent;
-  timeline.baseGridScale = gridScalePercent;
-  setNodeScale(nodeScalePercent);
-  setGridScale(gridScalePercent);
 }
 
 function tlSetTime(t) {
@@ -2578,9 +2575,6 @@ function tlUpdatePlayhead() {
 
 function tlPlay() {
   if (timeline.tracks.nodeScale.length < 2 && timeline.tracks.gridScale.length < 2) return;
-  timeline.baseNodeScale = nodeScalePercent;
-  timeline.baseGridScale = gridScalePercent;
-  tlBaseNodeScale = nodeScalePercent;
   timeline.playing = true;
   tlPlaying = true;
   timeline.lastTickMs = null;
@@ -2595,6 +2589,11 @@ function tlStop() {
   tlPlayBtn.textContent = "Play";
   tlPlayBtn.classList.remove("is-active");
   tlCommitValues();
+  // Hide stop button and deactivate loop button
+  const stopBtn = document.getElementById("stop-loop");
+  if (stopBtn) stopBtn.style.display = "none";
+  const loopBtn = document.getElementById("random-loop");
+  if (loopBtn) loopBtn.classList.remove("is-active");
 }
 
 function tlTogglePlay() {
@@ -2727,9 +2726,6 @@ function tlScrubFromEvent(e) {
 tlScrub.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   tlScrubbing = true;
-  timeline.baseNodeScale = nodeScalePercent;
-  timeline.baseGridScale = gridScalePercent;
-  tlBaseNodeScale = nodeScalePercent;
   tlScrubFromEvent(e);
   const onMove = (me) => tlScrubFromEvent(me);
   const onUp = () => {
@@ -2865,7 +2861,7 @@ function generateRandomLoop() {
   timeline.tracks.nodeScale[kfCount - 1].value = timeline.tracks.nodeScale[0].value;
   timeline.tracks.gridScale[kfCount - 1].value = timeline.tracks.gridScale[0].value;
 
-  // Set current scale to first keyframe values so the base matches
+  // Set current scale to first keyframe values
   const startNode = timeline.tracks.nodeScale[0].value;
   const startGrid = timeline.tracks.gridScale[0].value;
   nodeSizeSlider.value = String(Math.round(startNode));
@@ -2878,6 +2874,16 @@ function generateRandomLoop() {
   tlRenderAllTracks();
   tlUpdatePlayhead();
   tlPlay();
+
+  // Show stop button, highlight loop button
+  document.getElementById("stop-loop").style.display = "";
+  document.getElementById("random-loop").classList.add("is-active");
+}
+
+function stopRandomLoop() {
+  if (timeline.playing) tlStop();
+  document.getElementById("stop-loop").style.display = "none";
+  document.getElementById("random-loop").classList.remove("is-active");
 }
 
 /* ===================== Random Init on Load ===================== */

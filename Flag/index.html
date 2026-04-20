@@ -4,159 +4,243 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Flag Studio</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
-<canvas id="flagCanvas"></canvas>
+<canvas id="c"></canvas>
 
+<!-- Panel -->
 <div class="panel" id="panel">
   <div class="panel-header">
     <div class="panel-title">Flag Studio</div>
-    <button class="panel-close" id="panelClose" title="Collapse">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
-    </button>
+    <button class="panel-close" id="panelClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="panel-tabs">
+    <button class="panel-tab active" data-tab="studio">Studio</button>
+    <button class="panel-tab" data-tab="wind">Wind</button>
+    <button class="panel-tab" data-tab="export">Export</button>
   </div>
   <div class="panel-body">
+    <div class="tab-content active" id="tabStudio">
+
+    <!-- Aspect Ratio -->
     <div class="section">
-      <div class="section-label">Wind</div>
-      <div class="control-row">
-        <div class="control-label"><span class="control-name">Strength</span><span class="control-value" id="windVal">36</span></div>
-        <input type="range" id="windStrength" min="0" max="100" value="36">
+      <div class="section-label">Aspect Ratio</div>
+      <div class="pill-row" id="ratioRow" style="gap:5px">
+        <button class="ratio-btn" data-r="4:7"><div class="shape" style="width:28px;height:16px"></div><span class="lbl">4:7</span></button>
+        <button class="ratio-btn" data-r="3:2"><div class="shape" style="width:16px;height:24px"></div><span class="lbl">3:2</span></button>
+        <button class="ratio-btn" data-r="1:1"><div class="shape" style="width:20px;height:20px"></div><span class="lbl">1:1</span></button>
+        <button class="ratio-btn active" data-r="2:3"><div class="shape" style="width:24px;height:16px"></div><span class="lbl">2:3</span></button>
+        <button class="ratio-btn" data-r="1:2"><div class="shape" style="width:28px;height:14px"></div><span class="lbl">1:2</span></button>
       </div>
-      <div class="control-row">
-        <div class="control-label"><span class="control-name">Turbulence</span><span class="control-value" id="turbVal">30</span></div>
-        <input type="range" id="turbulence" min="0" max="100" value="30">
-      </div>
-      <div class="control-row">
-        <div class="control-label"><span class="control-name">Direction drift</span><span class="control-value" id="driftVal">&plusmn;24&deg;</span></div>
-        <input type="range" id="windDrift" min="0" max="90" value="24">
-        <div class="control-note" id="driftHint">Auto-sways wind direction by up to &plusmn;24&deg;.</div>
-      </div>
-      <div class="control-row">
-        <div class="control-label"><span class="control-name">Direction</span></div>
-        <div class="wind-direction-wrap">
-          <div class="wind-dial" id="windDial">
-            <div class="wind-dial-arrow" id="windArrow"></div>
-            <div class="wind-dial-center"></div>
-          </div>
-          <div class="wind-direction-info">
-            <div class="wind-direction-degrees" id="windDeg">90&deg;</div>
-            <div class="wind-direction-label" id="windDirLabel">Side</div>
+      <div class="custom-ratio" id="customRatio">
+        <div class="mini-flag-preview">
+          <div class="mini-flag-stage" id="miniFlagStage">
+            <div class="mini-flag-rect" id="miniFlagRect">
+              <div class="mini-edge mini-edge-top" data-edge="h"></div>
+              <div class="mini-edge mini-edge-bottom" data-edge="h"></div>
+              <div class="mini-edge mini-edge-left" data-edge="w"></div>
+              <div class="mini-edge mini-edge-right" data-edge="w"></div>
+              <div class="mini-handle mini-handle-corner" data-handle="wh" title="Drag to resize"></div>
+              <div class="mini-dim mini-dim-w" id="miniDimW" tabindex="0" role="textbox" aria-label="Width">3.0</div>
+              <div class="mini-dim mini-dim-h" id="miniDimH" tabindex="0" role="textbox" aria-label="Height">2.0</div>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
+    <!-- Text -->
     <div class="section">
-      <div class="section-label">Fabric</div>
-      <div class="control-row">
-        <div class="control-label"><span class="control-name">Stiffness</span><span class="control-value" id="stiffVal">40</span></div>
-        <input type="range" id="stiffness" min="10" max="100" value="40">
+      <div class="section-label">Text</div>
+      <div class="text-input-wrap">
+        <textarea id="textInput" rows="3" placeholder="Type a short paragraph…"></textarea>
       </div>
-      <div class="control-row">
-        <div class="control-label"><span class="control-name">Motion memory</span><span class="control-value" id="dampVal">92</span></div>
-        <input type="range" id="damping" min="70" max="99" value="92">
-      </div>
-      <div class="control-row">
-        <div class="control-label"><span class="control-name">Fabric visibility</span><span class="control-value" id="opacityVal">0%</span></div>
-        <input type="range" id="opacity" min="0" max="100" value="0">
-      </div>
-      <div class="control-row">
-        <div class="control-label"><span class="control-name">Stretch</span><span class="control-value" id="stretchVal">10</span></div>
-        <input type="range" id="stretch" min="0" max="140" value="10">
-      </div>
-      <div class="control-row">
-        <div class="control-label"><span class="control-name">Gravity force</span><span class="control-value" id="gravityVal">0.0</span></div>
-        <input type="range" id="gravity" min="-30" max="30" step="0.5" value="0">
-      </div>
-      <div class="control-row">
-        <div class="control-label"><span class="control-name">Pinning</span></div>
-        <div class="pin-toggle" id="pinToggle">
-          <button id="pinCorners">Corners</button>
-          <button id="pinPoleDense" class="active">Full pole</button>
-          <button id="pinCustom">Custom</button>
+      <div class="style-row">
+        <div class="pill-row" id="fontRow">
+          <button class="pill icon-pill active" data-font="jubilee" title="Jubilee"><span class="font-icon font-icon-serif">Aa</span></button>
+          <button class="pill icon-pill" data-font="diatype" title="Diatype"><span class="font-icon font-icon-sans">Aa</span></button>
+        </div>
+        <span class="style-divider"></span>
+        <div class="pill-row" id="layoutRow">
+          <button class="pill icon-pill active" data-layout="repeat" title="Repeat">
+            <svg viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><rect x="1" y="1" width="3.5" height="3.5" rx="0.6"/><rect x="7.5" y="1" width="3.5" height="3.5" rx="0.6"/><rect x="1" y="7.5" width="3.5" height="3.5" rx="0.6"/><rect x="7.5" y="7.5" width="3.5" height="3.5" rx="0.6"/></svg>
+          </button>
+          <button class="pill icon-pill" data-layout="centered" title="Centered">
+            <svg viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><rect x="3" y="4" width="6" height="4" rx="0.6"/></svg>
+          </button>
         </div>
       </div>
-      <div class="pin-editor">
-        <div class="pin-editor-head">
-          <span>Pin map</span>
-          <button id="pinClearBtn" type="button">Clear</button>
+      <div class="control-row" style="margin-top:10px">
+        <div class="control-label">
+          <span class="control-name">Size</span>
+          <span class="control-value" id="fontSizeVal">120</span>
         </div>
-        <div class="pin-map" id="pinMap" title="Click to add pin, drag to move, right-click to remove"></div>
-        <div class="pin-editor-help">Click to add pins. Drag to move. Right-click a pin to remove.</div>
+        <input type="range" id="fontSize" min="30" max="400" value="120">
       </div>
-      <div class="color-row">
-        <div class="color-swatch"><input type="color" id="flagColor" value="#e8e6e3"></div>
-        <span class="color-label">Fabric colour</span>
+      <div class="control-row">
+        <div class="control-label">
+          <span class="control-name">Line height</span>
+          <span class="control-value" id="lineHeightVal">0.85</span>
+        </div>
+        <input type="range" id="lineHeight" min="50" max="300" value="85">
       </div>
-      <div class="color-row">
-        <div class="color-swatch"><input type="color" id="bgColor" value="#0a0a0b"></div>
-        <span class="color-label">Background colour</span>
+      <div class="control-row">
+        <div class="control-label">
+          <span class="control-name">Scroll speed</span>
+          <span class="control-value" id="scrollVal">0</span>
+        </div>
+        <input type="range" id="scrollSpeed" min="0" max="200" value="0">
+      </div>
+      <div class="control-row">
+        <div class="color-pair">
+          <div class="color-item">
+            <span class="color-item-label">Text</span>
+            <div class="color-swatch"><input type="color" id="textColor" value="#016F17"></div>
+            <input type="text" class="hex-input" id="textColorHex" value="#016F17" maxlength="7" spellcheck="false">
+          </div>
+          <div class="color-item">
+            <span class="color-item-label">Background</span>
+            <div class="color-swatch"><input type="color" id="bgColor" value="#D4FED3"></div>
+            <input type="text" class="hex-input" id="bgColorHex" value="#D4FED3" maxlength="7" spellcheck="false">
+          </div>
+        </div>
       </div>
     </div>
 
+    <!-- Graphic -->
     <div class="section">
       <div class="section-label">Graphic</div>
       <div class="dropzone" id="dropzone">
         <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="3" y="3" width="18" height="18" rx="3"/>
-          <circle cx="8.5" cy="8.5" r="1.5"/>
-          <path d="M21 15l-5-5L5 21"/>
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
         </svg>
-        <div class="dropzone-text"><strong>Drop PNG or video</strong> or click to browse</div>
-        <div class="dropzone-hint">PNG/WebP/JPG/MP4/WebM • set Fabric visibility to 0% for invisible sheet</div>
-        <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime">
+        <div class="dropzone-text"><strong>Drop image</strong> or click to browse</div>
+        <div class="dropzone-hint">PNG, JPG, WebP</div>
+        <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp">
       </div>
-      <div class="media-actions">
-        <button class="btn-reset btn-media" id="useWebcamBtn" type="button">Use FaceTime Camera</button>
-        <button class="btn-reset btn-media" id="stopWebcamBtn" type="button" style="display:none;">Stop Camera</button>
+      <div class="texture-preview" id="texPreview">
+        <img id="previewImg">
+        <button class="texture-remove" id="removeTexture">&times;</button>
       </div>
-      <div class="texture-preview" id="texturePreview" style="display:none;">
-        <img id="previewImg" alt="Texture preview">
-        <video id="previewVideo" muted loop playsinline></video>
-        <button class="texture-remove" id="removeTexture" title="Remove">&times;</button>
+      <div class="fit-toggle" id="fitToggle" style="display:none">
+        <button data-mode="stretch">Stretch</button>
+        <button class="active" data-mode="fit">Fit</button>
       </div>
     </div>
 
-    <div class="section">
-      <button class="btn-reset" id="presetTallPoleBtn">Tall Pole Preset</button>
+    <button class="btn-reset" id="resetBtn">Reset All</button>
     </div>
-    <div class="section">
-      <button class="btn-reset" id="resetBtn">Reset all</button>
+    <div class="tab-content" id="tabWind">
+      <div class="section">
+        <div class="section-label">Weather</div>
+        <div class="pill-row" id="weatherRow" style="gap:5px">
+          <button class="pill active" data-weather="normal">Normal</button>
+          <button class="pill" data-weather="storm">Storm</button>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-label">Attachment</div>
+        <div class="pill-row" id="attachRow" style="gap:5px">
+          <button class="pill active" data-attach="edge">Full edge</button>
+          <button class="pill" data-attach="corners">Two corners</button>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-label">Wind</div>
+        <div class="control-row">
+          <div class="control-label">
+            <span class="control-name">Strength</span>
+            <span class="control-value" id="windVal">100</span>
+          </div>
+          <input type="range" id="windStrength" min="0" max="300" value="100">
+        </div>
+        <div class="control-row">
+          <div class="control-label">
+            <span class="control-name">Turbulence</span>
+            <span class="control-value" id="turbVal">30</span>
+          </div>
+          <input type="range" id="turbulence" min="0" max="100" value="30">
+        </div>
+        <div class="control-row">
+          <div class="control-label">
+            <span class="control-name">Gravity</span>
+            <span class="control-value" id="gravityVal">-1.0</span>
+          </div>
+          <input type="range" id="gravity" min="-100" max="100" value="-10" step="1">
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-label">Fabric model</div>
+        <div class="pill-row" id="fabricModeRow" style="gap:5px">
+          <button class="pill" data-mode="classic">Classic</button>
+          <button class="pill active" data-mode="realistic">Realistic</button>
+        </div>
+      </div>
+    </div>
+    <div class="tab-content" id="tabExport">
+      <div class="section">
+        <div class="section-label">Format</div>
+        <div class="pill-row" id="someRow" style="gap:5px">
+          <button class="pill active" data-some="1:1">1:1</button>
+          <button class="pill" data-some="4:5">4:5</button>
+          <button class="pill" data-some="9:16">9:16</button>
+          <button class="pill" data-some="16:9">16:9</button>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-label">Size</div>
+        <div class="size-inputs">
+          <div class="size-field">
+            <label for="sizeW">W</label>
+            <input type="number" id="sizeW" class="hex-input size-num" min="64" max="16384" step="1" value="1080">
+          </div>
+          <span class="size-x">×</span>
+          <div class="size-field">
+            <label for="sizeH">H</label>
+            <input type="number" id="sizeH" class="hex-input size-num" min="64" max="16384" step="1" value="1080">
+          </div>
+          <span class="size-unit">px</span>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-label">Export</div>
+        <button class="btn-export" id="someExportBtn">Export 8s Loop</button>
+        <button class="btn-export" id="exportBtn" style="margin-top:8px">Export PNG</button>
+      </div>
     </div>
   </div>
 </div>
 
-<button class="panel-toggle" id="panelToggle" title="Open controls">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-    <line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>
-  </svg>
+<!-- Panel toggle -->
+<button class="panel-toggle" id="panelToggle">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
 </button>
 
-<div class="watermark">Flag Studio</div>
-
-<div class="view-toggle" id="viewToggle">
-  <button id="viewFullscreen" class="active">Flag</button>
-  <button id="viewPinned">Pinned</button>
-  <button id="viewFree">Free</button>
-  <button id="viewStadium">Stadium</button>
-  <button id="viewCrowd">Crowd</button>
-  <span class="toggle-divider"></span>
-  <button id="themeDark" class="active">Dark</button>
-  <button id="themeLight">Light</button>
-</div>
-
+<!-- Global drop overlay -->
 <div class="global-drop-overlay" id="globalDrop">
   <div class="global-drop-content">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-      <rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-    </svg>
-    <p>Drop your graphic</p>
-    <span>PNG or video texture</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+    <p>Drop to apply</p>
+    <span>PNG, JPG, WebP</span>
   </div>
 </div>
 
-<script type="module" src="js/main.js"></script>
+<!-- SoMe crop frame -->
+<div class="some-frame" id="someFrame">
+  <div class="some-guides"></div>
+  <div class="some-label" id="someLabel">1:1 · 1080×1080</div>
+</div>
+
+<!-- Orbit ball -->
+<div class="orbit-ball" id="orbitBall">
+  <div class="orbit-ball-ring orbit-ball-equator"></div>
+  <div class="orbit-ball-ring orbit-ball-meridian"></div>
+  <div class="orbit-ball-dot" id="orbitDot"></div>
+</div>
+
+<script src="js/app.js"></script>
 </body>
 </html>

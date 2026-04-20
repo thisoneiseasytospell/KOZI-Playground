@@ -1085,24 +1085,26 @@ function render(dt) {
   gl.uniform3f(loc.uEye, e[0], e[1], e[2]);
   gl.uniform1f(loc.uAmbient, 0.38);
 
-  // Draw pole
-  gl.uniform1i(loc.uIsGlass, 1);
-  const pd = 0.88; // darken factor (slightly darker than bg)
-  gl.uniform3f(loc.uColor, SIM.bgColor[0] * pd, SIM.bgColor[1] * pd, SIM.bgColor[2] * pd);
-  gl.uniform1f(loc.uAlpha, 1.0);
-  gl.uniform1i(loc.uHasTex, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, polePosBuf);
-  gl.enableVertexAttribArray(loc.aPos);
-  gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, poleNrmBuf);
-  gl.enableVertexAttribArray(loc.aNrm);
-  gl.vertexAttribPointer(loc.aNrm, 3, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, poleUVBuf);
-  gl.enableVertexAttribArray(loc.aUV);
-  gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, poleIdxBuf);
-  gl.uniform1f(loc.uFace, 1.0);
-  gl.drawElements(gl.TRIANGLES, poleIdxCount, gl.UNSIGNED_INT, 0);
+  // Draw pole (skipped during video recording to match PNG export)
+  if (!someRecording) {
+    gl.uniform1i(loc.uIsGlass, 1);
+    const pd = 0.88; // darken factor (slightly darker than bg)
+    gl.uniform3f(loc.uColor, SIM.bgColor[0] * pd, SIM.bgColor[1] * pd, SIM.bgColor[2] * pd);
+    gl.uniform1f(loc.uAlpha, 1.0);
+    gl.uniform1i(loc.uHasTex, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, polePosBuf);
+    gl.enableVertexAttribArray(loc.aPos);
+    gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, poleNrmBuf);
+    gl.enableVertexAttribArray(loc.aNrm);
+    gl.vertexAttribPointer(loc.aNrm, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, poleUVBuf);
+    gl.enableVertexAttribArray(loc.aUV);
+    gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, poleIdxBuf);
+    gl.uniform1f(loc.uFace, 1.0);
+    gl.drawElements(gl.TRIANGLES, poleIdxCount, gl.UNSIGNED_INT, 0);
+  }
 
   // Draw flag (double-sided)
   gl.uniform1i(loc.uIsGlass, 0);
@@ -2278,7 +2280,6 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
     return;
   }
   _frameIdx = 0;
-  SUBSTEPS = 3;
   lastTime = 0; // prevent stale dt on first recording frame
   someRecording = true;
   someFrame.classList.add('recording');
@@ -2417,7 +2418,6 @@ function loop(now) {
     document.getElementById('someExportBtn').textContent = 'Recording ' + elapsed.toFixed(1) + 's / 8s';
     if (_frameIdx >= REC_TOTAL_FRAMES) {
       someRecording = false;
-      SUBSTEPS = 2;
       lastTime = 0;
       finalizeExport();
     }

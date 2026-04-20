@@ -1,13 +1,13 @@
 @font-face {
   font-family: 'OT Jubilee Platinum';
-  src: url('../Fonts%20/OTJubilee-PlatinumExtralightItalic.otf') format('opentype');
+  src: url('../Fonts/OTJubilee-PlatinumExtralightItalic.otf') format('opentype');
   font-weight: 200;
   font-style: italic;
 }
 
 @font-face {
   font-family: 'ABC Diatype';
-  src: url('../Fonts%20/ABCDiatype-Bold.otf') format('opentype');
+  src: url('../Fonts/ABCDiatype-Bold.otf') format('opentype');
   font-weight: 700;
   font-style: normal;
 }

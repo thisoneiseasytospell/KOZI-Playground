@@ -68,7 +68,7 @@ const WEATHER = { mode: 'normal', angleDriftMax: 24, angleDriftForce: 1.0 };
 
 // Attachment: 'edge' pins the full hoist column (pole flag); 'corners' pins only
 // top-left + bottom-left (banner/rope attachment) so the hoist edge itself flaps.
-const ATTACH = { mode: 'edge' };
+const ATTACH = { mode: 'corners' };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 

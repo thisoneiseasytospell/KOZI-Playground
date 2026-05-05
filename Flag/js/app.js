@@ -576,7 +576,10 @@ function simulate(frameDt) {
     }
   }
 
-  // Normals
+  computeMeshNormals();
+}
+
+function computeMeshNormals() {
   nrm.fill(0);
   for (let t = 0; t < triIdx.length; t += 3) {
     const a = triIdx[t], b = triIdx[t + 1], c = triIdx[t + 2];
@@ -593,7 +596,6 @@ function simulate(frameDt) {
     const len = Math.sqrt(nrm[i3] ** 2 + nrm[i3 + 1] ** 2 + nrm[i3 + 2] ** 2);
     if (len > 0) { nrm[i3] /= len; nrm[i3 + 1] /= len; nrm[i3 + 2] /= len; }
   }
-  // Laplacian smooth 2 passes
   for (let pass = 0; pass < 2; pass++) {
     const src = pass === 0 ? nrm : smoothNrm;
     const dst = pass === 0 ? smoothNrm : nrm;
@@ -2076,6 +2078,13 @@ document.getElementById('someRow').addEventListener('click', e => {
   if (someActive) initSomeCrop();
 });
 
+document.getElementById('audioRow').addEventListener('click', e => {
+  const btn = e.target.closest('[data-audio]');
+  if (!btn) return;
+  someAudio = btn.dataset.audio;
+  document.querySelectorAll('#audioRow .pill').forEach(b => b.classList.toggle('active', b === btn));
+});
+
 window.addEventListener('resize', () => { if (someActive) initSomeCrop(); });
 
 // Live-update crop frame when user edits W/H
@@ -2208,6 +2217,19 @@ function pixelsToCanvas(pixels, fw, fh, ctx) {
 let _recCanvas = null, _recCtx = null;
 let _encoder = null, _muxer = null, _muxerTarget = null, _frameIdx = 0;
 let _mp4Mod = null;
+let _audioEncoder = null;
+let someAudio = 'none'; // 'none' | '1' | '2' | '3' | '4'
+const AUDIO_TRACKS = {
+  '1': 'music/1 WdKA Low .wav',
+  '2': 'music/2 Wdka Mid .wav',
+  '3': 'music/3 WdKA High .wav',
+  '4': 'music/4 WdKA Very High.wav',
+};
+// Loop-morph buffer: stores mesh particle state (pos + prev) for the first
+// LOOP_FADE_FRAMES sim frames so the tail of the recording can morph the
+// geometry back into the start trajectory, producing a seamless loop without
+// the ghosting that a pixel crossfade would cause.
+let _loopHeadPos = null, _loopHeadPrev = null;
 
 async function getMp4Muxer() {
   if (_mp4Mod) return _mp4Mod;
@@ -2215,29 +2237,88 @@ async function getMp4Muxer() {
   return _mp4Mod;
 }
 
+// Fetch + decode a WAV track and return interleaved f32 PCM trimmed to the
+// requested duration. Returned object also carries the audio config the
+// muxer/encoder need.
+async function decodeAudioTrack(trackId, maxDurationSec) {
+  const url = encodeURI(AUDIO_TRACKS[trackId]);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const buf = await res.arrayBuffer();
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const audioBuffer = await ac.decodeAudioData(buf);
+  ac.close();
+  const numberOfChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const totalFrames = Math.min(audioBuffer.length, Math.round(sampleRate * maxDurationSec));
+  const pcm = new Float32Array(totalFrames * numberOfChannels);
+  for (let ch = 0; ch < numberOfChannels; ch++) {
+    const data = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < totalFrames; i++) {
+      pcm[i * numberOfChannels + ch] = data[i];
+    }
+  }
+  return { pcm, numberOfChannels, sampleRate, totalFrames };
+}
+
+// Stream the decoded PCM into a fresh AudioEncoder that pushes AAC chunks
+// straight into the muxer. Returns the encoder (caller flushes it).
+function startAudioEncode(decoded, muxer) {
+  const { pcm, numberOfChannels, sampleRate, totalFrames } = decoded;
+  const enc = new AudioEncoder({
+    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+    error: e => console.error('AudioEncoder error:', e),
+  });
+  enc.configure({
+    codec: 'mp4a.40.2',
+    numberOfChannels,
+    sampleRate,
+    bitrate: 192000,
+  });
+  const CHUNK = 1024;
+  for (let off = 0; off < totalFrames; off += CHUNK) {
+    const len = Math.min(CHUNK, totalFrames - off);
+    const slice = pcm.subarray(off * numberOfChannels, (off + len) * numberOfChannels);
+    const ad = new AudioData({
+      format: 'f32',
+      sampleRate,
+      numberOfFrames: len,
+      numberOfChannels,
+      timestamp: Math.round(off * (1_000_000 / sampleRate)),
+      data: slice,
+    });
+    enc.encode(ad);
+    ad.close();
+  }
+  return enc;
+}
+
 async function finalizeExport() {
   const btn = document.getElementById('someExportBtn');
   btn.textContent = 'Finalizing...';
   try {
     await _encoder.flush();
+    if (_audioEncoder) await _audioEncoder.flush();
     _muxer.finalize();
     const blob = new Blob([_muxerTarget.buffer], { type: 'video/mp4' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'flag-' + _recCanvas.width + 'x' + _recCanvas.height + '-8s.mp4';
+    a.download = 'flag-' + _recCanvas.width + 'x' + _recCanvas.height + '-10s.mp4';
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   } catch (e) {
     console.error('MP4 finalize failed:', e);
     btn.textContent = 'Export failed';
-    setTimeout(() => { btn.textContent = 'Export 8s Loop'; }, 3000);
+    setTimeout(() => { btn.textContent = 'Export 10s Loop'; }, 3000);
     return;
   }
   _encoder = null; _muxer = null; _muxerTarget = null;
   _recCanvas = null; _recCtx = null;
+  _loopHeadPos = null; _loopHeadPrev = null;
+  if (_audioEncoder) { try { _audioEncoder.close(); } catch (_) {} _audioEncoder = null; }
   someFrame.classList.remove('recording');
-  btn.textContent = 'Export 8s Loop';
+  btn.textContent = 'Export 10s Loop';
 }
 
 document.getElementById('someExportBtn').addEventListener('click', async () => {
@@ -2252,17 +2333,47 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
   _recCanvas = document.createElement('canvas');
   _recCanvas.width = fw; _recCanvas.height = fh;
   _recCtx = _recCanvas.getContext('2d');
+  _loopHeadPos = new Array(LOOP_FADE_FRAMES);
+  _loopHeadPrev = new Array(LOOP_FADE_FRAMES);
 
   const btn = document.getElementById('someExportBtn');
+
+  // Decode audio first (if selected) — we need its sampleRate/channels to
+  // configure the muxer's audio track up front.
+  let audioDecoded = null;
+  if (someAudio !== 'none' && AUDIO_TRACKS[someAudio]) {
+    if (typeof AudioEncoder === 'undefined' || typeof AudioData === 'undefined') {
+      alert('AudioEncoder not supported in this browser — exporting without sound.');
+    } else {
+      btn.textContent = 'Loading audio...';
+      try {
+        audioDecoded = await decodeAudioTrack(someAudio, REC_TOTAL_FRAMES / REC_FPS);
+      } catch (e) {
+        console.error('Audio load failed:', e);
+        btn.textContent = 'Audio load failed';
+        setTimeout(() => { btn.textContent = 'Export 10s Loop'; }, 2000);
+        return;
+      }
+    }
+  }
+
   btn.textContent = 'Initializing...';
   try {
     const { Muxer, ArrayBufferTarget } = await getMp4Muxer();
     _muxerTarget = new ArrayBufferTarget();
-    _muxer = new Muxer({
+    const muxerCfg = {
       target: _muxerTarget,
       video: { codec: 'avc', width: fw, height: fh },
       fastStart: 'in-memory',
-    });
+    };
+    if (audioDecoded) {
+      muxerCfg.audio = {
+        codec: 'aac',
+        numberOfChannels: audioDecoded.numberOfChannels,
+        sampleRate: audioDecoded.sampleRate,
+      };
+    }
+    _muxer = new Muxer(muxerCfg);
     _encoder = new VideoEncoder({
       output: (chunk, meta) => _muxer.addVideoChunk(chunk, meta),
       error: e => console.error('VideoEncoder error:', e),
@@ -2273,17 +2384,20 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
       bitrate: 10_000_000,
       framerate: 30,
     });
+    if (audioDecoded) {
+      _audioEncoder = startAudioEncode(audioDecoded, _muxer);
+    }
   } catch (e) {
     console.error('Encoder init failed:', e);
     btn.textContent = 'Export failed';
-    setTimeout(() => { btn.textContent = 'Export 8s Loop'; }, 2000);
+    setTimeout(() => { btn.textContent = 'Export 10s Loop'; }, 2000);
     return;
   }
   _frameIdx = 0;
   lastTime = 0; // prevent stale dt on first recording frame
   someRecording = true;
   someFrame.classList.add('recording');
-  btn.textContent = 'Recording 0.0s / 8s';
+  btn.textContent = 'Recording 0.0s / 10s';
 });
 
 // ─── Orbit Ball ─────────────────────────────────────────────
@@ -2385,12 +2499,23 @@ const SIM_HZ = 60;
 const SIM_DT = 1 / SIM_HZ;
 const REC_FPS = 30;
 const REC_STEPS = SIM_HZ / REC_FPS; // 2 physics steps per export frame
-const REC_TOTAL_FRAMES = 8 * REC_FPS;
+const REC_TOTAL_FRAMES = 10 * REC_FPS;      // 300 — output loop length
+const LOOP_FADE_FRAMES = 30;                // 1s crossfade at the loop seam
+const REC_RAW_FRAMES = REC_TOTAL_FRAMES + LOOP_FADE_FRAMES; // 270 sim frames
 
 function loop(now) {
   requestAnimationFrame(loop);
 
-  // During recording: 2 physics steps per frame, capture at 30fps
+  // During recording: 2 physics steps per frame, capture at 30fps.
+  // Seamless-loop strategy — geometric morph (no pixel ghosting):
+  //   sim [0, L)         → snapshot pos+prev into _loopHeadPos/_loopHeadPrev,
+  //                         do not encode
+  //   sim [L, N)         → render+encode directly as output[0 .. N-L-1]
+  //   sim [N, N+L)       → after physics, lerp pos+prev toward the stored
+  //                         head snapshot (alpha 0→1), recompute normals,
+  //                         then render+encode as output[N-L .. N-1]
+  // At alpha=1 the rendered geometry exactly matches sim frame L-1, so
+  // output[N-1] → output[0] is a one-sim-step jump (visually continuous).
   if (someRecording && _recCtx && _encoder) {
     for (let i = 0; i < REC_STEPS; i++) {
       simulate(SIM_DT);
@@ -2401,22 +2526,48 @@ function loop(now) {
       }
     }
     updateOrbitBall();
-    render(SIM_DT);
 
-    const dpr = window.devicePixelRatio || 1;
-    _recCtx.drawImage(canvas,
-      someCrop.x * dpr, someCrop.y * dpr, someCrop.w * dpr, someCrop.h * dpr,
-      0, 0, _recCanvas.width, _recCanvas.height);
-    const frame = new VideoFrame(_recCanvas, {
-      timestamp: _frameIdx * (1_000_000 / REC_FPS),
-    });
-    _encoder.encode(frame, { keyFrame: _frameIdx % REC_FPS === 0 });
-    frame.close();
+    if (_frameIdx < LOOP_FADE_FRAMES) {
+      // Head phase — snapshot mesh state, do not render/encode.
+      _loopHeadPos[_frameIdx] = new Float32Array(pos);
+      _loopHeadPrev[_frameIdx] = new Float32Array(prev);
+    } else {
+      if (_frameIdx >= REC_TOTAL_FRAMES) {
+        // Tail phase — morph mesh toward stored head trajectory.
+        const tailIdx = _frameIdx - REC_TOTAL_FRAMES;
+        const alpha = (tailIdx + 1) / LOOP_FADE_FRAMES;
+        const headPos = _loopHeadPos[tailIdx];
+        const headPrev = _loopHeadPrev[tailIdx];
+        const inv = 1 - alpha;
+        for (let i = 0, n = pos.length; i < n; i++) {
+          pos[i] = pos[i] * inv + headPos[i] * alpha;
+          prev[i] = prev[i] * inv + headPrev[i] * alpha;
+        }
+        computeMeshNormals();
+      }
+      // On-screen preview so the user sees recording in progress.
+      render(SIM_DT);
+      // Capture at full export resolution via the dedicated FBO — bypassing
+      // the on-screen canvas avoids viewport/DPR-bound upscaling that would
+      // otherwise pixelate tall formats like 9:16 (1080×1920).
+      const fw = _recCanvas.width, fh = _recCanvas.height;
+      const pixels = renderToFBO(fw, fh);
+      pixelsToCanvas(pixels, fw, fh, _recCtx);
+
+      const outIdx = _frameIdx - LOOP_FADE_FRAMES;
+      const frame = new VideoFrame(_recCanvas, {
+        timestamp: outIdx * (1_000_000 / REC_FPS),
+      });
+      _encoder.encode(frame, { keyFrame: outIdx % REC_FPS === 0 });
+      frame.close();
+    }
     _frameIdx++;
 
     const elapsed = _frameIdx / REC_FPS;
-    document.getElementById('someExportBtn').textContent = 'Recording ' + elapsed.toFixed(1) + 's / 8s';
-    if (_frameIdx >= REC_TOTAL_FRAMES) {
+    const totalSec = REC_RAW_FRAMES / REC_FPS;
+    document.getElementById('someExportBtn').textContent =
+      'Recording ' + elapsed.toFixed(1) + 's / ' + totalSec.toFixed(0) + 's';
+    if (_frameIdx >= REC_RAW_FRAMES) {
       someRecording = false;
       lastTime = 0;
       finalizeExport();

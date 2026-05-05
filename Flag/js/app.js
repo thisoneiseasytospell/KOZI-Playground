@@ -2085,6 +2085,13 @@ document.getElementById('audioRow').addEventListener('click', e => {
   document.querySelectorAll('#audioRow .pill').forEach(b => b.classList.toggle('active', b === btn));
 });
 
+document.getElementById('loopRow').addEventListener('click', e => {
+  const btn = e.target.closest('[data-loop]');
+  if (!btn) return;
+  someLoop = btn.dataset.loop;
+  document.querySelectorAll('#loopRow .pill').forEach(b => b.classList.toggle('active', b === btn));
+});
+
 window.addEventListener('resize', () => { if (someActive) initSomeCrop(); });
 
 // Live-update crop frame when user edits W/H
@@ -2219,11 +2226,13 @@ let _encoder = null, _muxer = null, _muxerTarget = null, _frameIdx = 0;
 let _mp4Mod = null;
 let _audioEncoder = null;
 let someAudio = 'none'; // 'none' | '1' | '2' | '3' | '4'
+let someLoop = 'seamless'; // 'seamless' | 'cut'
+let _useSeamless = true; // snapshot of someLoop at recording start
 const AUDIO_TRACKS = {
-  '1': 'music/1 WdKA Low .wav',
-  '2': 'music/2 Wdka Mid .wav',
-  '3': 'music/3 WdKA High .wav',
-  '4': 'music/4 WdKA Very High.wav',
+  '1': 'music/1-WdKA-Low.wav',
+  '2': 'music/2-WdKA-Mid.wav',
+  '3': 'music/3-WdKA-High.wav',
+  '4': 'music/4-WdKA-Very-High.wav',
 };
 // Loop-morph buffer: stores mesh particle state (pos + prev) for the first
 // LOOP_FADE_FRAMES sim frames so the tail of the recording can morph the
@@ -2333,8 +2342,9 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
   _recCanvas = document.createElement('canvas');
   _recCanvas.width = fw; _recCanvas.height = fh;
   _recCtx = _recCanvas.getContext('2d');
-  _loopHeadPos = new Array(LOOP_FADE_FRAMES);
-  _loopHeadPrev = new Array(LOOP_FADE_FRAMES);
+  _useSeamless = (someLoop === 'seamless');
+  _loopHeadPos = _useSeamless ? new Array(LOOP_FADE_FRAMES) : null;
+  _loopHeadPrev = _useSeamless ? new Array(LOOP_FADE_FRAMES) : null;
 
   const btn = document.getElementById('someExportBtn');
 
@@ -2350,8 +2360,8 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
         audioDecoded = await decodeAudioTrack(someAudio, REC_TOTAL_FRAMES / REC_FPS);
       } catch (e) {
         console.error('Audio load failed:', e);
-        btn.textContent = 'Audio load failed';
-        setTimeout(() => { btn.textContent = 'Export 10s Loop'; }, 2000);
+        alert('Audio load failed: ' + (e && e.message ? e.message : e));
+        btn.textContent = 'Export 10s Loop';
         return;
       }
     }
@@ -2527,15 +2537,20 @@ function loop(now) {
     }
     updateOrbitBall();
 
-    if (_frameIdx < LOOP_FADE_FRAMES) {
+    const totalFramesForRun = _useSeamless ? REC_RAW_FRAMES : REC_TOTAL_FRAMES;
+
+    if (_useSeamless && _frameIdx < LOOP_FADE_FRAMES) {
       // Head phase — snapshot mesh state, do not render/encode.
       _loopHeadPos[_frameIdx] = new Float32Array(pos);
       _loopHeadPrev[_frameIdx] = new Float32Array(prev);
     } else {
-      if (_frameIdx >= REC_TOTAL_FRAMES) {
+      if (_useSeamless && _frameIdx >= REC_TOTAL_FRAMES) {
         // Tail phase — morph mesh toward stored head trajectory.
+        // Smootherstep easing: zero velocity at both endpoints so the
+        // morph onset and termination are visually invisible.
         const tailIdx = _frameIdx - REC_TOTAL_FRAMES;
-        const alpha = (tailIdx + 1) / LOOP_FADE_FRAMES;
+        const t = (tailIdx + 1) / LOOP_FADE_FRAMES;
+        const alpha = t * t * t * (t * (t * 6 - 15) + 10);
         const headPos = _loopHeadPos[tailIdx];
         const headPrev = _loopHeadPrev[tailIdx];
         const inv = 1 - alpha;
@@ -2554,7 +2569,7 @@ function loop(now) {
       const pixels = renderToFBO(fw, fh);
       pixelsToCanvas(pixels, fw, fh, _recCtx);
 
-      const outIdx = _frameIdx - LOOP_FADE_FRAMES;
+      const outIdx = _useSeamless ? _frameIdx - LOOP_FADE_FRAMES : _frameIdx;
       const frame = new VideoFrame(_recCanvas, {
         timestamp: outIdx * (1_000_000 / REC_FPS),
       });
@@ -2564,10 +2579,10 @@ function loop(now) {
     _frameIdx++;
 
     const elapsed = _frameIdx / REC_FPS;
-    const totalSec = REC_RAW_FRAMES / REC_FPS;
+    const totalSec = totalFramesForRun / REC_FPS;
     document.getElementById('someExportBtn').textContent =
       'Recording ' + elapsed.toFixed(1) + 's / ' + totalSec.toFixed(0) + 's';
-    if (_frameIdx >= REC_RAW_FRAMES) {
+    if (_frameIdx >= totalFramesForRun) {
       someRecording = false;
       lastTime = 0;
       finalizeExport();

@@ -2013,6 +2013,18 @@ function exportFlagPNG() {
 // ─── SoMe Export ────────────────────────────────────────────
 const SOME_FORMATS = { '1:1': [1080,1080], '4:5': [1080,1350], '9:16': [1080,1920], '16:9': [1920,1080] };
 let someFormat = '1:1', someActive = false, someRecording = false;
+let someAudio = 'none'; // 'none' | '1' | '2' | '3' | '4'
+const SOUND_VOLUME = 0.3;
+const AUDIO_TRACKS = {
+  '1': 'music/1-WdKA-Low.wav',
+  '2': 'music/2-WdKA-Mid.wav',
+  '3': 'music/3-WdKA-High.wav',
+  '4': 'music/4-WdKA-Very-High.wav',
+};
+const audioPreview = new Audio();
+audioPreview.loop = true;
+audioPreview.preload = 'auto';
+audioPreview.volume = SOUND_VOLUME;
 const someCrop = { x: 0, y: 0, w: 0, h: 0 };
 const someFrame = document.getElementById('someFrame');
 const someLabel = document.getElementById('someLabel');
@@ -2081,9 +2093,32 @@ document.getElementById('someRow').addEventListener('click', e => {
 document.getElementById('audioRow').addEventListener('click', e => {
   const btn = e.target.closest('[data-audio]');
   if (!btn) return;
+  if (btn.classList.contains('active')) {
+    someAudio = 'none';
+    btn.classList.remove('active');
+    stopAudioPreview();
+    return;
+  }
   someAudio = btn.dataset.audio;
   document.querySelectorAll('#audioRow .pill').forEach(b => b.classList.toggle('active', b === btn));
+  playAudioPreview(someAudio);
 });
+
+function stopAudioPreview() {
+  audioPreview.pause();
+  audioPreview.removeAttribute('src');
+  audioPreview.load();
+}
+
+function playAudioPreview(trackId) {
+  const src = AUDIO_TRACKS[trackId];
+  if (!src) return;
+  audioPreview.pause();
+  audioPreview.src = encodeURI(src);
+  audioPreview.volume = SOUND_VOLUME;
+  audioPreview.currentTime = 0;
+  audioPreview.play().catch(e => console.warn('Audio preview failed:', e));
+}
 
 document.getElementById('loopRow').addEventListener('click', e => {
   const btn = e.target.closest('[data-loop]');
@@ -2225,15 +2260,8 @@ let _recCanvas = null, _recCtx = null;
 let _encoder = null, _muxer = null, _muxerTarget = null, _frameIdx = 0;
 let _mp4Mod = null;
 let _audioEncoder = null;
-let someAudio = 'none'; // 'none' | '1' | '2' | '3' | '4'
 let someLoop = 'seamless'; // 'seamless' | 'cut'
 let _useSeamless = true; // snapshot of someLoop at recording start
-const AUDIO_TRACKS = {
-  '1': 'music/1-WdKA-Low.wav',
-  '2': 'music/2-WdKA-Mid.wav',
-  '3': 'music/3-WdKA-High.wav',
-  '4': 'music/4-WdKA-Very-High.wav',
-};
 // Loop-morph buffer: stores mesh particle state (pos + prev) for the first
 // LOOP_FADE_FRAMES sim frames so the tail of the recording can morph the
 // geometry back into the start trajectory, producing a seamless loop without
@@ -2264,7 +2292,7 @@ async function decodeAudioTrack(trackId, maxDurationSec) {
   for (let ch = 0; ch < numberOfChannels; ch++) {
     const data = audioBuffer.getChannelData(ch);
     for (let i = 0; i < totalFrames; i++) {
-      pcm[i * numberOfChannels + ch] = data[i];
+      pcm[i * numberOfChannels + ch] = data[i] * SOUND_VOLUME;
     }
   }
   return { pcm, numberOfChannels, sampleRate, totalFrames };

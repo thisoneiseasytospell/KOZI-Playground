@@ -2076,7 +2076,7 @@ function updateSomeFrame() {
   s.left = someCrop.x + 'px'; s.top = someCrop.y + 'px';
   s.width = someCrop.w + 'px'; s.height = someCrop.h + 'px';
   const [w, h] = getExportSize();
-  someLabel.textContent = w + '\u00d7' + h + ' \u00b7 @30fps';
+  someLabel.textContent = w + '\u00d7' + h + ' \u00b7 @25fps';
 }
 
 document.getElementById('someRow').addEventListener('click', e => {
@@ -2420,7 +2420,7 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
       codec: 'avc1.640028',
       width: fw, height: fh,
       bitrate: 10_000_000,
-      framerate: 30,
+      framerate: 25,
     });
     if (audioDecoded) {
       _audioEncoder = startAudioEncode(audioDecoded, _muxer);
@@ -2533,18 +2533,18 @@ window.addEventListener('keydown', e => {
   togglePause();
 });
 
-const SIM_HZ = 60;
+const SIM_HZ = 50;
 const SIM_DT = 1 / SIM_HZ;
-const REC_FPS = 30;
+const REC_FPS = 25;
 const REC_STEPS = SIM_HZ / REC_FPS; // 2 physics steps per export frame
-const REC_TOTAL_FRAMES = 10 * REC_FPS;      // 300 — output loop length
-const LOOP_FADE_FRAMES = 30;                // 1s crossfade at the loop seam
-const REC_RAW_FRAMES = REC_TOTAL_FRAMES + LOOP_FADE_FRAMES; // 270 sim frames
+const REC_TOTAL_FRAMES = 10 * REC_FPS;      // 250 — output loop length
+const LOOP_FADE_FRAMES = 25;                // 1s crossfade at the loop seam
+const REC_RAW_FRAMES = REC_TOTAL_FRAMES + LOOP_FADE_FRAMES;
 
 function loop(now) {
   requestAnimationFrame(loop);
 
-  // During recording: 2 physics steps per frame, capture at 30fps.
+  // During recording: 2 physics steps per frame, capture at 25fps.
   // Seamless-loop strategy — geometric morph (no pixel ghosting):
   //   sim [0, L)         → snapshot pos+prev into _loopHeadPos/_loopHeadPrev,
   //                         do not encode

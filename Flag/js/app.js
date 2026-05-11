@@ -904,13 +904,30 @@ function lookAt(e, t, u) {
   ]);
 }
 
-// ─── Camera (orbit + pan + zoom) ─────────────────────────────
+// ─── Camera (orbit + pan + zoom + roll) ──────────────────────
 const cam = {
   tgtTheta: 0.0, tgtPhi: 0.12, tgtDist: 5,
   curTheta: 0.0, curPhi: 0.12, curDist: 5,
+  tgtRoll: 0.0, roll: 0.0,
   tgtTarget: [0, 0, 0],
   target: [0, 0, 0],
 };
+
+// Up vector rolled around the view axis (Rodrigues; world-up = [0,1,0])
+function rolledUp(eye, target, roll) {
+  let fx = target[0] - eye[0], fy = target[1] - eye[1], fz = target[2] - eye[2];
+  const fl = Math.hypot(fx, fy, fz) || 1;
+  fx /= fl; fy /= fl; fz /= fl;
+  const c = Math.cos(roll), s = Math.sin(roll);
+  // u = [0,1,0]; f × u = (fz, 0, -fx); f · u = fy
+  const cx = fz, cy = 0, cz = -fx;
+  const d = fy;
+  return [
+    0 * c + cx * s + fx * d * (1 - c),
+    1 * c + cy * s + fy * d * (1 - c),
+    0 * c + cz * s + fz * d * (1 - c),
+  ];
+}
 
 function eyePos() {
   return [
@@ -942,6 +959,7 @@ function updateCamera(dt) {
   cam.curTheta += (cam.tgtTheta - cam.curTheta) * lf;
   cam.curPhi += (cam.tgtPhi - cam.curPhi) * lf;
   cam.curDist += (cam.tgtDist - cam.curDist) * lf;
+  cam.roll += (cam.tgtRoll - cam.roll) * lf;
   cam.tgtPhi = clamp(cam.tgtPhi, -1.45, 1.45);
   cam.target[0] += (cam.tgtTarget[0] - cam.target[0]) * lf;
   cam.target[1] += (cam.tgtTarget[1] - cam.target[1]) * lf;
@@ -985,6 +1003,23 @@ canvas.addEventListener('wheel', e => {
   const speed = (e.ctrlKey || e.metaKey) ? 0.003 : 0.0015;
   cam.tgtDist = clamp(cam.tgtDist * Math.exp(e.deltaY * speed), 1.0, 20);
 }, { passive: false });
+
+// Arrow keys: bank/roll the camera (like a plane).
+// Shift+Arrow → snap to 0 / ±90° / 180°
+window.addEventListener('keydown', e => {
+  if (e.target.matches('input, textarea') || e.target.isContentEditable) return;
+  const step = e.shiftKey ? Math.PI / 2 : 0.06;
+  if (e.key === 'ArrowLeft') {
+    cam.tgtRoll -= step;
+    e.preventDefault();
+  } else if (e.key === 'ArrowRight') {
+    cam.tgtRoll += step;
+    e.preventDefault();
+  } else if (e.key === 'ArrowDown' && e.shiftKey) {
+    cam.tgtRoll = 0; // reset bank
+    e.preventDefault();
+  }
+});
 
 // Touch: 1-finger orbit, 2-finger pinch+pan
 canvas.addEventListener('touchstart', e => {
@@ -1082,7 +1117,7 @@ function render(dt) {
   gl.useProgram(prog);
   gl.uniform1f(loc.uPartyTime, 0.0);
   gl.uniformMatrix4fv(loc.uProj, false, perspective(Math.PI / 4.5, canvas.width / canvas.height, 0.1, 100));
-  gl.uniformMatrix4fv(loc.uView, false, lookAt(e, cam.target, [0, 1, 0]));
+  gl.uniformMatrix4fv(loc.uView, false, lookAt(e, cam.target, rolledUp(e, cam.target, cam.roll)));
   gl.uniform3f(loc.uLight, ld[0] / ll, ld[1] / ll, ld[2] / ll);
   gl.uniform3f(loc.uEye, e[0], e[1], e[2]);
   gl.uniform1f(loc.uAmbient, 0.38);
@@ -1173,8 +1208,12 @@ function generateTextTexture(scrollOffset) {
     if (textTexActive && !imageTexActive) { removeTexture(); textTexActive = false; }
     return;
   }
-  const texW = 2048;
-  const texH = Math.round(texW * (aspectH / aspectW));
+  // Cap longest side at 4096 — sharper for huge exports (e.g. 3200×300 OOH)
+  // without blowing up memory on tall/narrow flags.
+  const MAX_DIM = 4096;
+  let texW, texH;
+  if (aspectW >= aspectH) { texW = MAX_DIM; texH = Math.round(texW * (aspectH / aspectW)); }
+  else                    { texH = MAX_DIM; texW = Math.round(texH * (aspectW / aspectH)); }
   textCanvas.width = texW; textCanvas.height = texH;
   textCtx.clearRect(0, 0, texW, texH);
 
@@ -1269,7 +1308,10 @@ function refreshTexture() {
     generateTextTexture(textScrollTime);
   } else if (loadedImage) {
     // No text — show image
-    const texW = 2048, texH = Math.round(texW * (aspectH / aspectW));
+    const MAX_DIM = 4096;
+    let texW, texH;
+    if (aspectW >= aspectH) { texW = MAX_DIM; texH = Math.round(texW * (aspectH / aspectW)); }
+    else                    { texH = MAX_DIM; texW = Math.round(texH * (aspectW / aspectH)); }
     imgCanvas.width = texW; imgCanvas.height = texH;
     imgCtx.clearRect(0, 0, texW, texH);
     if (fitMode === 'stretch') {
@@ -1801,6 +1843,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   autoFrame();
   cam.tgtDist = cam.curDist = cam.tgtDist; // snap immediately
   cam.tgtTheta = 0.0; cam.tgtPhi = 0.12;
+  cam.tgtRoll = 0.0; cam.roll = 0.0;
   cam.tgtTarget[0] = 0; cam.tgtTarget[1] = 0; cam.tgtTarget[2] = 0;
   cam.target[0] = 0; cam.target[1] = 0; cam.target[2] = 0;
   orbitAngularVel = 0;
@@ -1933,7 +1976,7 @@ function exportFlagPNG() {
   gl.useProgram(prog);
   gl.uniform1f(loc.uPartyTime, 0.0);
   gl.uniformMatrix4fv(loc.uProj, false, perspective(fov, asp, 0.1, 100));
-  gl.uniformMatrix4fv(loc.uView, false, lookAt(eye, target, [0, 1, 0]));
+  gl.uniformMatrix4fv(loc.uView, false, lookAt(eye, target, rolledUp(eye, target, cam.roll)));
   gl.uniform3f(loc.uLight, ld[0] / ll, ld[1] / ll, ld[2] / ll);
   gl.uniform3f(loc.uEye, eye[0], eye[1], eye[2]);
   gl.uniform1f(loc.uAmbient, 0.38);
@@ -2191,7 +2234,7 @@ function renderToFBO(fw, fh) {
   gl.useProgram(prog);
   gl.uniform1f(loc.uPartyTime, 0.0);
   gl.uniformMatrix4fv(loc.uProj, false, perspective(expFOV, fw / fh, 0.1, 100));
-  gl.uniformMatrix4fv(loc.uView, false, lookAt(e, cam.target, [0, 1, 0]));
+  gl.uniformMatrix4fv(loc.uView, false, lookAt(e, cam.target, rolledUp(e, cam.target, cam.roll)));
   gl.uniform3f(loc.uLight, ld[0] / ll, ld[1] / ll, ld[2] / ll);
   gl.uniform3f(loc.uEye, e[0], e[1], e[2]);
   gl.uniform1f(loc.uAmbient, 0.38);

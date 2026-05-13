@@ -1015,7 +1015,7 @@ window.addEventListener('keydown', e => {
   } else if (e.key === 'ArrowRight') {
     cam.tgtRoll += step;
     e.preventDefault();
-  } else if (e.key === 'ArrowDown' && e.shiftKey) {
+  } else if (e.key === 'ArrowDown') {
     cam.tgtRoll = 0; // reset bank
     e.preventDefault();
   }
@@ -2300,6 +2300,9 @@ function pixelsToCanvas(pixels, fw, fh, ctx) {
 
 // HQ MP4 export via WebCodecs + mp4-muxer (hardware-accelerated H.264)
 let _recCanvas = null, _recCtx = null;
+// Supersample buffer: render the FBO at _recSS× the output size and downscale
+// into _recCanvas for cleaner edges (poor-man's MSAA on WebGL1).
+let _ssCanvas = null, _ssCtx = null, _recSS = 1;
 let _encoder = null, _muxer = null, _muxerTarget = null, _frameIdx = 0;
 let _mp4Mod = null;
 let _audioEncoder = null;
@@ -2395,6 +2398,7 @@ async function finalizeExport() {
   }
   _encoder = null; _muxer = null; _muxerTarget = null;
   _recCanvas = null; _recCtx = null;
+  _ssCanvas = null; _ssCtx = null; _recSS = 1;
   _loopHeadPos = null; _loopHeadPrev = null;
   if (_audioEncoder) { try { _audioEncoder.close(); } catch (_) {} _audioEncoder = null; }
   someFrame.classList.remove('recording');
@@ -2413,6 +2417,16 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
   _recCanvas = document.createElement('canvas');
   _recCanvas.width = fw; _recCanvas.height = fh;
   _recCtx = _recCanvas.getContext('2d');
+  // Pick a supersample factor (2 if the GPU can render the bigger buffer).
+  const maxRb = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
+  const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+  const maxDim = Math.min(maxRb, maxTex);
+  _recSS = (fw * 2 <= maxDim && fh * 2 <= maxDim) ? 2 : 1;
+  if (_recSS > 1) {
+    _ssCanvas = document.createElement('canvas');
+    _ssCanvas.width = fw * _recSS; _ssCanvas.height = fh * _recSS;
+    _ssCtx = _ssCanvas.getContext('2d');
+  }
   _useSeamless = (someLoop === 'seamless');
   _loopHeadPos = _useSeamless ? new Array(LOOP_FADE_FRAMES) : null;
   _loopHeadPrev = _useSeamless ? new Array(LOOP_FADE_FRAMES) : null;
@@ -2460,9 +2474,11 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
       error: e => console.error('VideoEncoder error:', e),
     });
     _encoder.configure({
-      codec: 'avc1.640028',
+      codec: 'avc1.640034',
       width: fw, height: fh,
-      bitrate: 10_000_000,
+      // ~0.3 bits/pixel for H.264 — visibly cleaner on textured content
+      // (flag fabric, text) than the previous flat 10 Mbit/s.
+      bitrate: Math.min(50_000_000, Math.max(8_000_000, Math.round(fw * fh * REC_FPS * 0.3))),
       framerate: 25,
     });
     if (audioDecoded) {
@@ -2637,8 +2653,18 @@ function loop(now) {
       // the on-screen canvas avoids viewport/DPR-bound upscaling that would
       // otherwise pixelate tall formats like 9:16 (1080×1920).
       const fw = _recCanvas.width, fh = _recCanvas.height;
-      const pixels = renderToFBO(fw, fh);
-      pixelsToCanvas(pixels, fw, fh, _recCtx);
+      const ssW = fw * _recSS, ssH = fh * _recSS;
+      const pixels = renderToFBO(ssW, ssH);
+      if (_recSS === 1) {
+        pixelsToCanvas(pixels, fw, fh, _recCtx);
+      } else {
+        // Render at 2× and downscale with high-quality smoothing for an
+        // anti-aliased frame (WebGL1 has no MSAA renderbuffers).
+        pixelsToCanvas(pixels, ssW, ssH, _ssCtx);
+        _recCtx.imageSmoothingEnabled = true;
+        _recCtx.imageSmoothingQuality = 'high';
+        _recCtx.drawImage(_ssCanvas, 0, 0, fw, fh);
+      }
 
       const outIdx = _useSeamless ? _frameIdx - LOOP_FADE_FRAMES : _frameIdx;
       const frame = new VideoFrame(_recCanvas, {

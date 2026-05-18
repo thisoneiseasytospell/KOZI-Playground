@@ -32,7 +32,7 @@ html, body {
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
-  font-family: 'ABC Diatype', 'DM Sans', sans-serif;
+  font-family: 'ABC Diatype', sans-serif;
   font-weight: 700;
   -webkit-font-smoothing: antialiased;
 }
@@ -91,7 +91,7 @@ canvas#c {
   display: flex; align-items: center; justify-content: space-between;
 }
 .panel-title {
-  font-family: 'OT Jubilee Platinum', 'Instrument Serif', serif;
+  font-family: 'OT Jubilee Platinum', serif;
   font-weight: 200;
   font-style: italic;
   font-size: 26px; letter-spacing: -0.01em;
@@ -226,12 +226,14 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
   letter-spacing: -0.5px;
 }
 .font-icon-serif {
-  font-family: 'Instrument Serif', serif;
-  font-size: 15px;
+  font-family: 'OT Jubilee Platinum', serif;
+  font-style: italic;
+  font-weight: 200;
+  font-size: 16px;
 }
 .font-icon-sans {
-  font-family: 'DM Sans', sans-serif;
-  font-weight: 500;
+  font-family: 'ABC Diatype', sans-serif;
+  font-weight: 700;
 }
 
 /* ── Mini flag preview ──────────────────────────────────── */
@@ -668,3 +670,118 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
   left: 32px; top: 32px;
   transform: translate(-50%, -50%);
 }
+
+/* ── Film Festival Intro (FFI) ───────────────────────────── */
+.ffi-block {
+  background: rgba(0,0,0,0.025);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.ffi-block:last-child { margin-bottom: 0; }
+.ffi-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.ffi-block-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.ffi-block-font {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ffi-text {
+  width: 100%;
+  margin-bottom: 10px;
+  text-transform: none;
+}
+.ffi-textarea {
+  resize: vertical;
+  min-height: 48px;
+  font-family: inherit;
+  line-height: 1.3;
+}
+.ffi-block .control-row { margin-bottom: 0; }
+
+/* Mini flag preview with draggable block handles (Y-only). */
+.ffi-layout {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.ffi-layout-flag {
+  position: relative;
+  width: 180px;
+  /* aspect 2.4 wide × 2.9 tall → height = width × (2.9/2.4) */
+  height: 217px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--accent-dim);
+  overflow: hidden;
+}
+.ffi-layout-block {
+  position: absolute;
+  left: 6%;
+  width: 88%;
+  min-height: 10px;
+  border-radius: 3px;
+  background: rgba(1,111,23,0.45);
+  color: #fff;
+  font-family: 'ABC Diatype', sans-serif;
+  font-weight: 700;
+  font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  user-select: none;
+  transform: translateY(-50%);
+  transition: background 0.12s ease;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.6);
+}
+.ffi-layout-block:hover { background: rgba(1,111,23,0.7); }
+.ffi-layout-block.dragging { background: var(--accent); }
+
+.ffi-readout {
+  position: fixed;
+  bottom: 16px; left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.78);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-family: 'ABC Diatype', sans-serif;
+  font-weight: 700;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  z-index: 9999;
+  cursor: pointer;
+  user-select: none;
+  display: none;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+.ffi-readout:hover { background: rgba(0,0,0,0.9); }
+.ffi-readout.visible { display: block; }
+.ffi-readout.copied { background: var(--accent); }
+

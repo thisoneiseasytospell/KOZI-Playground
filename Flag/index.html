@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Flag Studio</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -182,12 +181,13 @@
     </div>
     <div class="tab-content" id="tabExport">
       <div class="section">
-        <div class="section-label">Format</div>
+        <div class="section-label">Presets</div>
         <div class="pill-row" id="someRow" style="gap:5px">
           <button class="pill active" data-some="1:1">1:1</button>
           <button class="pill" data-some="4:5">4:5</button>
           <button class="pill" data-some="9:16">9:16</button>
           <button class="pill" data-some="16:9">16:9</button>
+          <button class="pill" data-some="ffi">FFI</button>
         </div>
       </div>
       <div class="section">
@@ -206,13 +206,6 @@
         </div>
       </div>
       <div class="section">
-        <div class="section-label">Loop</div>
-        <div class="pill-row" id="loopRow" style="gap:5px">
-          <button class="pill active" data-loop="seamless">Seamless</button>
-          <button class="pill" data-loop="cut">Cut</button>
-        </div>
-      </div>
-      <div class="section">
         <div class="section-label">Sound</div>
         <div class="pill-row" id="audioRow" style="gap:5px">
           <button class="pill" data-audio="1">1</button>
@@ -220,6 +213,40 @@
           <button class="pill" data-audio="3">3</button>
           <button class="pill" data-audio="4">4</button>
         </div>
+      </div>
+      <div class="section" id="ffiSection" style="display:none">
+        <div class="section-label">Film Festival Intro</div>
+        <div class="ffi-layout">
+          <div class="ffi-layout-flag" id="ffiLayoutFlag">
+            <div class="ffi-layout-block" data-fblock="0"><span>1</span></div>
+            <div class="ffi-layout-block" data-fblock="1"><span>2</span></div>
+          </div>
+        </div>
+        <div class="ffi-block" data-block="0">
+          <div class="ffi-block-head"><span class="ffi-block-num">1</span></div>
+          <textarea class="hex-input ffi-text ffi-textarea" id="ffiText0" rows="2" spellcheck="false">What Design
+Can't Do</textarea>
+          <div class="control-row">
+            <div class="control-label">
+              <span class="control-name">Size</span>
+              <span class="control-value" id="ffiSizeVal0">78</span>
+            </div>
+            <input type="range" class="ffi-size" id="ffiSize0" min="20" max="200" value="78">
+          </div>
+        </div>
+        <div class="ffi-block" data-block="1">
+          <div class="ffi-block-head"><span class="ffi-block-num">2</span></div>
+          <textarea class="hex-input ffi-text ffi-textarea" id="ffiText1" rows="2" spellcheck="false">Graphic Design
+Albert Kozikowski</textarea>
+          <div class="control-row">
+            <div class="control-label">
+              <span class="control-name">Size</span>
+              <span class="control-value" id="ffiSizeVal1">35</span>
+            </div>
+            <input type="range" class="ffi-size" id="ffiSize1" min="10" max="120" value="35">
+          </div>
+        </div>
+        <button class="btn-export" id="ffiExportBtn" style="margin-top:8px">Export 10s · 1920×1080</button>
       </div>
       <div class="section">
         <div class="section-label">Export</div>

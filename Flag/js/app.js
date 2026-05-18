@@ -905,6 +905,7 @@ function lookAt(e, t, u) {
 }
 
 // ─── Camera (orbit + pan + zoom + roll) ──────────────────────
+let showPole = true; // hidden in Export tab + all recordings
 const cam = {
   tgtTheta: 0.0, tgtPhi: 0.12, tgtDist: 5,
   curTheta: 0.0, curPhi: 0.12, curDist: 5,
@@ -1122,10 +1123,10 @@ function render(dt) {
   gl.uniform3f(loc.uEye, e[0], e[1], e[2]);
   gl.uniform1f(loc.uAmbient, 0.38);
 
-  // Draw pole (skipped during video recording to match PNG export)
-  if (!someRecording) {
+  // Draw pole — only in Studio/Wind tabs (hidden in Export preview and any recording).
+  if (showPole && !someRecording) {
     gl.uniform1i(loc.uIsGlass, 1);
-    const pd = 0.88; // darken factor (slightly darker than bg)
+    const pd = 0.88;
     gl.uniform3f(loc.uColor, SIM.bgColor[0] * pd, SIM.bgColor[1] * pd, SIM.bgColor[2] * pd);
     gl.uniform1f(loc.uAlpha, 1.0);
     gl.uniform1i(loc.uHasTex, 0);
@@ -1187,11 +1188,18 @@ const textCtx = textCanvas.getContext('2d');
 let currentText = '', currentFontSize = 120, currentLineHeight = 0.85;
 let currentTextColor = '#016F17';
 let currentFont = 'jubilee'; // 'jubilee' or 'diatype'
-let textLayout = 'repeat'; // 'repeat' or 'centered'
+let textLayout = 'repeat'; // 'repeat' | 'centered' | 'titleCard'
 let textLayoutUserSet = false; // true once the user explicitly picks a layout
 let textTexActive = false;
 let textScrollSpeed = 0; // 0 = static, >0 = pixels/sec scroll
 let textScrollTime = 0;
+
+// Film Festival Intro — three centered blocks (Jubilee, Diatype, Diatype).
+// y is the vertical center as a fraction of flag height (0 = top, 1 = bottom).
+const titleBlocks = [
+  { text: "What Design\nCan't Do",            size: 78, font: 'jubilee', y: 0.32, lineH: 1.00 },
+  { text: 'Graphic Design\nAlbert Kozikowski', size: 35, font: 'diatype', y: 0.62, lineH: 0.95 },
+];
 
 // Deterministic pseudo-random per row (consistent across redraws)
 const rowSeeds = [];
@@ -1204,7 +1212,7 @@ for (let i = 0; i < 200; i++) {
 function generateTextTexture(scrollOffset) {
   scrollOffset = scrollOffset || 0;
   const text = currentText.trim();
-  if (!text) {
+  if (textLayout !== 'titleCard' && !text) {
     if (textTexActive && !imageTexActive) { removeTexture(); textTexActive = false; }
     return;
   }
@@ -1216,6 +1224,43 @@ function generateTextTexture(scrollOffset) {
   else                    { texH = MAX_DIM; texW = Math.round(texH * (aspectW / aspectH)); }
   textCanvas.width = texW; textCanvas.height = texH;
   textCtx.clearRect(0, 0, texW, texH);
+
+  // Title-card layout: three independent blocks, each positioned by its own
+  // y (fraction of flag height). Block 1 supports multi-line text via Enter
+  // (preserved newlines) and auto-wraps if a line overflows.
+  if (textLayout === 'titleCard') {
+    textCtx.fillStyle = currentTextColor;
+    textCtx.textBaseline = 'middle';
+    textCtx.textAlign = 'center';
+    const padX = texW * 0.06;
+    const maxW = texW - padX * 2;
+    const sizeScale = texW / 800;
+
+    const setBlockFont = (font, size) => {
+      if (font === 'diatype') textCtx.font = `bold ${size}px "ABC Diatype", sans-serif`;
+      else                    textCtx.font = `italic 200 ${size}px "OT Jubilee Platinum", "Instrument Serif", serif`;
+    };
+
+    for (let bi = 0; bi < titleBlocks.length; bi++) {
+      const b = titleBlocks[bi];
+      if (!b.text.trim()) continue;
+      const sz = b.size * sizeScale;
+      setBlockFont(b.font, sz);
+      const lineH = sz * (b.lineH || 1.0);
+      const lines = wrapParagraph(textCtx, b.text, maxW);
+      const totalH = lines.length * lineH;
+      const centerY = texH * b.y;
+      const startY = centerY - totalH / 2 + lineH * 0.5;
+      for (let i = 0; i < lines.length; i++) {
+        textCtx.fillText(lines[i], texW / 2, startY + i * lineH);
+      }
+    }
+
+    textCtx.textAlign = 'start';
+    loadTexture(textCanvas);
+    textTexActive = true;
+    return;
+  }
 
   const fontSize = currentFontSize * (texW / 800);
   if (currentFont === 'diatype') {
@@ -1303,7 +1348,10 @@ function refreshTexture() {
   const text = currentText.trim();
   // When text is active, PNG is disabled (text-only mode).
   // When text is cleared, PNG comes back.
-  if (text) {
+  if (textLayout === 'titleCard') {
+    // FFI mode — drives its own text from titleBlocks, not currentText.
+    generateTextTexture(0);
+  } else if (text) {
     // Text only (even if image is loaded, we disable it while text is active)
     generateTextTexture(textScrollTime);
   } else if (loadedImage) {
@@ -1868,7 +1916,13 @@ document.getElementById('exportBtn').addEventListener('click', () => {
 
 function exportFlagPNG() {
   const meshScale = 3; // 3x denser mesh via bilinear interpolation
-  const [w, h] = getExportSize();
+  const [outW, outH] = getExportSize();
+  // 2× supersample if the GPU can host the larger renderbuffer/texture.
+  const maxRb = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
+  const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+  const maxDim = Math.min(maxRb, maxTex);
+  const ss = (outW * 2 <= maxDim && outH * 2 <= maxDim) ? 2 : 1;
+  const w = outW * ss, h = outH * ss;
 
   // ── Build high-res mesh by interpolating current cloth ──
   const eCols = (cols - 1) * meshScale + 1;
@@ -2031,23 +2085,35 @@ function exportFlagPNG() {
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(0, 0, 0, 1);
 
-  // Flip Y → 2D canvas → download
-  const out = document.createElement('canvas');
-  out.width = w; out.height = h;
-  const ctx2 = out.getContext('2d');
-  const imgData = ctx2.createImageData(w, h);
+  // Flip Y → 2D canvas (at supersample resolution).
+  const ssCanvas = document.createElement('canvas');
+  ssCanvas.width = w; ssCanvas.height = h;
+  const ssCtx = ssCanvas.getContext('2d');
+  const imgData = ssCtx.createImageData(w, h);
   for (let y = 0; y < h; y++) {
     const src = (h - 1 - y) * w * 4;
     const dst = y * w * 4;
     imgData.data.set(pixels.subarray(src, src + w * 4), dst);
   }
-  ctx2.putImageData(imgData, 0, 0);
+  ssCtx.putImageData(imgData, 0, 0);
+
+  // Downscale to target with high-quality smoothing (poor-man's MSAA).
+  const out = document.createElement('canvas');
+  out.width = outW; out.height = outH;
+  const ctx2 = out.getContext('2d');
+  if (ss > 1) {
+    ctx2.imageSmoothingEnabled = true;
+    ctx2.imageSmoothingQuality = 'high';
+    ctx2.drawImage(ssCanvas, 0, 0, outW, outH);
+  } else {
+    ctx2.drawImage(ssCanvas, 0, 0);
+  }
 
   out.toBlob(blob => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `flag-${w}x${h}.png`;
+    a.download = `flag-${outW}x${outH}.png`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, 'image/png');
@@ -2085,10 +2151,13 @@ document.querySelector('.panel-tabs').addEventListener('click', e => {
     someActive = true;
     initSomeCrop();
     someFrame.style.display = 'block';
+    showPole = false;
   } else {
     someActive = false;
     someFrame.style.display = 'none';
+    showPole = true;
   }
+  document.getElementById('ffiReadout').classList.toggle('visible', which === 'export' && someFormat === 'ffi');
 });
 
 const sizeWInput = document.getElementById('sizeW');
@@ -2127,6 +2196,22 @@ document.getElementById('someRow').addEventListener('click', e => {
   if (!btn) return;
   someFormat = btn.dataset.some;
   document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b === btn));
+  const ffiSection = document.getElementById('ffiSection');
+  const ffiReadoutEl = document.getElementById('ffiReadout');
+  if (someFormat === 'ffi') {
+    ffiSection.style.display = '';
+    ffiReadoutEl.classList.add('visible');
+    applyFFIPreset();
+    if (someActive) initSomeCrop();
+    return;
+  }
+  ffiSection.style.display = 'none';
+  ffiReadoutEl.classList.remove('visible');
+  // Leaving FFI — drop the title-card layout so generic text/image rendering resumes.
+  if (textLayout === 'titleCard') {
+    textLayout = 'repeat';
+    refreshTexture();
+  }
   const [fw, fh] = SOME_FORMATS[someFormat];
   sizeWInput.value = fw;
   sizeHInput.value = fh;
@@ -2163,11 +2248,212 @@ function playAudioPreview(trackId) {
   audioPreview.play().catch(e => console.warn('Audio preview failed:', e));
 }
 
-document.getElementById('loopRow').addEventListener('click', e => {
-  const btn = e.target.closest('[data-loop]');
-  if (!btn) return;
-  someLoop = btn.dataset.loop;
-  document.querySelectorAll('#loopRow .pill').forEach(b => b.classList.toggle('active', b === btn));
+
+// ─── Film Festival Intro (FFI) ──────────────────────────────
+// rAF-coalesced texture refresh so size sliders feel buttery.
+let _ffiRefreshRaf = null;
+function ffiQueueRefresh() {
+  if (_ffiRefreshRaf || textLayout !== 'titleCard') return;
+  _ffiRefreshRaf = requestAnimationFrame(() => { _ffiRefreshRaf = null; refreshTexture(); });
+}
+
+// Live camera/flag values HUD — visible only when FFI preset is active.
+// Click to copy all current values to clipboard so you can dictate the
+// exact numbers you want me to lock in.
+const ffiReadout = document.createElement('div');
+ffiReadout.className = 'ffi-readout';
+ffiReadout.id = 'ffiReadout';
+ffiReadout.title = 'Click to copy all values';
+document.body.appendChild(ffiReadout);
+
+function ffiValuesObject() {
+  return {
+    flag: { aspectW, aspectH, flagW: +flagW.toFixed(3), flagH: +flagH.toFixed(3) },
+    cam: {
+      target: cam.tgtTarget.map(v => +v.toFixed(3)),
+      dist:  +cam.tgtDist.toFixed(3),
+      theta: +cam.tgtTheta.toFixed(3),
+      phi:   +cam.tgtPhi.toFixed(3),
+      roll:  +cam.tgtRoll.toFixed(3),
+    },
+    wind: { strength: SIM.windStrength, turbulence: SIM.turbulence },
+    blocks: titleBlocks.map(b => ({ text: b.text, size: b.size, font: b.font, y: +b.y.toFixed(3), lineH: b.lineH })),
+  };
+}
+
+function updateFFIReadout() {
+  if (!ffiReadout.classList.contains('visible')) return;
+  const t = cam.tgtTarget;
+  ffiReadout.textContent =
+    'aspect ' + aspectW + ':' + aspectH +
+    '  ·  tgt ' + t[0].toFixed(2) + ', ' + t[1].toFixed(2) + ', ' + t[2].toFixed(2) +
+    '  ·  dist ' + cam.tgtDist.toFixed(2) +
+    '  ·  θ ' + cam.tgtTheta.toFixed(2) +
+    '  ·  φ ' + cam.tgtPhi.toFixed(2) +
+    '  ·  roll ' + cam.tgtRoll.toFixed(2) +
+    '  ·  wind ' + SIM.windStrength + '/' + SIM.turbulence +
+    '  ·  click to copy';
+}
+setInterval(updateFFIReadout, 100);
+
+ffiReadout.addEventListener('click', async () => {
+  const payload = JSON.stringify(ffiValuesObject(), null, 2);
+  try {
+    await navigator.clipboard.writeText(payload);
+    ffiReadout.classList.add('copied');
+    const orig = ffiReadout.textContent;
+    ffiReadout.textContent = '✓ copied to clipboard';
+    setTimeout(() => { ffiReadout.classList.remove('copied'); updateFFIReadout(); }, 900);
+  } catch (e) {
+    console.warn('Clipboard write failed, payload:', payload);
+    ffiReadout.textContent = '⚠ clipboard blocked — check console';
+    setTimeout(updateFFIReadout, 1500);
+  }
+});
+
+// Live block edits.
+for (let i = 0; i < titleBlocks.length; i++) {
+  const txt = document.getElementById('ffiText' + i);
+  const sz = document.getElementById('ffiSize' + i);
+  const szVal = document.getElementById('ffiSizeVal' + i);
+  // Seed input values from titleBlocks defaults.
+  txt.value = titleBlocks[i].text;
+  sz.value = titleBlocks[i].size;
+  szVal.textContent = titleBlocks[i].size;
+  txt.addEventListener('input', () => {
+    titleBlocks[i].text = txt.value;
+    ffiQueueRefresh();
+    updateFFILayoutBars();
+  });
+  sz.addEventListener('input', () => {
+    titleBlocks[i].size = +sz.value;
+    szVal.textContent = sz.value;
+    ffiQueueRefresh();
+    updateFFILayoutBars();
+  });
+}
+
+// Mini-flag preview: render three draggable bars representing each block's
+// vertical center. Bar height scales with font size; drag updates block.y.
+const ffiLayoutFlag = document.getElementById('ffiLayoutFlag');
+const ffiLayoutBars = ffiLayoutFlag ? ffiLayoutFlag.querySelectorAll('.ffi-layout-block') : [];
+function updateFFILayoutBars() {
+  if (!ffiLayoutFlag) return;
+  const flagPxH = ffiLayoutFlag.clientHeight || 217;
+  // Approximate the rendered text extent in the preview by mirroring the
+  // texture math (size * texW/800), expressed as a fraction of texH and
+  // scaled to flagPxH. Multi-line text grows the bar to match.
+  const tallW = aspectW >= aspectH ? 4096 : 4096 * (aspectW / aspectH);
+  const tallH = aspectW >= aspectH ? 4096 * (aspectH / aspectW) : 4096;
+  for (let i = 0; i < ffiLayoutBars.length; i++) {
+    const bar = ffiLayoutBars[i];
+    const b = titleBlocks[i];
+    if (!b) { bar.style.display = 'none'; continue; }
+    const sz = b.size * (tallW / 800);
+    const nLines = Math.max(1, b.text.split(/\r?\n/).length);
+    const fracH = (nLines * sz * (b.lineH || 1.0)) / tallH;
+    const barH = Math.max(10, fracH * flagPxH);
+    bar.style.top = (b.y * 100) + '%';
+    bar.style.height = barH + 'px';
+    const label = bar.querySelector('span');
+    if (label) label.textContent = b.text.trim()
+      ? (i + 1) + ' · ' + b.text.split(/\r?\n/)[0].slice(0, 16)
+      : String(i + 1);
+  }
+}
+
+// Drag handling per bar.
+ffiLayoutBars.forEach((bar, i) => {
+  let dragging = false;
+  const onDown = (clientY, e) => {
+    dragging = true;
+    bar.classList.add('dragging');
+    e.preventDefault();
+  };
+  const onMove = (clientY) => {
+    if (!dragging) return;
+    const r = ffiLayoutFlag.getBoundingClientRect();
+    const y = clamp((clientY - r.top) / r.height, 0, 1);
+    titleBlocks[i].y = y;
+    bar.style.top = (y * 100) + '%';
+    ffiQueueRefresh();
+  };
+  const onUp = () => { dragging = false; bar.classList.remove('dragging'); };
+  bar.addEventListener('mousedown', e => onDown(e.clientY, e));
+  window.addEventListener('mousemove', e => onMove(e.clientY));
+  window.addEventListener('mouseup', onUp);
+  bar.addEventListener('touchstart', e => onDown(e.touches[0].clientY, e), { passive: false });
+  window.addEventListener('touchmove', e => { if (dragging) { onMove(e.touches[0].clientY); e.preventDefault(); } }, { passive: false });
+  window.addEventListener('touchend', onUp);
+});
+// Initial paint.
+updateFFILayoutBars();
+
+function applyFFIPreset() {
+  // Set text layout first so the refreshTexture() inside fullRebuild paints
+  // the title card immediately (no empty-texture flash).
+  textLayout = 'titleCard';
+  textLayoutUserSet = true;
+
+  // 2.4 wide × 2.9 tall flag (FFI poster aspect).
+  fullRebuild(2.4, 2.9);
+  customAW = 2.4; customAH = 2.9;
+  activeRatio = null;
+  document.querySelectorAll('#ratioRow [data-r]').forEach(b => b.classList.remove('active'));
+  if (typeof updateMiniPreview === 'function') updateMiniPreview();
+
+  // Full-edge attachment keeps the flag from billowing into itself under wind.
+  ATTACH.mode = 'edge';
+  applyPinning();
+  document.querySelectorAll('#attachRow .pill').forEach(b => b.classList.toggle('active', b.dataset.attach === 'edge'));
+
+  // Wind: user wants at least 100 — keep turbulence low so the title stays legible.
+  SIM.windStrength = 100; SIM.turbulence = 10;
+  const windIn = document.getElementById('windStrength');
+  const turbIn = document.getElementById('turbulence');
+  if (windIn) { windIn.value = 100; document.getElementById('windVal').textContent = '100'; }
+  if (turbIn) { turbIn.value = 10; document.getElementById('turbVal').textContent = '10'; }
+
+  // Head-on camera, targeting the flag's geometric center.
+  // The flag spans x ∈ [0, flagW] and y ∈ [flagH*0.8 - flagH, flagH*0.8]
+  // (rebuild puts top at flagH*0.8). Center is (flagW/2, flagH*0.3, 0).
+  cam.tgtTheta = 0; cam.tgtPhi = 0; cam.tgtRoll = 0;
+  cam.tgtTarget[0] = flagW / 2;
+  cam.tgtTarget[1] = flagH * 0.3;
+  cam.tgtTarget[2] = 0;
+  // Snap distance so the flag fills the 16:9 crop tightly.
+  const halfTan = Math.tan((Math.PI / 4.5) / 2);
+  cam.tgtDist = (flagH * 0.55 / halfTan) * 1.05;
+  // Snap camera (no slow ease-in on tab open).
+  cam.curTheta = cam.tgtTheta;
+  cam.curPhi = cam.tgtPhi;
+  cam.curDist = cam.tgtDist;
+  cam.curRoll = cam.roll = cam.tgtRoll;
+  cam.target[0] = cam.tgtTarget[0];
+  cam.target[1] = cam.tgtTarget[1];
+  cam.target[2] = cam.tgtTarget[2];
+
+  // Export settings: 1920×1080 · 16:9 · cut.
+  sizeWInput.value = 1920;
+  sizeHInput.value = 1080;
+  someFormat = '16:9';
+  document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b.dataset.some === '16:9'));
+  someLoop = 'cut';
+}
+
+document.getElementById('ffiExportBtn').addEventListener('click', () => {
+  if (someRecording) return;
+  applyFFIPreset();
+  // Make sure crop frame is sized to 16:9 so renderToFBO's vFrac matches preview.
+  someActive = true;
+  initSomeCrop();
+  someFrame.style.display = 'block';
+  // Let the rebuild + texture refresh land, then trigger the standard recorder.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      document.getElementById('someExportBtn').click();
+    });
+  });
 });
 
 window.addEventListener('resize', () => { if (someActive) initSomeCrop(); });
@@ -2306,8 +2592,8 @@ let _ssCanvas = null, _ssCtx = null, _recSS = 1;
 let _encoder = null, _muxer = null, _muxerTarget = null, _frameIdx = 0;
 let _mp4Mod = null;
 let _audioEncoder = null;
-let someLoop = 'seamless'; // 'seamless' | 'cut'
-let _useSeamless = true; // snapshot of someLoop at recording start
+let someLoop = 'cut'; // 'seamless' | 'cut'
+let _useSeamless = false; // snapshot of someLoop at recording start
 // Loop-morph buffer: stores mesh particle state (pos + prev) for the first
 // LOOP_FADE_FRAMES sim frames so the tail of the recording can morph the
 // geometry back into the start trajectory, producing a seamless loop without
@@ -2574,7 +2860,7 @@ let PAUSED = false;
 
 // Pause indicator pill — shown at bottom-center while paused.
 const pauseIndicator = document.createElement('div');
-pauseIndicator.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.78);color:#fff;padding:8px 16px;border-radius:999px;font:500 13px "DM Sans",system-ui,sans-serif;display:none;pointer-events:none;z-index:9999;letter-spacing:0.02em;';
+pauseIndicator.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.78);color:#fff;padding:8px 16px;border-radius:999px;font:700 13px "ABC Diatype",sans-serif;display:none;pointer-events:none;z-index:9999;letter-spacing:0.02em;';
 pauseIndicator.textContent = 'Paused — Space to resume';
 document.body.appendChild(pauseIndicator);
 

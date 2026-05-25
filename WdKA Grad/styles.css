@@ -118,6 +118,21 @@ body {
   margin-bottom: 1.6em;
 }
 
+/* Spacer per figure — the image itself is drawn onto the flag texture.
+   Height is set inline from JS once the image's natural aspect is known. */
+.text-overlay-inner .image-spacer {
+  width: 100%;
+  height: 0;
+  margin-top: 0.55em;
+}
+
+/* Figure caption — selectable, sits on the cloth below the image */
+.text-overlay-inner p.caption {
+  font-size: 0.78em;
+  line-height: 1.45;
+  margin: 0 0 1.8em 0;
+}
+
 /* TOC anchor links — invisible but clickable; selection paints them dark green */
 .text-overlay-inner a {
   color: transparent;
@@ -126,6 +141,12 @@ body {
   cursor: pointer;
   padding: 0.05em 0;
 }
+
+/* Whole TOC line is the click target — main.js delegates the click on
+   p.toc to the link inside, so the hit area is the full line box rather
+   than the narrow glyph run. No inline padding tricks, which used to
+   make neighbouring lines' hit areas overlap. */
+.text-overlay-inner p.toc { cursor: pointer; }
 
 /* Selection is handled by the canvas (rectangles painted on the cloth
    texture so they wave with the geometry). Hide the browser's default

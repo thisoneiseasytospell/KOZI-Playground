@@ -16,14 +16,41 @@ const a11yEl      = document.getElementById('a11y-text');
 const videoEl     = document.getElementById('cover-video');
 
 // ============================================================
+// Image preload — figures are drawn onto the flag texture, mirrored
+// in the DOM by a <div class="image-spacer"> so the selectable caption
+// below them lines up with the canvas caption.
+// ============================================================
+const imageBlocks = blocks.filter(b => b.type === 'image');
+const imageEls = imageBlocks.map(b => {
+  const img = new Image();
+  img.decoding = 'async';
+  img.src = b.src;
+  img.addEventListener('load', onImageLoaded);
+  return img;
+});
+
+function escHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+}
+
+// ============================================================
 // Build selectable overlay + a11y fallback + TOC anchor links
 // ============================================================
 {
   let rHtml = '<div class="video-spacer"></div>';
   let aHtml = '';
-  for (const b of blocks) {
+  for (let bi = 0; bi < blocks.length; bi++) {
+    const b = blocks[bi];
     if (b.type === 'spacer') {
       rHtml += '<div class="sp"></div>';
+      continue;
+    }
+    if (b.type === 'image') {
+      const idx = imageBlocks.indexOf(b);
+      const escCap = escHtml(b.caption || '');
+      rHtml += `<div class="image-spacer" data-img-index="${idx}"></div>`;
+      rHtml += `<p class="caption">${escCap}</p>`;
+      aHtml += `<p>[Figure ${idx + 1}: ${escCap}]</p>`;
       continue;
     }
     const cls = [];
@@ -31,11 +58,17 @@ const videoEl     = document.getElementById('cover-video');
     if (b.indent) cls.push('indent');
     const classAttr = cls.length ? ` class="${cls.join(' ')}"` : '';
     const idAttr    = b.anchor ? ` id="sec-${b.anchor}"` : '';
-    const esc = b.text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    const content = b.link
-      ? `<a href="#sec-${b.link}" data-link="${b.link}">${esc}  ↗</a>`
-      : esc;
-    rHtml += `<p${classAttr}${idAttr}>${content}</p>`;
+    const biAttr    = (b.type === 'toc' && (b.link || b.href)) ? ` data-bi="${bi}"` : '';
+    const esc = escHtml(b.text);
+    let content;
+    if (b.href) {
+      content = `<a href="${b.href}" target="_blank" rel="noopener noreferrer">${esc}  ↗</a>`;
+    } else if (b.link) {
+      content = `<a href="#sec-${b.link}" data-link="${b.link}">${esc}  ↗</a>`;
+    } else {
+      content = esc;
+    }
+    rHtml += `<p${classAttr}${idAttr}${biAttr}>${content}</p>`;
     aHtml += `<p>${esc}</p>`;
   }
   overlayIn.innerHTML = rHtml;
@@ -97,6 +130,13 @@ let TEXT_W, PAD_X, FONT_PX, LINE_H, INDENT_PX, START_Y;
 let VIDEO_H = 0;
 let VIDEO_TOP_Y = 0;
 let VIDEO_GAP = 0;
+let CAPTION_PX = 0;
+let CAPTION_LINE_H = 0;
+let CAPTION_GAP_ABOVE = 0;
+let CAPTION_GAP_BELOW = 0;
+
+// One placement per image block: { x, y, w, h } in texture coords.
+const imagePlacements = new Array(imageBlocks.length).fill(null);
 
 function getVideoAspect() {
   if (videoEl && videoEl.videoWidth && videoEl.videoHeight) {
@@ -105,13 +145,30 @@ function getVideoAspect() {
   return 16 / 9;
 }
 
+function getColCSS() {
+  const vw = window.innerWidth;
+  // Match CSS: mobile gets near-full width, desktop a centered column.
+  if (vw < 900) return Math.max(120, vw - 48);   // 1.5rem padding either side
+  return Math.min(COL_MAX_CSS, vw * COL_PCT);
+}
+
+function getFontCSS() {
+  const vw = window.innerWidth;
+  // Mirror the CSS font-size clamps exactly. If these drift apart, DOM
+  // line positions and canvas line positions desync — visible as the
+  // hover/click hit areas appearing one line off from the cloth text.
+  if (vw < 900) return Math.max(16, Math.min(22, vw * 0.042));  // clamp(16px, 4.2vw, 22px)
+  return Math.max(18, Math.min(26, vw * 0.0145));               // clamp(18px, 1.45vw, 26px)
+}
+
 function recomputeMetrics() {
   const vw = window.innerWidth;
   const ratio = TEX_W / vw;
-  const colCSS = Math.min(COL_MAX_CSS, vw * COL_PCT);
+  const colCSS = getColCSS();
+  const fontCSS = getFontCSS();
   TEXT_W    = colCSS * ratio;
   PAD_X     = (TEX_W - TEXT_W) / 2;
-  FONT_PX   = FONT_CSS * ratio;
+  FONT_PX   = fontCSS * ratio;
   LINE_H    = FONT_PX * LINE_RATIO;
   INDENT_PX = FONT_PX * INDENT_EMS;
   START_Y   = (window.innerHeight * 0.08) * ratio;
@@ -121,10 +178,66 @@ function recomputeMetrics() {
   VIDEO_H     = TEXT_W / getVideoAspect();
   VIDEO_GAP   = FONT_PX * 1.6;   // matches CSS margin-bottom: 1.6em
 
+  // Caption metrics — caption text is rendered slightly smaller than body.
+  CAPTION_PX        = FONT_PX * 0.78;
+  CAPTION_LINE_H    = CAPTION_PX * 1.45;
+  CAPTION_GAP_ABOVE = FONT_PX * 0.55;
+  CAPTION_GAP_BELOW = FONT_PX * 1.8;
+
   // Reflect the video height into the DOM spacer so the overlay text
   // aligns with the canvas text below the video.
   const videoCSSHeight = colCSS / getVideoAspect();
   overlayIn.querySelector('.video-spacer').style.height = videoCSSHeight + 'px';
+
+  // Same for any image spacers whose images have already loaded.
+  syncImageSpacers();
+}
+
+function onImageLoaded() {
+  syncImageSpacers();
+  if (typeof TEXT_W !== 'undefined' && TEXT_W) {
+    layout();
+    publication.style.height = Math.round(Math.max(totalContentH * 2.4, window.innerHeight * 16)) + 'px';
+    lastDrawnScroll = -1;
+  }
+}
+
+function syncImageSpacers() {
+  const colCSS = getColCSS();
+  for (let i = 0; i < imageEls.length; i++) {
+    const img = imageEls[i];
+    if (!img.naturalWidth || !img.naturalHeight) continue;
+    const spacer = overlayIn.querySelector(`.image-spacer[data-img-index="${i}"]`);
+    if (!spacer) continue;
+    const aspect = img.naturalWidth / img.naturalHeight;
+    spacer.style.height = (colCSS / aspect) + 'px';
+  }
+}
+
+function captionFontString() {
+  return `700 ${CAPTION_PX.toFixed(1)}px "ABC Diatype", system-ui, sans-serif`;
+}
+
+function wrapWith(text, font, lineH, firstIndentW = 0) {
+  const prev = tctx.font;
+  tctx.font = font;
+  const words = text.split(' ');
+  const out = [];
+  let line = '';
+  let avail = TEXT_W - firstIndentW;
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (tctx.measureText(test).width > avail && line) {
+      out.push(line);
+      line = w;
+      avail = TEXT_W;
+    } else {
+      line = test;
+    }
+  }
+  if (line) out.push(line);
+  tctx.font = prev;
+  return out;
 }
 
 function fontString() {
@@ -166,25 +279,59 @@ let totalContentH = 0;
 // painted into the texture so they wave with the cloth.
 let highlightRects = [];
 
+// Hover underline for TOC links — same coord system; rendered as a thin
+// rectangle along the baseline of the hovered link so the user sees
+// which one their pointer is actually over.
+let hoverRects = [];
+
+// Per-block TOC line geometry (texture coords). Keys are block indices.
+const tocGeoms = {};
+
 function layout() {
   lines.length = 0;
+  for (let i = 0; i < imagePlacements.length; i++) imagePlacements[i] = null;
   Object.keys(anchorY).forEach(k => delete anchorY[k]);
+  for (const k in tocGeoms) delete tocGeoms[k];
 
   // Reserve room for the video at the top
   let y = VIDEO_TOP_Y + VIDEO_H + VIDEO_GAP;
 
-  for (const b of blocks) {
+  for (let bi = 0; bi < blocks.length; bi++) {
+    const b = blocks[bi];
     if (b.type === 'spacer') { y += FONT_PX * 2.4; continue; }  // matches .sp { height: 2.4em }
+    if (b.type === 'image') {
+      const idx = imageBlocks.indexOf(b);
+      const img = imageEls[idx];
+      const aspect = (img && img.naturalWidth && img.naturalHeight)
+        ? (img.naturalWidth / img.naturalHeight)
+        : (16 / 9);
+      const imgH = TEXT_W / aspect;
+      imagePlacements[idx] = { x: PAD_X, y, w: TEXT_W, h: imgH };
+      y += imgH + CAPTION_GAP_ABOVE;
+
+      // Caption — render as smaller text lines.
+      const wrappedCap = wrapWith(b.caption || '', captionFontString(), CAPTION_LINE_H, 0);
+      for (let i = 0; i < wrappedCap.length; i++) {
+        lines.push({ text: wrappedCap[i], x: PAD_X, y, font: captionFontString(), lineH: CAPTION_LINE_H, fontPx: CAPTION_PX });
+        y += CAPTION_LINE_H;
+      }
+      y += CAPTION_GAP_BELOW;
+      continue;
+    }
     if (b.anchor) anchorY[b.anchor] = y;
     const indentW = b.indent ? INDENT_PX : 0;
-    const displayText = b.link ? `${b.text}  ↗` : b.text;
+    const displayText = (b.link || b.href) ? `${b.text}  ↗` : b.text;
     const wrapped = wrap(displayText, indentW);
+    // Record TOC line geometry on the first line for hover-underline lookups.
+    if (b.type === 'toc' && (b.link || b.href) && wrapped.length) {
+      tocGeoms[bi] = { x: PAD_X + indentW, y, text: wrapped[0] };
+    }
     for (let i = 0; i < wrapped.length; i++) {
       const x = (i === 0) ? PAD_X + indentW : PAD_X;
       lines.push({ text: wrapped[i], x, y });
       y += LINE_H;
     }
-    if (b.type !== 'toc') y += FONT_PX * 0.7;   // matches CSS margin-bottom: 0.7em
+    if (b.type !== 'toc') y += FONT_PX * 0.7;   // matches CSS margin-bottom: 0.7em (p.toc has margin 0)
   }
   totalContentH = y + START_Y;
 }
@@ -202,6 +349,16 @@ function drawTextAt(scrollPx) {
     }
   }
 
+  // 0b) Hover underline for the TOC link the pointer is over.
+  if (hoverRects.length) {
+    tctx.fillStyle = '#1d3823';
+    for (const h of hoverRects) {
+      const yy = h.y - scrollPx;
+      if (yy + h.h < 0 || yy > TEX_H) continue;
+      tctx.fillRect(h.x, yy, h.w, h.h);
+    }
+  }
+
   // 1) Video frame at top of content (scrolls with the rest)
   if (videoEl && videoEl.readyState >= 2) {
     const vy = VIDEO_TOP_Y - scrollPx;
@@ -212,15 +369,38 @@ function drawTextAt(scrollPx) {
     }
   }
 
+  // 1b) Figure images, drawn in document order before the text
+  for (let i = 0; i < imagePlacements.length; i++) {
+    const place = imagePlacements[i];
+    if (!place) continue;
+    const img = imageEls[i];
+    if (!img || !img.complete || !img.naturalWidth) continue;
+    const iy = place.y - scrollPx;
+    if (iy + place.h < 0 || iy > TEX_H) continue;
+    try {
+      tctx.drawImage(img, place.x, iy, place.w, place.h);
+    } catch (e) { /* decode hiccup */ }
+  }
+
   // 2) Text — offset by half the leading so glyphs sit centered inside
   //   the line-box (matches DOM line-box → makes selection align).
   tctx.fillStyle = '#1d3823';
   tctx.textBaseline = 'top';
   setFontOnCtx();
-  const halfLeading = (LINE_H - FONT_PX) / 2;
+  let activeFont = fontString();
+  const defaultHalfLeading = (LINE_H - FONT_PX) / 2;
   for (const ln of lines) {
     const yy = ln.y - scrollPx;
-    if (yy < -LINE_H * 2 || yy > TEX_H + LINE_H) continue;
+    const lineH = ln.lineH || LINE_H;
+    if (yy < -lineH * 2 || yy > TEX_H + lineH) continue;
+    if (ln.font && ln.font !== activeFont) {
+      tctx.font = ln.font;
+      activeFont = ln.font;
+    } else if (!ln.font && activeFont !== fontString()) {
+      tctx.font = fontString();
+      activeFont = fontString();
+    }
+    const halfLeading = ln.fontPx ? (lineH - ln.fontPx) / 2 : defaultHalfLeading;
     tctx.fillText(ln.text, ln.x, yy + halfLeading);
   }
   texture.needsUpdate = true;
@@ -310,10 +490,6 @@ window.addEventListener('scroll', () => {
   // Each scroll tick adds a gentle gust on top of the baseline wind.
   scrollGust = Math.min(1.5, scrollGust + Math.min(0.2, dy * 0.003));
 }, { passive: true });
-
-window.addEventListener('pointerdown', () => {
-  scrollGust = Math.max(scrollGust, 2.0);
-});
 
 function stepCloth(dt) {
   time += dt;
@@ -483,17 +659,73 @@ function updateHighlightsFromSelection() {
 document.addEventListener('selectionchange', updateHighlightsFromSelection);
 
 // ============================================================
+// TOC hover underline — paints a thin bar along the baseline of the
+// hovered TOC link on the canvas, so the user can see which link
+// their pointer is actually over (DOM is invisible, cloth waves).
+// ============================================================
+function setHoverFromTOC(p) {
+  hoverRects = [];
+  if (p && p.dataset.bi != null) {
+    const g = tocGeoms[p.dataset.bi];
+    if (g) {
+      // Everything in texture coordinates — matches exactly where the
+      // glyphs were painted, no DOM-to-canvas conversion drift.
+      setFontOnCtx();
+      const w = tctx.measureText(g.text).width;
+      const halfLeading = (LINE_H - FONT_PX) / 2;
+      const thickness = Math.max(2, FONT_PX * 0.05);
+      hoverRects.push({
+        x: g.x,
+        y: g.y + halfLeading + FONT_PX + thickness * 0.5,
+        w,
+        h: thickness,
+      });
+    }
+  }
+  lastDrawnScroll = -1;
+}
+
+overlayIn.addEventListener('mouseover', (e) => {
+  const p = e.target.closest('p.toc');
+  if (!p) return;
+  setHoverFromTOC(p);
+});
+overlayIn.addEventListener('mouseout', (e) => {
+  const p = e.target.closest('p.toc');
+  if (!p) return;
+  // Only clear when the pointer truly leaves this paragraph (not when it
+  // moves between the inner <a> and the surrounding <p>).
+  if (!p.contains(e.relatedTarget)) {
+    setHoverFromTOC(null);
+  }
+});
+
+// ============================================================
 // TOC link → scroll to section
 // ============================================================
 overlayIn.addEventListener('click', (e) => {
-  const a = e.target.closest('a[data-link]');
+  // Whole TOC paragraph is the hit area — easier to land on than the
+  // narrow link itself, since the cloth wave drifts the visible glyphs.
+  const p = e.target.closest('p.toc');
+  if (!p) return;
+  const a = p.querySelector('a');
   if (!a) return;
+
+  // External link (Flag Studio etc.) — open in new tab.
+  if (!a.dataset.link) {
+    if (e.target !== a) {
+      e.preventDefault();
+      window.open(a.href, '_blank', 'noopener,noreferrer');
+    }
+    return;
+  }
+
+  // Internal anchor — smooth-scroll to its layout position.
   e.preventDefault();
   const anchor = a.dataset.link;
   const targetY = anchorY[anchor];
   if (targetY == null) return;
   const maxScrollPx = Math.max(1, totalContentH - TEX_H * 0.7);
-  // Position the target line near the top of the visible area
   const wantedScrollPx = Math.max(0, targetY - START_Y - LINE_H);
   const progress = Math.min(1, wantedScrollPx / maxScrollPx);
   const pubTop = publication.offsetTop;

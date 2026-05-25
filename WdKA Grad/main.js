@@ -104,9 +104,29 @@ spaceHint.addEventListener('click', () => {
 
 // ============================================================
 // TEXT TEXTURE (canvas → THREE.CanvasTexture)
+// Dimensions follow the viewport aspect so the cloth never stretches
+// the texture non-uniformly (the source of the mobile "squish").
 // ============================================================
-const TEX_W = 2048;
-const TEX_H = 1152;
+let TEX_W = 2048;
+let TEX_H = 1152;
+
+function pickTexSize() {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const isMobile = Math.min(vw, vh) < 700;
+  const ref = isMobile ? 1280 : 2048;
+  if (vw >= vh) {
+    return { w: ref, h: Math.max(360, Math.round(ref * vh / vw)) };
+  } else {
+    return { w: Math.max(360, Math.round(ref * vw / vh)), h: ref };
+  }
+}
+
+{
+  const s = pickTexSize();
+  TEX_W = s.w;
+  TEX_H = s.h;
+}
 
 const textCanvas = document.createElement('canvas');
 textCanvas.width  = TEX_W;
@@ -412,7 +432,10 @@ function drawTextAt(scrollPx) {
 const scene = new THREE.Scene();
 
 const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// Cap pixel ratio more aggressively on phones — 3× DPR on portrait phones
+// quadruples fragment cost for the cloth + post mostly invisibly.
+const isPhoneSized = Math.min(window.innerWidth, window.innerHeight) < 700;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, isPhoneSized ? 1.5 : 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.setClearColor(0x000000, 0);
 
@@ -424,11 +447,40 @@ camera.position.set(0, 0, 10);
 
 // ============================================================
 // CLOTH (Verlet)
+// Resolution and shape both follow the viewport aspect — portrait
+// gets a tall cloth with extra rows, landscape stays wide.
 // ============================================================
-const COLS = 64;
-const ROWS = 36;
-const FLAG_W = 10;
-const FLAG_H = FLAG_W * (TEX_H / TEX_W);
+let COLS = 64;
+let ROWS = 36;
+let FLAG_W = 10;
+let FLAG_H = FLAG_W * (TEX_H / TEX_W);
+
+function pickClothRes() {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const isMobile = Math.min(vw, vh) < 700;
+  // Long axis carries the higher segment count.
+  if (vw >= vh) {
+    return isMobile ? { cols: 48, rows: 28 } : { cols: 64, rows: 36 };
+  } else {
+    return isMobile ? { cols: 28, rows: 48 } : { cols: 36, rows: 64 };
+  }
+}
+
+function recomputeClothShape() {
+  const r = pickClothRes();
+  COLS = r.cols;
+  ROWS = r.rows;
+  // Keep the cloth's longer side fixed at 10 world units, shorter side
+  // proportional to texture aspect — so the texture maps 1:1 onto it.
+  if (TEX_W >= TEX_H) {
+    FLAG_W = 10;
+    FLAG_H = FLAG_W * (TEX_H / TEX_W);
+  } else {
+    FLAG_H = 10;
+    FLAG_W = FLAG_H * (TEX_W / TEX_H);
+  }
+}
 
 const particles   = [];
 const constraints = [];
@@ -545,7 +597,9 @@ function stepCloth(dt) {
     }
   }
 
-  const ITER = 5;
+  // Fewer constraint iterations on phone — combined with the lower
+  // COLS/ROWS this halves the per-frame cloth cost.
+  const ITER = (Math.min(window.innerWidth, window.innerHeight) < 700) ? 3 : 5;
   for (let i = 0; i < ITER; i++) {
     for (const c of constraints) {
       const a = c.a, b = c.b;
@@ -564,7 +618,7 @@ function stepCloth(dt) {
 // ============================================================
 // MESH — transparent fabric
 // ============================================================
-const geometry = new THREE.PlaneGeometry(FLAG_W, FLAG_H, COLS, ROWS);
+let geometry = new THREE.PlaneGeometry(FLAG_W, FLAG_H, COLS, ROWS);
 const material = new THREE.MeshBasicMaterial({
   map: texture,
   side: THREE.DoubleSide,
@@ -573,6 +627,12 @@ const material = new THREE.MeshBasicMaterial({
 });
 const flag = new THREE.Mesh(geometry, material);
 scene.add(flag);
+
+function rebuildGeometry() {
+  geometry.dispose();
+  geometry = new THREE.PlaneGeometry(FLAG_W, FLAG_H, COLS, ROWS);
+  flag.geometry = geometry;
+}
 
 function updateMesh() {
   const pos = geometry.attributes.position.array;
@@ -593,8 +653,34 @@ function resize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
   renderer.setSize(w, h, false);
+  // Update pixel ratio in case viewport crossed the phone threshold (e.g.
+  // browser DevTools, Stage Manager). Cheap to set; only takes effect if
+  // it actually changed.
+  const isPhone = Math.min(w, h) < 700;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, isPhone ? 1.5 : 2));
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+
+  // Re-pick texture + cloth shape to match the current viewport aspect.
+  // If anything material changed, resize the source canvas + rebuild
+  // geometry/cloth so the texture maps 1:1 onto the cloth and the cloth
+  // covers the viewport without non-uniform scaling.
+  const newTex = pickTexSize();
+  const newRes = pickClothRes();
+  const aspectChanged =
+    newTex.w !== TEX_W || newTex.h !== TEX_H ||
+    newRes.cols !== COLS || newRes.rows !== ROWS;
+
+  if (aspectChanged) {
+    TEX_W = newTex.w;
+    TEX_H = newTex.h;
+    textCanvas.width  = TEX_W;
+    textCanvas.height = TEX_H;
+    texture.needsUpdate = true;
+    recomputeClothShape();
+    rebuildGeometry();
+    buildCloth();
+  }
 
   const fovY = camera.fov * Math.PI / 180;
   const viewH = 2 * camera.position.z * Math.tan(fovY / 2);
@@ -604,6 +690,7 @@ function resize() {
   recomputeMetrics();
   layout();
   publication.style.height = Math.round(Math.max(totalContentH * 2.4, window.innerHeight * 16)) + 'px';
+  lastDrawnScroll = -1;
 }
 
 window.addEventListener('resize', resize);
@@ -750,6 +837,11 @@ window.addEventListener('keydown', (e) => {
 // ============================================================
 // INIT
 // ============================================================
+// Pick orientation-appropriate cloth shape + resolution before the first
+// build, otherwise a portrait-loaded page would briefly use the landscape
+// defaults (visible as a quick aspect snap on first frame).
+recomputeClothShape();
+rebuildGeometry();
 buildCloth();
 recomputeMetrics();
 
@@ -815,7 +907,7 @@ function tick(now) {
     lastDrawnScroll = smoothScroll;
   }
 
-  const SUB = 2;
+  const SUB = (Math.min(window.innerWidth, window.innerHeight) < 700) ? 1 : 2;
   for (let i = 0; i < SUB; i++) stepCloth(dt / SUB);
   updateMesh();
 

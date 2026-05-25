@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Research Publication — Designing a Visual Identity Through Motion, Material, and Simulation</title>
+  <meta name="description" content="Research publication by Albert Kozikowski. WdKA Graduation 2026." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Video element — kept hidden in DOM, used as a frame source for the canvas.
+       Plays muted so the browser allows autoplay. -->
+  <video id="cover-video" class="cover-video" autoplay muted loop playsinline preload="auto">
+    <source src="Wdka Grad Final 4.mp4" type="video/mp4" />
+  </video>
+
+  <!-- Flag (waving canvas with text + video texture, transparent fabric) -->
+  <div class="flag-stage" aria-hidden="true">
+    <canvas id="flag-canvas"></canvas>
+  </div>
+
+  <!-- Selectable DOM text overlay (invisible until selected) -->
+  <div class="text-overlay" id="text-overlay">
+    <div class="text-overlay-inner" id="text-overlay-inner"></div>
+  </div>
+
+  <!-- Scroll spacer -->
+  <main class="publication" id="publication"></main>
+
+  <button type="button" class="hint scroll-hint" id="scroll-hint">↓ scroll</button>
+  <button type="button" class="hint space-hint"  id="space-hint">Space — calm wind</button>
+  <button type="button" class="hint scroll-back-hint" id="scroll-back-hint">↑ back to top</button>
+
+  <article class="a11y-text" id="a11y-text" aria-hidden="true"></article>
+
+  <footer class="credits">
+    <p>WdKA Graduation 2026</p>
+    <p>Albert Kozikowski</p>
+    <p><a href="https://kozi.studio" target="_blank" rel="noopener noreferrer">kozi.studio</a></p>
+  </footer>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+      }
+    }
+  </script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

@@ -100,7 +100,9 @@ body {
 }
 
 @media (max-width: 900px) {
-  .text-overlay-inner { width: calc(100vw - 3rem); font-size: clamp(16px, 4.2vw, 22px); }
+  .text-overlay { padding-top: 4vh; padding-bottom: 4vh; }
+  .text-overlay-inner { width: calc(100vw - 1rem); font-size: clamp(16px, 4.2vw, 22px); }
+  .scroll-back-hint, .space-hint { display: none !important; }
 }
 
 .text-overlay-inner p {

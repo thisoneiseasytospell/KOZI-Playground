@@ -165,10 +165,14 @@ function getVideoAspect() {
   return 16 / 9;
 }
 
+function isPhone() {
+  return Math.min(window.innerWidth, window.innerHeight) < 700;
+}
+
 function getColCSS() {
   const vw = window.innerWidth;
   // Match CSS: mobile gets near-full width, desktop a centered column.
-  if (vw < 900) return Math.max(120, vw - 48);   // 1.5rem padding either side
+  if (vw < 900) return Math.max(120, vw - 16);   // 0.5rem padding either side
   return Math.min(COL_MAX_CSS, vw * COL_PCT);
 }
 
@@ -564,11 +568,14 @@ function stepCloth(dt) {
     const phaseY = time * 1.6 + p.y * 1.2;
     const phaseX = time * 0.7 + p.x * 0.5;
 
+    // Lower amplitudes on phones — the deep folds were exposing the back
+    // face of the cloth and creating "tearing" visuals across body text.
+    const mobileAtten = isPhone() ? 0.55 : 1;
     const windZ = (
         Math.sin(phaseY) * 0.00085
       + Math.sin(phaseY * 1.7 + phaseX) * 0.00035
-    ) * f2 * windScale;
-    const windX = Math.sin(phaseY * 0.6 + phaseX * 0.3) * 0.00042 * freeness * windScale;
+    ) * f2 * windScale * mobileAtten;
+    const windX = Math.sin(phaseY * 0.6 + phaseX * 0.3) * 0.00042 * freeness * windScale * mobileAtten;
 
     if (p.pin > 0.995) {
       p.x = p.ox; p.y = p.oy; p.z = 0;
@@ -835,6 +842,46 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ============================================================
+// SHAKE → toggle calm wind on mobile
+// iOS 13+ requires DeviceMotionEvent.requestPermission() from a user
+// gesture, so we wire it up on first tap rather than at load.
+// ============================================================
+let lastShakeAt = 0;
+let lastAcc = { x: 0, y: 0, z: 0 };
+let shakeArmed = false;
+function onDeviceMotion(e) {
+  const a = (e.acceleration && (e.acceleration.x || e.acceleration.y || e.acceleration.z))
+    ? e.acceleration
+    : e.accelerationIncludingGravity;
+  if (!a) return;
+  const ax = a.x || 0, ay = a.y || 0, az = a.z || 0;
+  const dx = ax - lastAcc.x, dy = ay - lastAcc.y, dz = az - lastAcc.z;
+  lastAcc = { x: ax, y: ay, z: az };
+  const jolt = Math.hypot(dx, dy, dz);
+  const now = performance.now();
+  if (jolt > 18 && now - lastShakeAt > 700) {
+    lastShakeAt = now;
+    setPaused(!isPaused);
+  }
+}
+function armShakeDetection() {
+  if (shakeArmed) return;
+  shakeArmed = true;
+  const DME = window.DeviceMotionEvent;
+  if (DME && typeof DME.requestPermission === 'function') {
+    DME.requestPermission().then(state => {
+      if (state === 'granted') window.addEventListener('devicemotion', onDeviceMotion);
+    }).catch(() => {});
+  } else if (DME) {
+    window.addEventListener('devicemotion', onDeviceMotion);
+  }
+}
+if (isPhone()) {
+  window.addEventListener('pointerdown', armShakeDetection, { once: true });
+  window.addEventListener('touchstart',  armShakeDetection, { once: true });
+}
+
+// ============================================================
 // INIT
 // ============================================================
 // Pick orientation-appropriate cloth shape + resolution before the first
@@ -892,7 +939,11 @@ function tick(now) {
   last = now;
 
   const target = computeScrollProgress();
-  smoothScroll += (target - smoothScroll) * 0.10;
+  // Phones: track scroll 1:1 so the texture keeps up with finger movement
+  // (the lerp made it feel laggy on touch devices). Desktop: keep the
+  // smoothing that gives the cloth its sleepy drift.
+  if (isPhone()) smoothScroll = target;
+  else smoothScroll += (target - smoothScroll) * 0.10;
   const maxScroll = Math.max(0, totalContentH - TEX_H * 0.7);
   const scrollPx  = smoothScroll * maxScroll;
 

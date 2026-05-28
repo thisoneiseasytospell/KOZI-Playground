@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Enode Oker</title>
   <link rel="stylesheet" href="css/style.css">
   <script src="vendor/simplex-noise.min.js"></script>
@@ -74,6 +76,110 @@
           </div>
         </div>
 
+        <!-- STRIPS ─────────────────────────────────────────── -->
+        <div class="group strips-group" id="stripsGroup" style="display:none">
+          <button class="audio-strips-toggle" id="audioStripsToggle">
+            <span class="dot"></span>
+            <span>Drive from audio (EQ bars)</span>
+          </button>
+
+          <div class="label">Strips presets</div>
+          <div class="strips-presets" id="stripsPresets">
+            <button data-preset="fluid">Fluid Waves</button>
+            <button data-preset="glitch">Digital Glitch</button>
+            <button data-preset="minimal">Minimal Steps</button>
+            <button data-preset="vertical">Vertical Flow</button>
+          </div>
+
+          <div class="label" style="margin-top:14px">Strips settings</div>
+          <div class="slider-row">
+            <label>Rows <span class="val" id="stripCountVal">6</span></label>
+            <input type="range" id="stripCount" min="1" max="30" step="1" value="6">
+          </div>
+          <div class="slider-row">
+            <label>Columns <span class="val" id="stripPhaseVal">0.35</span></label>
+            <input type="range" id="stripPhase" min="0" max="2" step="0.01" value="0.35">
+          </div>
+          <div class="slider-row">
+            <label>Wave shape</label>
+            <select id="stripMode" class="select select-inline">
+              <option value="sine">Sine</option>
+              <option value="triangle">Triangle</option>
+              <option value="square">Square</option>
+              <option value="sawtooth">Sawtooth</option>
+            </select>
+          </div>
+          <div class="slider-row">
+            <label>Speed <span class="val" id="stripAnimVal">1.40</span></label>
+            <input type="range" id="stripAnim" min="0" max="5" step="0.05" value="1.4">
+          </div>
+          <div class="slider-row">
+            <label data-tip="Snaps cell brightness to N discrete levels (posterize). 1 = continuous, 2 = pure black/white, 4 = 4 grays. Ignored in Audio Strips mode.">Quantize <span class="val" id="stripQuantVal">1</span></label>
+            <input type="range" id="stripQuant" min="1" max="16" step="1" value="1">
+          </div>
+        </div>
+
+        <!-- NOISE ──────────────────────────────────────────── -->
+        <div class="group noise-group" id="noiseGroup" style="display:none">
+          <div class="label">Noise — <span id="noiseTypeLabel" class="noise-type-label">Simplex</span></div>
+          <div class="noise-hint">click <b>Noise</b> again to cycle type</div>
+          <div class="slider-row">
+            <label data-tip="Lower = bigger blobs, higher = finer detail.">Scale <span class="val" id="noiseScaleVal">22</span></label>
+            <input type="range" id="noiseScaleSlider" min="5" max="60" step="1" value="22">
+          </div>
+          <div class="slider-row">
+            <label data-tip="Pushes mid-tones toward black/white for a punchier image.">Contrast <span class="val" id="noiseContrastVal">1.00</span></label>
+            <input type="range" id="noiseContrast" min="0.5" max="4" step="0.05" value="1">
+          </div>
+        </div>
+
+        <!-- RANDOM ─────────────────────────────────────────── -->
+        <div class="group random-group" id="randomGroup" style="display:none">
+          <div class="label">Random</div>
+          <button class="audio-strips-toggle" id="randomAudioToggle">
+            <span class="dot"></span>
+            <span>Drive from audio (EQ rectangles)</span>
+          </button>
+          <div class="noise-hint">each rect maps to a frequency band by its y-position. click <b>Random</b> again to reshuffle.</div>
+        </div>
+
+        <!-- AUDIO ──────────────────────────────────────────── -->
+        <div class="group">
+          <div class="label">Audio
+            <span class="audio-status" id="audioStatus"></span>
+          </div>
+          <div class="audio-tracks" id="audioTracks">
+            <button data-src="music/zep nobody.mp3" data-name="Zep — Nobody's Fault">Zep</button>
+            <button data-src="music/still dreaming nas.mp3" data-name="Nas — Still Dreaming">Nas</button>
+            <button data-src="music/de la soul.mp3" data-name="De La Soul">De La Soul</button>
+          </div>
+          <div class="audio-transport" id="audioTransport" style="display:none">
+            <button class="audio-play" id="audioPlayBtn" aria-label="Play / pause">
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                <path id="audioPlayIcon" d="M7 5l12 7-12 7z" fill="currentColor"/>
+              </svg>
+            </button>
+            <input type="range" id="audioSeek" min="0" max="1000" step="1" value="0" class="audio-seek">
+            <span class="audio-time" id="audioTime">0:00 / 0:00</span>
+          </div>
+          <canvas id="audioViz" class="audio-viz" width="280" height="36" style="display:none"></canvas>
+          <div class="audio-drop" id="audioDrop">drop .mp3 here</div>
+        </div>
+
+        <!-- AUDIO REACTIVITY ───────────────────────────────── -->
+        <div class="group">
+          <div class="label">Audio reactivity</div>
+          <div class="mod-list" id="modList"></div>
+          <button class="audio-strips-toggle" id="beatStrobeToggle" style="margin-top:10px">
+            <span class="dot"></span>
+            <span>Invert on beat</span>
+          </button>
+          <button class="audio-strips-toggle" id="audioColorToggle">
+            <span class="dot"></span>
+            <span>Color mode (bands → hue)</span>
+          </button>
+        </div>
+
         <!-- TOGGLES ────────────────────────────────────────── -->
         <div class="group">
           <div class="toggle-list">
@@ -132,44 +238,6 @@
           <div class="slider-row">
             <label data-tip="Only used in Noise mode. How fast the noise field drifts.">Noise speed <span class="val" id="speedVal">0.30</span></label>
             <input type="range" id="speed" min="0" max="2" step="0.01" value="0.3">
-          </div>
-        </div>
-
-        <!-- STRIPS ─────────────────────────────────────────── -->
-        <div class="group strips-group" id="stripsGroup" style="display:none">
-          <div class="label">Strips presets</div>
-          <div class="strips-presets" id="stripsPresets">
-            <button data-preset="fluid">Fluid Waves</button>
-            <button data-preset="glitch">Digital Glitch</button>
-            <button data-preset="minimal">Minimal Steps</button>
-            <button data-preset="vertical">Vertical Flow</button>
-          </div>
-
-          <div class="label" style="margin-top:14px">Strips settings</div>
-          <div class="slider-row">
-            <label>Rows <span class="val" id="stripCountVal">6</span></label>
-            <input type="range" id="stripCount" min="1" max="30" step="1" value="6">
-          </div>
-          <div class="slider-row">
-            <label>Columns <span class="val" id="stripPhaseVal">0.35</span></label>
-            <input type="range" id="stripPhase" min="0" max="2" step="0.01" value="0.35">
-          </div>
-          <div class="slider-row">
-            <label>Wave shape</label>
-            <select id="stripMode" class="select select-inline">
-              <option value="sine">Sine</option>
-              <option value="triangle">Triangle</option>
-              <option value="square">Square</option>
-              <option value="sawtooth">Sawtooth</option>
-            </select>
-          </div>
-          <div class="slider-row">
-            <label>Speed <span class="val" id="stripAnimVal">1.40</span></label>
-            <input type="range" id="stripAnim" min="0" max="5" step="0.05" value="1.4">
-          </div>
-          <div class="slider-row">
-            <label>Quantize <span class="val" id="stripQuantVal">1</span></label>
-            <input type="range" id="stripQuant" min="1" max="16" step="1" value="1">
           </div>
         </div>
 
@@ -296,6 +364,7 @@
     </div>
   </div>
 
+  <script src="js/audio.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

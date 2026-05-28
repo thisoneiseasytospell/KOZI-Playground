@@ -13,6 +13,8 @@ const state = {
   speed: 0.3,
   reaction: 72,           // 1..100 → 0.01..1.0 lerp
   noiseScale: 22,
+  noiseType: 'simplex',   // simplex | ridged | warped (cycles on re-click)
+  noiseContrast: 1.0,     // 0.5 = washed, 1 = normal, 4 = punchy
   angle: 0,               // halftone angle 0..45
   invert: false,
   outline: false,
@@ -37,8 +39,72 @@ const state = {
     invertY: false,
     animSpeed: 1.4,
     noiseRatio: 18,
+    audioDriven: false,    // when on: row heights come from the FFT spectrum
   },
+  audioBeatInvert: false,  // flip invert on every detected beat (sustained)
+  audioColorMode: false,   // override FG hue from bass/mid/treble balance
+  randomAudioDriven: false,// Random mode: each rect's value = its band level
+  // Audio-reactivity rows. Bands are locked per target (chosen for what reads
+  // best musically): bass → size pulse, beat → morph snap, rms → time tempo.
+  // `env` is per-row envelope state (attack/decay) updated each frame.
+  audioMods: [
+    { target: 'cellSize',  band: 'bass', depth: 0.7, env: 0 },
+    { target: 'sparkle',   band: 'mid',  depth: 0.6, env: 0 },
+    { target: 'timeSpeed', band: 'rms',  depth: 0.6, env: 0 },
+  ],
 };
+
+// How much each parameter swings at depth=1.0 with a normalized level of 1.0.
+// cellSize/morph are *multiplicative* (effective = base * (1 + range*depth*level))
+// so swing scales with the user's slider value. timeSpeed multiplies dt.
+const AUDIO_MOD_RANGE = {
+  cellSize:  2.0,   // up to 3x base at full audio
+  sparkle:   0.7,   // per-cell size jitter as fraction of cell size at peak
+  timeSpeed: 5.0,   // up to 6x playback tempo
+};
+const AUDIO_MOD_CLAMP = {
+  cellSize: [0, 2],
+};
+function _clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+// Color-mode helper: returns an HSL color whose hue is weighted by spectral
+// balance. Bass-heavy → warm red, mid-heavy → green, treble-heavy → blue.
+// Lightness lifts a touch with overall loudness so quiet sections aren't dim.
+function audioBandColor() {
+  if (!window.enodeAudio) return null;
+  const bs = enodeAudio.levels.bass;
+  const ms = enodeAudio.levels.mid;
+  const ts = enodeAudio.levels.treble;
+  const total = bs + ms + ts;
+  if (total < 0.05) return null; // near-silence: don't override FG
+  // Hue stops: bass ~14° (red-orange), mid ~120° (green), treble ~220° (blue)
+  const hue = (14 * bs + 120 * ms + 220 * ts) / total;
+  const sat = 75;
+  const light = 50 + Math.min(15, total * 6);
+  return `hsl(${hue.toFixed(1)}, ${sat}%, ${light.toFixed(1)}%)`;
+}
+
+function audioMod(target) {
+  if (!window.enodeAudio || !state.audioMods) return 0;
+  let total = 0;
+  for (const m of state.audioMods) {
+    if (m.target === target && m.depth > 0) total += (m.env || 0) * m.depth;
+  }
+  return total;
+}
+
+function updateAudioMods() {
+  if (!window.enodeAudio || !state.audioMods) return;
+  for (const m of state.audioMods) {
+    // Use normalized levels (rolling-max per band) so modulation reaches full
+    // swing regardless of how loud the track itself is. `beat` stays binary.
+    const tgt = m.band === 'beat'
+      ? (enodeAudio.beat ? 1 : 0)
+      : (enodeAudio.levels[m.band] || 0);
+    const rate = tgt > (m.env || 0) ? 0.55 : 0.08; // fast attack, slow decay
+    m.env = (m.env || 0) + (tgt - (m.env || 0)) * rate;
+  }
+}
 
 const DEMO_VIDEO_URL = 'demo/demo.mp4';
 const DEFAULT_IMAGE_URL = 'demo/default.png';
@@ -54,6 +120,34 @@ const fileInput = document.getElementById('fileInput');
 
 // ─── Source handling ─────────────────────────────────────────────
 const simplex = new SimplexNoise();
+
+const NOISE_TYPES = ['simplex', 'ridged', 'warped'];
+
+// Returns a 0..1 value sampled from the chosen noise type. `ns` is the
+// frequency-space scaling already computed by the caller.
+function sampleNoise(type, x, y, t, ns, contrast) {
+  let v;
+  if (type === 'ridged') {
+    // Sharp ridges: 1 - |simplex|, squared to push contrast toward black/white.
+    const raw = simplex.noise3D(x * ns, y * ns, t);
+    v = 1 - Math.abs(raw);
+    v = v * v;
+  } else if (type === 'warped') {
+    // Domain-warped: displace sampling coords by a second noise field so the
+    // flow feels swirly / liquid rather than uniform.
+    const wx = simplex.noise3D(x * ns + 100, y * ns,       t * 0.7) * 0.6;
+    const wy = simplex.noise3D(x * ns,       y * ns + 200, t * 0.7) * 0.6;
+    v = (simplex.noise3D(x * ns + wx, y * ns + wy, t) + 1) / 2;
+  } else {
+    // simplex (default)
+    v = (simplex.noise3D(x * ns, y * ns, t) + 1) / 2;
+  }
+  if (contrast !== 1) {
+    v = 0.5 + (v - 0.5) * contrast;
+    if (v < 0) v = 0; else if (v > 1) v = 1;
+  }
+  return v;
+}
 const sampleCanvas = document.createElement('canvas');
 const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
 
@@ -67,6 +161,7 @@ let time = 0;
 let smoothed = [];
 let lastDensity = 0;
 let lastRows = 0;
+let audioInvertFlip = false; // flips on each detected beat when audioBeatInvert is on
 let randomSourceCanvas = null; // grayscale rectangles painted here; fed to grid sampler
 
 function createVideoEl() {
@@ -195,6 +290,29 @@ function rebuildRandomSource() {
   if (state.editRects) updateRectEditor();
 }
 
+// Repaint random canvas per-frame using each rectangle's frequency band as
+// its brightness. Y-position determines the band (bottom = bass, top = treble),
+// giving a multi-band EQ pattern across the layout.
+const RANDOM_NUM_BANDS = 10;
+function repaintRandomAudio() {
+  if (!randomSourceCanvas || !state.rects.length) return;
+  const W = randomSourceCanvas.width, H = randomSourceCanvas.height;
+  const c = randomSourceCanvas.getContext('2d');
+  c.fillStyle = '#000';
+  c.fillRect(0, 0, W, H);
+  for (const r of state.rects) {
+    const yCenter = r.y + r.h * 0.5;
+    // 1 - yCenter so the bottom row (yCenter=1) maps to band 0 (bass)
+    const bandIdx = Math.min(RANDOM_NUM_BANDS - 1,
+        Math.floor((1 - yCenter) * RANDOM_NUM_BANDS));
+    const level = bandLevelForRow(bandIdx, RANDOM_NUM_BANDS);
+    const g = Math.round(level * 255);
+    c.fillStyle = `rgb(${g},${g},${g})`;
+    c.fillRect(Math.floor(r.x * W), Math.floor(r.y * H),
+               Math.ceil(r.w * W + 1), Math.ceil(r.h * H + 1));
+  }
+}
+
 function paintRectsTo(c, rects, W, H, gradients) {
   for (let i = 0; i < rects.length; i++) {
     const r = rects[i];
@@ -229,6 +347,21 @@ function paintRectsTo(c, rects, W, H, gradients) {
 // Every cell holds one flat brightness value driven by a phase wave per
 // (row, col) and per-cell noise. Hard edges, no flowing curves — every
 // rectangle scales as a unit.
+// FFT-band averaging for Audio Strips. Logarithmic frequency mapping matches
+// musical perception (each row covers an octave-ish range rather than a flat
+// slice). bandRowIdx 0 = lowest band, rows-1 = highest.
+function bandLevelForRow(bandRowIdx, totalRows) {
+  if (!window.enodeAudio || !enodeAudio.freq || !enodeAudio.loaded) return 0;
+  const freq = enodeAudio.freq;
+  const usable = Math.floor(freq.length * 0.55); // ignore mostly-empty top bins
+  const lo = Math.floor(Math.pow(bandRowIdx / totalRows, 2.3) * usable);
+  const hi = Math.max(lo + 1, Math.floor(Math.pow((bandRowIdx + 1) / totalRows, 2.3) * usable));
+  let sum = 0;
+  for (let i = lo; i < hi; i++) sum += freq[i];
+  // Scale up so typical peaks reach 1.0
+  return Math.min(1, (sum / (hi - lo)) / 255 * 1.7);
+}
+
 function stripsValue(x, y, t, p) {
   const yEff = p.invertY ? 1 - y : y;
   const TAU = Math.PI * 2;
@@ -240,6 +373,22 @@ function stripsValue(x, y, t, p) {
 
   const rowIdx = Math.min(rows - 1, Math.floor(yEff * rows));
   const colIdx = Math.min(cols - 1, Math.floor(x * cols));
+
+  // Audio Strips — classic EQ visualizer with soft edges:
+  //   each COLUMN is a frequency band (low at left, high at right)
+  //   ROWS light from the bottom up, height = band level.
+  //   The leading edge fades over one row so the bars look like animated
+  //   chart columns instead of stepped pixels.
+  if (p.audioDriven) {
+    const level = bandLevelForRow(colIdx, cols);
+    // 0 at bottom row, 1 at top row.
+    const rowFrac = rows > 1 ? (rows - 1 - rowIdx) / (rows - 1) : 0;
+    // Edge softness ≈ one row of fade. Wider = smoother but less precise.
+    const edge = Math.max(0.04, 1 / rows * 0.9);
+    let v = (level - rowFrac) / edge + 0.5;
+    if (v < 0) v = 0; else if (v > 1) v = 1;
+    return v;
+  }
 
   // Phase wave per block. Each row is phase-shifted so rows don't pulse in
   // lockstep — gives the EQ-stack look. Amplitude scales the wave frequency
@@ -335,15 +484,32 @@ window.addEventListener('resize', fitCanvasToStage);
 // ─── Renderer ───────────────────────────────────────────────────
 function drawScene(targetCtx, w, h, opts) {
   opts = opts || {};
+  // Audio modulation: applied only on live render. Variation thumbnails and
+  // exports use the smoothing-disabled path (noSmoothing) and stay static.
+  // cellSize is multiplicative so swing scales with the user's base slider.
+  // Sparkle is a per-cell jitter amplitude applied inside the inner loop.
+  const liveMod = !opts.noSmoothing;
+  const modCSFactor = 1 + (liveMod ? audioMod('cellSize') * AUDIO_MOD_RANGE.cellSize : 0);
+  const sparkleAmt  = liveMod ? audioMod('sparkle') * AUDIO_MOD_RANGE.sparkle : 0;
+
   const density = Math.floor(opts.density != null ? opts.density : state.density);
-  const cellSizeMul = opts.cellSize != null ? opts.cellSize : state.cellSize;
+  const cellSizeMul = opts.cellSize != null
+      ? opts.cellSize
+      : _clamp(state.cellSize * modCSFactor, AUDIO_MOD_CLAMP.cellSize[0], AUDIO_MOD_CLAMP.cellSize[1]);
   const morph = state.morph;
   const angle = (opts.angle != null ? opts.angle : state.angle) * Math.PI / 180;
+  // Audio Strips keeps the buffer smoothing on — combined with soft-edge
+  // strip values it gives the fluid "animated chart" feel.
   const reactionLerp = state.reaction / 100;
-  const invert = state.invert;
+  // Invert on beat: each detected kick flips the global invert state until
+  // the next one — rhythmic color swap rather than a single-frame strobe.
+  const invert = (liveMod && audioInvertFlip) ? !state.invert : state.invert;
   const outline = state.outline;
   const stroke = state.stroke;
-  const fg = state.fg;
+  // Color mode: override FG with a band-weighted hue. The user's BG slider
+  // still applies. Falls back to state.fg when audio is silent or off.
+  const bandFg = (liveMod && state.audioColorMode) ? audioBandColor() : null;
+  const fg = bandFg || state.fg;
   const bg = state.bg;
   const noiseScale = 1 / (state.noiseScale * 2 + 0.1);
   const mode = state.mode;
@@ -418,7 +584,7 @@ function drawScene(targetCtx, w, h, opts) {
       let target;
       const inBounds = i >= 0 && i < density && j >= 0 && j < rows;
       if (mode === 'Noise') {
-        target = (simplex.noise3D(i * noiseScale, j * noiseScale, time) + 1) / 2;
+        target = sampleNoise(state.noiseType, i, j, time, noiseScale, state.noiseContrast);
       } else if (mode === 'Strips') {
         const nx = density > 1 ? i / (density - 1) : 0;
         const ny = rows > 1 ? j / (rows - 1) : 0;
@@ -454,7 +620,14 @@ function drawScene(targetCtx, w, h, opts) {
 
       const x = i * cellSize + cellSize / 2;
       const y = j * cellSize + cellSize / 2;
-      const size = cellSize * cellSizeMul * val;
+      // Sparkle: per-cell size jitter driven by the mid band. The trig hash
+      // gives each cell a unique-but-deterministic phase so the field
+      // twinkles instead of pulsing uniformly.
+      let sparkle = 0;
+      if (sparkleAmt > 0) {
+        sparkle = Math.sin(i * 5.13 + j * 7.91 + time * 18) * sparkleAmt;
+      }
+      const size = cellSize * cellSizeMul * val * (1 + sparkle);
       const radius = (size / 2) * Math.min(1, val * morph);
 
       // Outline mode: skip cells that are too small for a clean stroke. A 1px
@@ -489,8 +662,16 @@ function tick(now) {
   requestAnimationFrame(tick);
   const dt = _lastTickT ? (now - _lastTickT) : 16;
   _lastTickT = now;
-  if (state.playing && state.mode === 'Noise') time += state.speed * 0.01;
-  if (state.playing && state.mode === 'Strips') time += (dt / 1000);
+  // Audio-driven tempo: louder music → faster Noise drift / Strips waves /
+  // Video playback. Same modulation row drives all three.
+  const speedBoost = 1 + audioMod('timeSpeed') * AUDIO_MOD_RANGE.timeSpeed;
+  if (state.playing && state.mode === 'Noise')  time += state.speed * 0.01 * speedBoost;
+  if (state.playing && state.mode === 'Strips') time += (dt / 1000) * speedBoost;
+  if (state.mode === 'Video' && activeVideo && activeVideo.readyState >= 2) {
+    const rate = Math.max(0.5, Math.min(4, speedBoost));
+    if (Math.abs(activeVideo.playbackRate - rate) > 0.02) activeVideo.playbackRate = rate;
+  }
+  if (state.mode === 'Random' && state.randomAudioDriven) repaintRandomAudio();
   // Detect video loop seam: time goes backward → next frame snaps smoothing
   // to current sample instead of lerping through the stale buffer.
   if (state.mode === 'Video' && activeVideo) {
@@ -498,9 +679,21 @@ function tick(now) {
     if (t < lastVideoTime - 0.4) snapNextFrame = true;
     lastVideoTime = t;
   }
+  if (window.enodeAudio) {
+    enodeAudio.update();
+    updateAudioMods();
+    // Toggle the invert flag on each detected beat; reset when feature is off.
+    if (state.audioBeatInvert) {
+      if (enodeAudio.beat) audioInvertFlip = !audioInvertFlip;
+    } else if (audioInvertFlip) {
+      audioInvertFlip = false;
+    }
+  }
   drawScene(ctx, canvas.width, canvas.height);
   snapNextFrame = false;
   if (typeof previewTick === 'function') previewTick(dt);
+  if (typeof audioVizTick === 'function') audioVizTick();
+  if (typeof modRowsTick === 'function') modRowsTick();
 }
 
 // ─── Tabs ───────────────────────────────────────────────────────
@@ -533,6 +726,13 @@ wireSeg('modeSeg', (val, wasActive) => {
     regenerateRects();
     return;
   }
+  // Noise button on re-click cycles through noise types (simplex/ridged/warped)
+  if (val === 'Noise' && wasActive) {
+    const i = NOISE_TYPES.indexOf(state.noiseType);
+    state.noiseType = NOISE_TYPES[(i + 1) % NOISE_TYPES.length];
+    if (typeof syncNoiseUI === 'function') syncNoiseUI();
+    return;
+  }
   state.mode = val;
   if (val === 'Camera') {
     if (!cameraStream) startCamera();
@@ -545,6 +745,8 @@ wireSeg('modeSeg', (val, wasActive) => {
   }
   updateEditorVisibility();
   updateStripsVisibility();
+  updateNoiseVisibility();
+  updateRandomVisibility();
   updateSourcePreview();
 });
 
@@ -667,6 +869,76 @@ function updateStripsVisibility() {
   stripsGroup.style.display = state.mode === 'Strips' ? '' : 'none';
 }
 
+function updateRandomVisibility() {
+  const el = document.getElementById('randomGroup');
+  if (el) el.style.display = state.mode === 'Random' ? '' : 'none';
+}
+
+// Audio Strips toggle: row heights driven by FFT bands
+const audioStripsToggle = document.getElementById('audioStripsToggle');
+audioStripsToggle.addEventListener('click', () => {
+  state.strips.audioDriven = !state.strips.audioDriven;
+  audioStripsToggle.classList.toggle('active', state.strips.audioDriven);
+});
+
+// Invert on beat: sustained flip on each detected kick
+const beatStrobeToggle = document.getElementById('beatStrobeToggle');
+beatStrobeToggle.addEventListener('click', () => {
+  state.audioBeatInvert = !state.audioBeatInvert;
+  beatStrobeToggle.classList.toggle('active', state.audioBeatInvert);
+});
+
+// Color mode: FG hue follows band balance
+const audioColorToggle = document.getElementById('audioColorToggle');
+audioColorToggle.addEventListener('click', () => {
+  state.audioColorMode = !state.audioColorMode;
+  audioColorToggle.classList.toggle('active', state.audioColorMode);
+});
+
+// Audio-driven Random rectangles
+const randomAudioToggle = document.getElementById('randomAudioToggle');
+randomAudioToggle.addEventListener('click', () => {
+  state.randomAudioDriven = !state.randomAudioDriven;
+  randomAudioToggle.classList.toggle('active', state.randomAudioDriven);
+  // Repaint immediately so the visual reflects the toggle on next frame even
+  // when audio is silent (resets to black) or rebuilds to original brightness.
+  if (state.randomAudioDriven) repaintRandomAudio();
+  else rebuildRandomSource();
+});
+
+// ─── Noise controls ────────────────────────────────────────────
+const noiseGroup       = document.getElementById('noiseGroup');
+const noiseTypeLabel   = document.getElementById('noiseTypeLabel');
+const noiseScaleSlider = document.getElementById('noiseScaleSlider');
+const noiseScaleVal    = document.getElementById('noiseScaleVal');
+const noiseContrastEl  = document.getElementById('noiseContrast');
+const noiseContrastVal = document.getElementById('noiseContrastVal');
+
+function syncNoiseUI() {
+  // Capitalize the type for display
+  const t = state.noiseType;
+  noiseTypeLabel.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+  noiseScaleSlider.value = state.noiseScale;
+  noiseScaleVal.textContent = Math.round(state.noiseScale);
+  noiseContrastEl.value = state.noiseContrast;
+  noiseContrastVal.textContent = state.noiseContrast.toFixed(2);
+}
+
+function updateNoiseVisibility() {
+  noiseGroup.style.display = state.mode === 'Noise' ? '' : 'none';
+}
+
+noiseScaleSlider.addEventListener('input', e => {
+  state.noiseScale = parseFloat(e.target.value);
+  noiseScaleVal.textContent = Math.round(state.noiseScale);
+  scheduleGlow();
+});
+noiseContrastEl.addEventListener('input', e => {
+  state.noiseContrast = parseFloat(e.target.value);
+  noiseContrastVal.textContent = state.noiseContrast.toFixed(2);
+  scheduleGlow();
+});
+
 // Big toggle chips replace the old <input type=checkbox> controls.
 const chipInvert = document.getElementById('chipInvert');
 const chipOutline = document.getElementById('chipOutline');
@@ -725,6 +997,8 @@ function loadFile(file) {
     setVideoSource(url);
     state.mode = 'Video';
     syncModeUI();
+  } else if (file.type.startsWith('audio/')) {
+    loadAudioTrack(url, file.name.replace(/\.[^.]+$/, ''));
   }
 }
 
@@ -1408,9 +1682,17 @@ const sourcePreviewWrap = document.getElementById('sourcePreview');
 let lastPreviewMode = null;
 
 function updateSourcePreview() {
-  // Sized to fit container. Aspect ratio matches current export aspect.
-  const targetH = 72;
-  const targetW = Math.round(targetH * state.exportW / state.exportH);
+  // Size bitmap to fit the container box (with DPR for crisp rendering) at
+  // the current export aspect. CSS object-fit:contain handles the visual fit.
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const cw = sourcePreviewWrap.clientWidth || 220;
+  const ch = sourcePreviewWrap.clientHeight || 220;
+  const ar = state.exportW / state.exportH;
+  let dw, dh;
+  if (cw / ch > ar) { dh = ch; dw = dh * ar; }
+  else { dw = cw; dh = dw / ar; }
+  const targetW = Math.max(2, Math.round(dw * dpr));
+  const targetH = Math.max(2, Math.round(dh * dpr));
   if (sourcePreviewCanvas.width !== targetW) sourcePreviewCanvas.width = targetW;
   if (sourcePreviewCanvas.height !== targetH) sourcePreviewCanvas.height = targetH;
 
@@ -1437,7 +1719,7 @@ function updateSourcePreview() {
     const step = 4;
     for (let i = 0; i < targetW; i += step) {
       for (let j = 0; j < targetH; j += step) {
-        const v = (simplex.noise3D(i * ns * 0.5, j * ns * 0.5, time) + 1) / 2;
+        const v = sampleNoise(state.noiseType, i * 0.5, j * 0.5, time, ns, state.noiseContrast);
         const g = Math.round(v * 255);
         sourcePreviewCtx.fillStyle = `rgb(${g},${g},${g})`;
         sourcePreviewCtx.fillRect(i, j, step, step);
@@ -1618,10 +1900,215 @@ document.addEventListener('keydown', e => {
   applyTheme(!document.body.classList.contains('light'));
 });
 
+// ─── Audio ─────────────────────────────────────────────────────
+const audioTracksEl   = document.getElementById('audioTracks');
+const audioTransport  = document.getElementById('audioTransport');
+const audioPlayBtn    = document.getElementById('audioPlayBtn');
+const audioPlayIcon   = document.getElementById('audioPlayIcon');
+const audioSeek       = document.getElementById('audioSeek');
+const audioTimeEl     = document.getElementById('audioTime');
+const audioStatusEl   = document.getElementById('audioStatus');
+const audioVizCanvas  = document.getElementById('audioViz');
+const audioVizCtx     = audioVizCanvas.getContext('2d');
+const audioDrop       = document.getElementById('audioDrop');
+
+let audioSeekDragging = false;
+let currentTrackUrl   = null;
+
+function formatTime(t) {
+  if (!isFinite(t) || t < 0) t = 0;
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60);
+  return m + ':' + (s < 10 ? '0' + s : s);
+}
+
+function loadAudioTrack(url, displayName) {
+  if (!window.enodeAudio) return;
+  currentTrackUrl = url;
+  enodeAudio.load(url);
+  enodeAudio.play();
+  // UI updates
+  audioTransport.style.display = '';
+  audioVizCanvas.style.display = '';
+  audioStatusEl.textContent = displayName || '';
+  audioStatusEl.classList.add('live');
+  // Highlight matching track button (if any)
+  audioTracksEl.querySelectorAll('button').forEach(b => {
+    b.classList.toggle('active', b.dataset.src === url);
+  });
+  updatePlayIcon();
+}
+
+// 3 preset track buttons
+audioTracksEl.addEventListener('click', e => {
+  const b = e.target.closest('button[data-src]');
+  if (!b) return;
+  // Click on the already-active track toggles play/pause
+  if (b.dataset.src === currentTrackUrl) {
+    enodeAudio.toggle();
+    return;
+  }
+  loadAudioTrack(b.dataset.src, b.dataset.name || b.textContent);
+});
+
+// Transport: play/pause toggle
+audioPlayBtn.addEventListener('click', () => {
+  if (!currentTrackUrl) return;
+  enodeAudio.toggle();
+});
+
+// Transport: scrub
+audioSeek.addEventListener('input', () => {
+  audioSeekDragging = true;
+  const frac = parseFloat(audioSeek.value) / 1000;
+  const t = frac * (enodeAudio.duration || 0);
+  if (audioTimeEl) audioTimeEl.textContent = formatTime(t) + ' / ' + formatTime(enodeAudio.duration);
+});
+audioSeek.addEventListener('change', () => {
+  const frac = parseFloat(audioSeek.value) / 1000;
+  enodeAudio.seek(frac * (enodeAudio.duration || 0));
+  audioSeekDragging = false;
+});
+
+// Dedicated drop target inside the Audio group
+['dragenter', 'dragover'].forEach(ev => {
+  audioDrop.addEventListener(ev, e => {
+    e.preventDefault();
+    e.stopPropagation();
+    audioDrop.classList.add('over');
+  });
+});
+['dragleave', 'drop'].forEach(ev => {
+  audioDrop.addEventListener(ev, e => {
+    e.preventDefault();
+    audioDrop.classList.remove('over');
+  });
+});
+audioDrop.addEventListener('drop', e => {
+  e.preventDefault();
+  e.stopPropagation();
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f && f.type.startsWith('audio/')) {
+    const url = URL.createObjectURL(f);
+    loadAudioTrack(url, f.name.replace(/\.[^.]+$/, ''));
+  }
+});
+
+function updatePlayIcon() {
+  if (!audioPlayIcon) return;
+  // Play triangle vs pause bars
+  if (enodeAudio.playing) {
+    audioPlayIcon.setAttribute('d', 'M6 5h4v14H6zM14 5h4v14h-4z');
+  } else {
+    audioPlayIcon.setAttribute('d', 'M7 5l12 7-12 7z');
+  }
+}
+
+enodeAudio.onTransport(updatePlayIcon);
+
+// ─── Modulator panel ───────────────────────────────────────────
+// Locked target → label + tiny hint about what band drives it. Bands are
+// fixed (no per-row picker) because each pairing is what reads best musically.
+const MOD_META = {
+  cellSize:  { label: 'Cell size',       hint: 'pulses on bass' },
+  sparkle:   { label: 'Sparkle',         hint: 'twinkles on mids' },
+  timeSpeed: { label: 'Playback speed',  hint: 'follows energy' },
+};
+const modListEl = document.getElementById('modList');
+
+function renderModList() {
+  modListEl.innerHTML = '';
+  state.audioMods.forEach((m, i) => {
+    const meta = MOD_META[m.target] || { label: m.target, hint: '' };
+    const row = document.createElement('div');
+    row.className = 'mod-row';
+    row.dataset.index = String(i);
+    row.innerHTML = `
+      <div class="mod-row-head">
+        <span><span class="mod-target">${meta.label}</span>
+          <span class="mod-hint">${meta.hint}</span>
+        </span>
+        <span class="mod-depth-val">${m.depth.toFixed(2)}</span>
+      </div>
+      <input type="range" class="mod-depth" min="0" max="1" step="0.01" value="${m.depth}">
+    `;
+    modListEl.appendChild(row);
+  });
+}
+
+modListEl.addEventListener('input', e => {
+  if (!e.target.classList.contains('mod-depth')) return;
+  const row = e.target.closest('.mod-row');
+  const idx = +row.dataset.index;
+  const v = parseFloat(e.target.value);
+  state.audioMods[idx].depth = v;
+  row.querySelector('.mod-depth-val').textContent = v.toFixed(2);
+});
+
+// Light up a row's label when its envelope is firing, so the user sees which
+// param is currently being pushed by the music.
+function modRowsTick() {
+  if (!modListEl.children.length) return;
+  for (let i = 0; i < state.audioMods.length; i++) {
+    const row = modListEl.children[i];
+    if (!row) continue;
+    const m = state.audioMods[i];
+    const active = m.depth > 0 && (m.env || 0) > 0.08;
+    row.classList.toggle('live', active);
+  }
+}
+
+renderModList();
+
+// Per-frame: refresh transport readout and draw the mini FFT visualizer.
+function audioVizTick() {
+  if (!currentTrackUrl) return;
+  const dur = enodeAudio.duration || 0;
+  const t = enodeAudio.currentTime;
+  if (!audioSeekDragging) {
+    audioSeek.value = dur > 0 ? Math.round((t / dur) * 1000) : 0;
+  }
+  audioTimeEl.textContent = formatTime(t) + ' / ' + formatTime(dur);
+  drawAudioViz();
+}
+
+function drawAudioViz() {
+  const W = audioVizCanvas.width;
+  const H = audioVizCanvas.height;
+  // Background
+  const css = getComputedStyle(document.documentElement);
+  audioVizCtx.fillStyle = css.getPropertyValue('--bg-3').trim() || '#1e1e1e';
+  audioVizCtx.fillRect(0, 0, W, H);
+  // Bars: condense ~256 bins into N bars
+  const bars = 48;
+  const bins = enodeAudio.freq.length;
+  const binsPerBar = Math.floor(bins / 2 / bars); // use first half (drop high empty bins)
+  const barW = W / bars - 1;
+  const fg = css.getPropertyValue('--fg-dim').trim() || '#c8c8c8';
+  audioVizCtx.fillStyle = fg;
+  for (let i = 0; i < bars; i++) {
+    let sum = 0;
+    for (let j = 0; j < binsPerBar; j++) sum += enodeAudio.freq[i * binsPerBar + j];
+    const v = (sum / binsPerBar) / 255;
+    const h = Math.max(1, v * H);
+    audioVizCtx.fillRect(i * (barW + 1), H - h, barW, h);
+  }
+  // Beat flash
+  if (enodeAudio.beat) {
+    audioVizCtx.fillStyle = css.getPropertyValue('--cyan').trim() || '#00d4ff';
+    audioVizCtx.globalAlpha = 0.35;
+    audioVizCtx.fillRect(0, 0, W, H);
+    audioVizCtx.globalAlpha = 1;
+  }
+}
+
 // ─── Init ──────────────────────────────────────────────────────
 setExportSize(1080, 1080);
 setVideoSource(DEMO_VIDEO_URL);
 regenerateRects(); // pre-populate so Random shows immediately on first switch
 updateEditorVisibility(); // sync Gradient chip visibility with initial mode
 updateStripsVisibility(); // hide Strips panel until user picks Strips mode
+updateNoiseVisibility();  // hide Noise panel until user picks Noise mode
+updateRandomVisibility(); // hide Random panel until user picks Random mode
+syncNoiseUI();
 requestAnimationFrame(tick);

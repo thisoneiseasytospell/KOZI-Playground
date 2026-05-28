@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="nb" translate="no">
+<head>
+<meta charset="utf-8" />
+<meta name="google" content="notranslate" />
+<title>Carte Blanche — flicker</title>
+<style>
+  @font-face {
+    font-family: "STK Bureau Sans";
+    src: url("fonts/STKBureauSans-SemiBold.otf") format("opentype");
+    font-weight: 600;
+    font-style: normal;
+    font-display: block;
+  }
+  @font-face {
+    font-family: "TCB Logotype Slanted";
+    src: url("fonts/Totentanz_Carte_Blanche-Logotype%20Slanted.otf") format("opentype");
+    font-display: block;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #fff;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .stage {
+    color: #150000;
+    text-align: center;
+    font-family: "STK Bureau Sans", sans-serif;
+    font-size: 42.001px;
+    font-style: normal;
+    font-weight: 600;
+    line-height: 92%;
+    text-edge: cap;
+    leading-trim: both;
+    user-select: none;
+  }
+
+  .line { display: block; white-space: nowrap; }
+
+  /* width is locked in JS once the base font has measured each letter,
+     so swapping to the slanted font cannot reflow the line and cause
+     phantom flicker in the revealed zone. */
+  .ch {
+    display: inline-block;
+    text-align: center;
+    overflow: visible;
+  }
+
+  .ch.flick { font-family: "TCB Logotype Slanted"; }
+
+  /* ---- control panel ---- */
+  #panel {
+    position: fixed;
+    top: 16px; left: 16px;
+    background: rgba(255,255,255,0.92);
+    border: 1px solid #150000;
+    padding: 12px 14px;
+    font: 11px/1.4 ui-monospace, monospace;
+    color: #150000;
+    z-index: 99;
+    border-radius: 4px;
+    backdrop-filter: blur(4px);
+    user-select: none;
+  }
+  #panel.hidden { display: none; }
+  #panel h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+  #panel label { display: block; margin-bottom: 6px; }
+  #panel label span { display: inline-block; width: 86px; }
+  #panel input[type=range] { vertical-align: middle; width: 140px; }
+  #panel .val { display: inline-block; width: 40px; text-align: right; }
+  #panel .hint { margin-top: 8px; opacity: .6; }
+</style>
+</head>
+<body>
+  <div class="stage notranslate" id="stage" translate="no">
+    <span class="line">CARTE BLANCHE</span>
+    <span class="line">NORGES NASJONALE</span>
+    <span class="line">DANSEKOMPANI</span>
+  </div>
+
+  <div id="panel">
+    <h3>Brush</h3>
+    <label><span>Core radius</span><input type="range" id="s-core" min="0" max="500" step="2"><span class="val" id="v-core"></span></label>
+    <label><span>Max radius</span><input type="range" id="s-max"  min="20" max="900" step="2"><span class="val" id="v-max"></span></label>
+    <label><span>Edge falloff</span><input type="range" id="s-fall" min="0.2" max="6" step="0.1"><span class="val" id="v-fall"></span></label>
+    <label><span>Stop-motion fps</span><input type="range" id="s-fps" min="2" max="25" step="1"><span class="val" id="v-fps"></span></label>
+    <div class="hint">press <b>H</b> to hide</div>
+  </div>
+
+<script>
+  const lines = document.querySelectorAll('.stage .line');
+  const lineChars = [];
+  const allChars = [];
+
+  lines.forEach(line => {
+    const text = line.textContent;
+    line.textContent = '';
+    const chars = [];
+    for (const c of text) {
+      const span = document.createElement('span');
+      if (c === ' ') {
+        span.innerHTML = '&nbsp;';
+        span.className = 'ch space';
+      } else {
+        span.textContent = c;
+        span.className = 'ch';
+        chars.push(span);
+        allChars.push(span);
+      }
+      line.appendChild(span);
+    }
+    lineChars.push(chars);
+  });
+
+  // ---------- Rhythm ----------
+  const BPM = 120;
+  const STEP_MS = 60000 / BPM;     // 500ms at 120bpm
+  const LETTERS_PER_LINE = 2;
+  // 1 = hit, 0 = rest. Three hits then a breath.
+  const PATTERN = [1, 1, 1, 0];
+
+  // ---------- Mouse field (terminal-style, stop-motion) ----------
+  // Live-tunable via the slider panel.
+  const params = {
+    STOP_FPS: 8,
+    CORE_R:   110,
+    MAX_R:    280,
+    FALLOFF:  1.6,
+  };
+
+  let mouseX = -99999, mouseY = -99999;
+
+  window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+  window.addEventListener('mouseleave', () => { mouseX = -99999; mouseY = -99999; });
+  window.addEventListener('blur',       () => { mouseX = -99999; mouseY = -99999; });
+
+  function pickRandom(arr, n, exclude = []) {
+    const pool = arr.filter(x => !exclude.includes(x));
+    const out = [];
+    for (let i = 0; i < n && pool.length; i++) {
+      const idx = Math.floor(Math.random() * pool.length);
+      out.push(pool.splice(idx, 1)[0]);
+    }
+    return out;
+  }
+
+  // Track which chars are flicked by the rhythm vs by the mouse so they
+  // don't fight each other. We compute the union on every paint.
+  const rhythmSet = new Set();
+  const mouseSet  = new Set();
+
+  function paint() {
+    // Apply union of both sources
+    allChars.forEach(ch => {
+      if (rhythmSet.has(ch) || mouseSet.has(ch)) ch.classList.add('flick');
+      else ch.classList.remove('flick');
+    });
+  }
+
+  // -- Rhythm step --
+  const lineState = lineChars.map(() => ({ active: [] }));
+
+  function rhythmHit() {
+    rhythmSet.clear();
+    lineChars.forEach((chars, i) => {
+      const state = lineState[i];
+      const next = pickRandom(chars, LETTERS_PER_LINE, state.active);
+      next.forEach(ch => rhythmSet.add(ch));
+      state.active = next;
+    });
+  }
+  function rhythmRest() {
+    rhythmSet.clear();
+    lineState.forEach(s => { s.active = []; });
+  }
+
+  // -- Mouse field --
+  // Cache letter centers and refresh on resize for cheap distance math.
+  let centers = [];
+  function refreshCenters() {
+    centers = allChars.map(ch => {
+      const r = ch.getBoundingClientRect();
+      return { ch, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+  }
+  window.addEventListener('resize', refreshCenters);
+
+  function recomputeMouseField() {
+    mouseSet.clear();
+    if (mouseX < 0) return;
+    const { CORE_R, MAX_R, FALLOFF } = params;
+    const span = Math.max(0.0001, MAX_R - CORE_R);
+    for (const c of centers) {
+      const dx = c.x - mouseX, dy = c.y - mouseY;
+      const d  = Math.sqrt(dx*dx + dy*dy);
+      if (d > MAX_R) continue;
+      if (d <= CORE_R) {
+        mouseSet.add(c.ch);
+      } else {
+        const t = 1 - (d - CORE_R) / span;
+        const p = Math.pow(t, FALLOFF);
+        if (Math.random() < p) mouseSet.add(c.ch);
+      }
+    }
+  }
+
+  // Lock each letter's width to its base-font measurement so swapping to
+  // the slanted font cannot reflow the line — eliminates phantom flicker
+  // in the revealed zone.
+  function lockWidths() {
+    allChars.forEach(ch => { ch.style.width = ''; });
+    // force measurement in the base font (no flick class)
+    allChars.forEach(ch => ch.classList.remove('flick'));
+    // batch read after a layout flush
+    const widths = allChars.map(ch => ch.getBoundingClientRect().width);
+    allChars.forEach((ch, i) => { ch.style.width = widths[i] + 'px'; });
+  }
+
+  // ---------- Sliders ----------
+  function bindSlider(id, valId, key, parse = parseFloat) {
+    const el  = document.getElementById(id);
+    const val = document.getElementById(valId);
+    el.value = params[key];
+    val.textContent = params[key];
+    el.addEventListener('input', () => {
+      params[key] = parse(el.value);
+      val.textContent = params[key];
+      if (key === 'STOP_FPS') restartClock();
+    });
+  }
+
+  let clockHandle = null;
+  let frameCounter = 0;
+  let beatCounter  = 0;
+  function restartClock() {
+    if (clockHandle) clearInterval(clockHandle);
+    const stopMs = 1000 / params.STOP_FPS;
+    const framesPerBeat = Math.max(1, Math.round(STEP_MS / stopMs));
+    clockHandle = setInterval(() => {
+      frameCounter++;
+      if (frameCounter % framesPerBeat === 0) {
+        beatCounter++;
+        if (mouseX < 0) {
+          if (PATTERN[beatCounter % PATTERN.length]) rhythmHit();
+          else rhythmRest();
+        } else {
+          rhythmRest();
+        }
+        refreshCenters();
+      }
+      recomputeMouseField();
+      paint();
+    }, stopMs);
+  }
+
+  // hide panel with H
+  window.addEventListener('keydown', e => {
+    if (e.key === 'h' || e.key === 'H') {
+      document.getElementById('panel').classList.toggle('hidden');
+    }
+  });
+
+  document.fonts.ready.then(() => {
+    lockWidths();
+    refreshCenters();
+    rhythmHit();
+    recomputeMouseField();
+    paint();
+
+    bindSlider('s-core', 'v-core', 'CORE_R', parseFloat);
+    bindSlider('s-max',  'v-max',  'MAX_R',  parseFloat);
+    bindSlider('s-fall', 'v-fall', 'FALLOFF', parseFloat);
+    bindSlider('s-fps',  'v-fps',  'STOP_FPS', parseFloat);
+
+    restartClock();
+  });
+</script>
+</body>
+</html>

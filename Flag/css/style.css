@@ -490,6 +490,27 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .btn-export:hover {
   background: var(--accent); color: #fff;
 }
+.btn-export:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-export:disabled:hover { background: var(--accent-dim); color: var(--accent); }
+.btn-export.batch-cancel {
+  border-color: var(--text-dim); color: var(--text-dim); background: transparent;
+}
+.btn-export.batch-cancel:hover { background: var(--text-dim); color: #fff; }
+
+.batch-status {
+  font-size: 10px; color: var(--text-dim);
+  margin: 8px 0; line-height: 1.5; letter-spacing: 0.02em;
+}
+.matte-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: var(--text-dim);
+  margin-bottom: 10px; cursor: pointer; user-select: none;
+}
+.matte-row input { accent-color: var(--accent); cursor: pointer; }
+.dropzone.has-file { border-color: var(--accent); border-style: solid; }
+.dropzone.has-file .dropzone-icon,
+.dropzone.has-file .dropzone-text strong { color: var(--accent); }
+.dropzone.drag { border-color: var(--accent); background: var(--accent-dim); }
 
 .btn-reset {
   width: 100%; padding: 9px;

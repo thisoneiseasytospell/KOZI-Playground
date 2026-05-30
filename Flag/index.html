@@ -188,6 +188,7 @@
           <button class="pill" data-some="9:16">9:16</button>
           <button class="pill" data-some="16:9">16:9</button>
           <button class="pill" data-some="ffi">FFI</button>
+          <button class="pill" data-some="print">A5 Print</button>
         </div>
       </div>
       <div class="section">
@@ -220,6 +221,7 @@
           <div class="ffi-layout-flag" id="ffiLayoutFlag">
             <div class="ffi-layout-block" data-fblock="0"><span>1</span></div>
             <div class="ffi-layout-block" data-fblock="1"><span>2</span></div>
+            <div class="ffi-layout-block" data-fblock="2"><span>3</span></div>
           </div>
         </div>
         <div class="ffi-block" data-block="0">
@@ -236,8 +238,7 @@ Can't Do</textarea>
         </div>
         <div class="ffi-block" data-block="1">
           <div class="ffi-block-head"><span class="ffi-block-num">2</span></div>
-          <textarea class="hex-input ffi-text ffi-textarea" id="ffiText1" rows="2" spellcheck="false">Graphic Design
-Albert Kozikowski</textarea>
+          <textarea class="hex-input ffi-text ffi-textarea" id="ffiText1" rows="1" spellcheck="false">Albert Kozikowski</textarea>
           <div class="control-row">
             <div class="control-label">
               <span class="control-name">Size</span>
@@ -246,7 +247,32 @@ Albert Kozikowski</textarea>
             <input type="range" class="ffi-size" id="ffiSize1" min="10" max="120" value="35">
           </div>
         </div>
+        <div class="ffi-block" data-block="2">
+          <div class="ffi-block-head"><span class="ffi-block-num">3</span></div>
+          <textarea class="hex-input ffi-text ffi-textarea" id="ffiText2" rows="1" spellcheck="false">Graphic Design</textarea>
+          <div class="control-row">
+            <div class="control-label">
+              <span class="control-name">Size</span>
+              <span class="control-value" id="ffiSizeVal2">35</span>
+            </div>
+            <input type="range" class="ffi-size" id="ffiSize2" min="10" max="120" value="35">
+          </div>
+        </div>
         <button class="btn-export" id="ffiExportBtn" style="margin-top:8px">Export 10s · 1920×1080</button>
+      </div>
+      <div class="section" id="batchSection" style="display:none">
+        <div class="section-label">Batch · CSV → ZIP</div>
+        <div class="dropzone" id="csvDrop">
+          <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/>
+          </svg>
+          <div class="dropzone-text"><strong>Drop CSV</strong> or click to browse</div>
+          <div class="dropzone-hint">project, name, extra · up to 300 rows</div>
+          <input type="file" id="csvInput" accept=".csv,text/csv">
+        </div>
+        <div class="batch-status" id="batchStatus">No CSV loaded</div>
+        <label class="matte-row"><input type="checkbox" id="matteToggle" checked> Matte — no glare (print)</label>
+        <button class="btn-export" id="batchExportBtn" disabled>Export ZIP · A5 300dpi</button>
       </div>
       <div class="section">
         <div class="section-label">Export</div>

@@ -649,7 +649,7 @@ varying vec3 vNrm, vPos;
 varying vec2 vUV;
 uniform vec3 uLight, uColor, uEye;
 uniform sampler2D uTex;
-uniform float uFace, uAlpha, uAmbient, uPartyTime;
+uniform float uFace, uAlpha, uAmbient, uPartyTime, uMatte;
 uniform bool uHasTex, uIsGlass;
 vec3 hsv(float h, float s, float v) {
   vec3 r = clamp(abs(mod(h*6.0+vec3(0,4,2),6.0)-3.0)-1.0,0.0,1.0);
@@ -703,12 +703,15 @@ void main() {
   float diff = max(ndl, 0.0) * 0.50;
   float fill = max(dot(n, normalize(vec3(-0.45, 0.35, -0.65))), 0.0) * 0.14;
   float back = max(-ndl, 0.0) * 0.20;
-  float rim = pow(1.0 - max(dot(n, vd), 0.0), 2.8) * 0.18;
-  float spec = pow(max(dot(n, hd), 0.0), 72.0) * 0.14;
-  float spec2 = pow(max(dot(n, hd), 0.0), 16.0) * 0.16;
-  float spec3 = pow(max(dot(n, hd), 0.0), 160.0) * 0.10;
+  // uMatte (0→1) fades out every reflective term for a flat, glare-free
+  // print surface — keeps diffuse/fill/back so the cloth folds still read.
+  float em = 1.0 - uMatte;
+  float rim = pow(1.0 - max(dot(n, vd), 0.0), 2.8) * 0.18 * em;
+  float spec = pow(max(dot(n, hd), 0.0), 72.0) * 0.14 * em;
+  float spec2 = pow(max(dot(n, hd), 0.0), 16.0) * 0.16 * em;
+  float spec3 = pow(max(dot(n, hd), 0.0), 160.0) * 0.10 * em;
   float light = uAmbient + diff + fill + back + rim + spec + spec2 + spec3;
-  float sheen = pow(1.0 - max(dot(n, vd), 0.0), 4.0) * 0.07;
+  float sheen = pow(1.0 - max(dot(n, vd), 0.0), 4.0) * 0.07 * em;
   vec3 sheenTint = mix(vec3(0.84, 0.90, 0.98), vec3(0.98, 0.90, 0.84), vUV.y);
   vec3 lit = base * light + sheenTint * sheen;
   gl_FragColor = vec4(lit, alpha);
@@ -752,7 +755,7 @@ gl.linkProgram(prog); gl.useProgram(prog);
 
 const loc = {};
 ['aPos', 'aNrm', 'aUV'].forEach(n => loc[n] = gl.getAttribLocation(prog, n));
-['uProj', 'uView', 'uLight', 'uColor', 'uEye', 'uTex', 'uFace', 'uAlpha', 'uAmbient', 'uHasTex', 'uIsGlass', 'uPartyTime']
+['uProj', 'uView', 'uLight', 'uColor', 'uEye', 'uTex', 'uFace', 'uAlpha', 'uAmbient', 'uHasTex', 'uIsGlass', 'uPartyTime', 'uMatte']
   .forEach(n => loc[n] = gl.getUniformLocation(prog, n));
 
 // ─── Buffers ─────────────────────────────────────────────────
@@ -1090,6 +1093,9 @@ cam.curTheta = cam.tgtTheta;
 cam.curPhi = cam.tgtPhi;
 
 let partyMode = false, partyTime = 0;
+// Matte print mode — when true the cloth shader drops all specular/rim/sheen
+// (set live by the Matte toggle and forced on by the A5 print preset).
+let matteMode = false;
 
 function render(dt) {
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -1146,6 +1152,7 @@ function render(dt) {
 
   // Draw flag (double-sided)
   gl.uniform1i(loc.uIsGlass, 0);
+  gl.uniform1f(loc.uMatte, matteMode ? 1.0 : 0.0);
   gl.uniform3f(loc.uColor, SIM.flagColor[0], SIM.flagColor[1], SIM.flagColor[2]);
   gl.uniform1f(loc.uAlpha, SIM.opacity);
   if (hasTex && flagTex) {
@@ -1196,9 +1203,12 @@ let textScrollTime = 0;
 
 // Film Festival Intro — three centered blocks (Jubilee, Diatype, Diatype).
 // y is the vertical center as a fraction of flag height (0 = top, 1 = bottom).
+// Block 0 = project title (serif), block 1 = name, block 2 = extra line.
+// CSV batch fills these per row; name + extra default to the same Diatype size.
 const titleBlocks = [
-  { text: "What Design\nCan't Do",            size: 78, font: 'jubilee', y: 0.32, lineH: 1.00 },
-  { text: 'Graphic Design\nAlbert Kozikowski', size: 35, font: 'diatype', y: 0.62, lineH: 0.95 },
+  { text: "What Design\nCan't Do", size: 78, font: 'jubilee', y: 0.30, lineH: 1.00 },
+  { text: 'Albert Kozikowski',     size: 35, font: 'diatype', y: 0.56, lineH: 0.95 },
+  { text: 'Graphic Design',        size: 35, font: 'diatype', y: 0.66, lineH: 0.95 },
 ];
 
 // Deterministic pseudo-random per row (consistent across redraws)
@@ -1915,8 +1925,26 @@ document.getElementById('exportBtn').addEventListener('click', () => {
 });
 
 function exportFlagPNG() {
-  const meshScale = 3; // 3x denser mesh via bilinear interpolation
   const [outW, outH] = getExportSize();
+  return renderFlagToBlob(outW, outH, matteMode)
+    .then(blob => downloadBlob(blob, `flag-${outW}x${outH}.png`));
+}
+
+// Helper: trigger a browser download for a Blob.
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Render the current flag to a PNG Blob at outW×outH using the high-res
+// interpolated mesh (+2× supersample when the GPU allows). matte=true drops
+// all specular/sheen. Shared by the single-PNG button and the CSV batch.
+function renderFlagToBlob(outW, outH, matte) {
+  const meshScale = 3; // 3x denser mesh via bilinear interpolation
   // 2× supersample if the GPU can host the larger renderbuffer/texture.
   const maxRb = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
   const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
@@ -2036,6 +2064,7 @@ function exportFlagPNG() {
   gl.uniform1f(loc.uAmbient, 0.38);
 
   gl.uniform1i(loc.uIsGlass, 0);
+  gl.uniform1f(loc.uMatte, matte ? 1.0 : 0.0);
   gl.uniform3f(loc.uColor, SIM.flagColor[0], SIM.flagColor[1], SIM.flagColor[2]);
   gl.uniform1f(loc.uAlpha, SIM.opacity);
   if (hasTex && flagTex) {
@@ -2109,18 +2138,11 @@ function exportFlagPNG() {
     ctx2.drawImage(ssCanvas, 0, 0);
   }
 
-  out.toBlob(blob => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `flag-${outW}x${outH}.png`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, 'image/png');
+  return new Promise(resolve => out.toBlob(blob => resolve(blob), 'image/png'));
 }
 
 // ─── SoMe Export ────────────────────────────────────────────
-const SOME_FORMATS = { '1:1': [1080,1080], '4:5': [1080,1350], '9:16': [1080,1920], '16:9': [1920,1080] };
+const SOME_FORMATS = { '1:1': [1080,1080], '4:5': [1080,1350], '9:16': [1080,1920], '16:9': [1920,1080], 'print': [1748,2480] };
 let someFormat = '1:1', someActive = false, someRecording = false;
 let someAudio = 'none'; // 'none' | '1' | '2' | '3' | '4'
 const SOUND_VOLUME = 0.3;
@@ -2157,7 +2179,7 @@ document.querySelector('.panel-tabs').addEventListener('click', e => {
     someFrame.style.display = 'none';
     showPole = true;
   }
-  document.getElementById('ffiReadout').classList.toggle('visible', which === 'export' && someFormat === 'ffi');
+  document.getElementById('ffiReadout').classList.toggle('visible', which === 'export' && (someFormat === 'ffi' || someFormat === 'print'));
 });
 
 const sizeWInput = document.getElementById('sizeW');
@@ -2188,7 +2210,8 @@ function updateSomeFrame() {
   s.left = someCrop.x + 'px'; s.top = someCrop.y + 'px';
   s.width = someCrop.w + 'px'; s.height = someCrop.h + 'px';
   const [w, h] = getExportSize();
-  someLabel.textContent = w + '\u00d7' + h + ' \u00b7 @25fps';
+  const suffix = someFormat === 'print' ? 'A5 \u00b7 300 DPI' : '@25fps';
+  someLabel.textContent = w + '\u00d7' + h + ' \u00b7 ' + suffix;
 }
 
 document.getElementById('someRow').addEventListener('click', e => {
@@ -2198,16 +2221,36 @@ document.getElementById('someRow').addEventListener('click', e => {
   document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b === btn));
   const ffiSection = document.getElementById('ffiSection');
   const ffiReadoutEl = document.getElementById('ffiReadout');
+  const batchSection = document.getElementById('batchSection');
+  const ffiExportBtn = document.getElementById('ffiExportBtn');
   if (someFormat === 'ffi') {
     ffiSection.style.display = '';
+    batchSection.style.display = 'none';
+    ffiExportBtn.style.display = '';
     ffiReadoutEl.classList.add('visible');
     applyFFIPreset();
     if (someActive) initSomeCrop();
     return;
   }
+  if (someFormat === 'print') {
+    ffiSection.style.display = '';
+    batchSection.style.display = '';
+    ffiExportBtn.style.display = 'none';      // batch ZIP button replaces it
+    ffiReadoutEl.classList.add('visible');
+    applyPrintPreset();
+    someActive = true;
+    initSomeCrop();
+    someFrame.style.display = 'block';
+    return;
+  }
   ffiSection.style.display = 'none';
+  batchSection.style.display = 'none';
+  ffiExportBtn.style.display = '';
   ffiReadoutEl.classList.remove('visible');
-  // Leaving FFI — drop the title-card layout so generic text/image rendering resumes.
+  // Leaving FFI/print — restore the studio surface + generic text rendering.
+  matteMode = false;
+  const mt = document.getElementById('matteToggle');
+  if (mt) mt.checked = false;
   if (textLayout === 'titleCard') {
     textLayout = 'repeat';
     refreshTexture();
@@ -2456,6 +2499,247 @@ document.getElementById('ffiExportBtn').addEventListener('click', () => {
   });
 });
 
+// ─── A5 print preset + CSV batch export ─────────────────────
+// Mirrors applyFFIPreset but portrait A5 @ 300 DPI with matte on, and it
+// deliberately does NOT touch colours/fonts/sizes so the look stays driven
+// entirely by the live UI controls.
+function applyPrintPreset() {
+  textLayout = 'titleCard';        // cloth text comes from titleBlocks
+  textLayoutUserSet = true;
+
+  // Portrait flag (same proportions as the FFI poster) sits well inside A5.
+  fullRebuild(2.4, 2.9);
+  customAW = 2.4; customAH = 2.9;
+  activeRatio = null;
+  document.querySelectorAll('#ratioRow [data-r]').forEach(b => b.classList.remove('active'));
+  if (typeof updateMiniPreview === 'function') updateMiniPreview();
+
+  // Full-edge attachment keeps the flag from billowing into itself.
+  ATTACH.mode = 'edge';
+  applyPinning();
+  document.querySelectorAll('#attachRow .pill').forEach(b => b.classList.toggle('active', b.dataset.attach === 'edge'));
+
+  // Matte on so the live preview already shows the glare-free print surface.
+  matteMode = true;
+  if (matteToggle) matteToggle.checked = true;
+
+  // Seed the print palette you specified (bg #D3FED1, text #00330A) — both
+  // stay fully editable via the Studio tab colour controls afterwards.
+  SIM.bgColor = hexToRgb('#D3FED1');
+  if (bgColorIn) bgColorIn.value = '#D3FED1';
+  if (bgColorHex) bgColorHex.value = '#D3FED1';
+  currentTextColor = '#00330A';
+  if (textColorIn) textColorIn.value = '#00330A';
+  if (textColorHex) textColorHex.value = '#00330A';
+
+  // Head-on camera framed on the flag centre. A5 is taller than the flag, so
+  // fit by height and leave clean margins left/right.
+  cam.tgtTheta = 0; cam.tgtPhi = 0; cam.tgtRoll = 0;
+  cam.tgtTarget[0] = flagW / 2;
+  cam.tgtTarget[1] = flagH * 0.3;
+  cam.tgtTarget[2] = 0;
+  const halfTan = Math.tan((Math.PI / 4.5) / 2);
+  cam.tgtDist = (flagH * 0.62 / halfTan) * 1.05;
+  cam.curTheta = cam.tgtTheta;
+  cam.curPhi = cam.tgtPhi;
+  cam.curDist = cam.tgtDist;
+  cam.curRoll = cam.roll = cam.tgtRoll;
+  cam.target[0] = cam.tgtTarget[0];
+  cam.target[1] = cam.tgtTarget[1];
+  cam.target[2] = cam.tgtTarget[2];
+
+  // A5 @ 300 DPI, portrait, no bleed.
+  sizeWInput.value = 1748;
+  sizeHInput.value = 2480;
+  someFormat = 'print';
+  document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b.dataset.some === 'print'));
+
+  refreshTexture(); // repaint title card with the seeded text colour
+}
+
+// CSV → records. Tolerates quotes, embedded commas/newlines, CRLF and a BOM.
+function parseCSV(text) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const rows = [];
+  let row = [], field = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') field += c;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function csvToRecords(text) {
+  const rows = parseCSV(text).filter(r => r.some(c => c.trim() !== ''));
+  if (!rows.length) return [];
+  const head = rows[0].map(c => c.trim().toLowerCase());
+  const hasHeader = head.includes('project') || head.includes('name') || head.includes('extra');
+  const body = (hasHeader ? rows.slice(1) : rows).slice(0, 300);
+  return body.map(r => ({
+    project: (r[0] || '').trim(),
+    name:    (r[1] || '').trim(),
+    extra:   (r[2] || '').trim(),
+  }));
+}
+
+// Filename-safe slug: strip accents, lowercase, dashes.
+function slugify(s) {
+  return (s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+// Minimal dependency-free ZIP (STORE — PNGs are already compressed).
+// files: [{ name, data: Uint8Array }] → Blob.
+function makeZip(files) {
+  const enc = new TextEncoder();
+  const crcTable = makeZip._t || (makeZip._t = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c >>> 0;
+    }
+    return t;
+  })());
+  const crc32 = (buf) => {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  };
+  const u16 = n => new Uint8Array([n & 0xFF, (n >>> 8) & 0xFF]);
+  const u32 = n => new Uint8Array([n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF]);
+  const parts = [], central = [];
+  let offset = 0;
+  for (const f of files) {
+    const nameBytes = enc.encode(f.name), data = f.data, crc = crc32(data);
+    parts.push(u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0),
+               u32(crc), u32(data.length), u32(data.length),
+               u16(nameBytes.length), u16(0), nameBytes, data);
+    central.push({ nameBytes, crc, size: data.length, offset });
+    offset += 30 + nameBytes.length + data.length;
+  }
+  const cd = []; let cdSize = 0;
+  for (const c of central) {
+    cd.push(u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),
+            u32(c.crc), u32(c.size), u32(c.size),
+            u16(c.nameBytes.length), u16(0), u16(0), u16(0), u16(0), u32(0),
+            u32(c.offset), c.nameBytes);
+    cdSize += 46 + c.nameBytes.length;
+  }
+  const eocd = [u32(0x06054b50), u16(0), u16(0), u16(central.length), u16(central.length),
+                u32(cdSize), u32(offset), u16(0)];
+  return new Blob([...parts, ...cd, ...eocd], { type: 'application/zip' });
+}
+
+// Batch state + wiring.
+const csvInput = document.getElementById('csvInput');
+const csvDrop = document.getElementById('csvDrop');
+const batchStatus = document.getElementById('batchStatus');
+const batchExportBtn = document.getElementById('batchExportBtn');
+const matteToggle = document.getElementById('matteToggle');
+let batchRecords = [];
+let batchExporting = false, batchCancel = false;
+
+if (matteToggle) matteToggle.addEventListener('change', () => { matteMode = matteToggle.checked; });
+
+function loadCSVFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    batchRecords = csvToRecords(String(reader.result || ''));
+    const n = batchRecords.length;
+    if (batchStatus) batchStatus.textContent = n
+      ? `${n} row${n === 1 ? '' : 's'} loaded → ${n} PNG${n === 1 ? '' : 's'}`
+      : 'No valid rows found in that CSV.';
+    if (batchExportBtn) batchExportBtn.disabled = !n;
+    if (csvDrop) csvDrop.classList.toggle('has-file', !!n);
+  };
+  reader.readAsText(file);
+}
+
+if (csvInput) csvInput.addEventListener('change', () => loadCSVFile(csvInput.files[0]));
+if (csvDrop) {
+  csvDrop.addEventListener('click', () => csvInput && csvInput.click());
+  csvDrop.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); csvDrop.classList.add('drag'); });
+  csvDrop.addEventListener('dragleave', () => csvDrop.classList.remove('drag'));
+  csvDrop.addEventListener('drop', e => {
+    e.preventDefault(); e.stopPropagation(); csvDrop.classList.remove('drag');
+    if (e.dataTransfer.files[0]) loadCSVFile(e.dataTransfer.files[0]);
+  });
+}
+
+async function runBatchExport() {
+  if (batchExporting || !batchRecords.length) return;
+  // Ensure print framing (camera + A5 size + matte + crop) is in place.
+  if (someFormat !== 'print') {
+    applyPrintPreset();
+    someActive = true; initSomeCrop(); someFrame.style.display = 'block';
+  }
+  const outW = 1748, outH = 2480; // A5 @ 300 DPI, no bleed.
+
+  // Fonts must be ready or early rows render in a fallback face.
+  try { await document.fonts.ready; } catch (e) {}
+
+  batchExporting = true; batchCancel = false;
+  batchExportBtn.classList.add('batch-cancel');
+
+  const files = [], usedNames = new Set();
+  const STEP_FRAMES = 28; // ~0.5s of wind between rows → every pose differs
+
+  for (let i = 0; i < batchRecords.length; i++) {
+    if (batchCancel) break;
+    const rec = batchRecords[i];
+    // `|` in a cell is an explicit line break.
+    titleBlocks[0].text = (rec.project || '').replace(/\|/g, '\n');
+    titleBlocks[1].text = (rec.name || '').replace(/\|/g, '\n');
+    titleBlocks[2].text = (rec.extra || '').replace(/\|/g, '\n');
+    generateTextTexture(0);
+
+    for (let s = 0; s < STEP_FRAMES; s++) simulate(SIM_DT); // unique pose per row
+
+    const blob = await renderFlagToBlob(outW, outH, matteMode);
+    const data = new Uint8Array(await blob.arrayBuffer());
+
+    let base = slugify(rec.project) || ('flag-' + (i + 1));
+    let name = base + '.png', n = 2;
+    while (usedNames.has(name)) name = base + '-' + (n++) + '.png';
+    usedNames.add(name);
+    files.push({ name, data });
+
+    if (batchStatus) batchStatus.textContent = `Rendering ${i + 1} / ${batchRecords.length}…`;
+    batchExportBtn.textContent = `Cancel (${i + 1}/${batchRecords.length})`;
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  }
+
+  batchExporting = false;
+  batchExportBtn.classList.remove('batch-cancel');
+  batchExportBtn.textContent = 'Export ZIP · A5 300dpi';
+
+  if (batchCancel || !files.length) {
+    if (batchStatus) batchStatus.textContent = batchCancel
+      ? `Cancelled — ${files.length} rendered, not saved.` : 'Nothing to export.';
+    return;
+  }
+
+  if (batchStatus) batchStatus.textContent = 'Packing ZIP…';
+  await new Promise(r => requestAnimationFrame(r));
+  const stamp = new Date().toISOString().slice(0, 10);
+  downloadBlob(makeZip(files), `flags-a5-300dpi-${stamp}.zip`);
+  if (batchStatus) batchStatus.textContent = `Done — ${files.length} PNGs zipped.`;
+}
+
+if (batchExportBtn) batchExportBtn.addEventListener('click', () => {
+  if (batchExporting) { batchCancel = true; return; }
+  runBatchExport();
+});
+
 window.addEventListener('resize', () => { if (someActive) initSomeCrop(); });
 
 // Live-update crop frame when user edits W/H
@@ -2527,6 +2811,7 @@ function renderToFBO(fw, fh) {
 
   // Flag only (no pole)
   gl.uniform1i(loc.uIsGlass, 0);
+  gl.uniform1f(loc.uMatte, matteMode ? 1.0 : 0.0);
   gl.uniform3f(loc.uColor, SIM.flagColor[0], SIM.flagColor[1], SIM.flagColor[2]);
   gl.uniform1f(loc.uAlpha, SIM.opacity);
   if (hasTex && flagTex) {
@@ -2972,6 +3257,9 @@ function loop(now) {
     }
     return;
   }
+
+  // CSV batch drives the cloth + renders to its own FBO — skip on-screen work.
+  if (batchExporting) { lastTime = 0; return; }
 
   // Normal playback — 60hz physics via accumulator, render every frame
   if (!lastTime) { lastTime = now; return; }

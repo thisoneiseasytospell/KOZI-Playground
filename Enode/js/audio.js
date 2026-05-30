@@ -11,7 +11,7 @@
  *   .beat           — momentarily true on detected kick (single-frame pulse)
  *   .load(url)      — load a track by URL (also accepts a File via objectURL upstream)
  *   .play()/.pause()/.toggle()/.seek(t)
- *   .update()       — call once per frame from the render loop
+ *   .update(dt)     — call once per frame from the render loop (dt = ms elapsed)
  *   .onLoaded(fn)   — register a callback fired when a new track is ready
  *   .onTransport(fn)— register a callback fired when play/pause/seek changes
  */
@@ -19,15 +19,21 @@
 
 (function () {
   const FFT_SIZE = 1024;          // 512 frequency bins
-  const SMOOTHING = 0.72;         // AnalyserNode internal smoothing
+  const SMOOTHING = 0.5;          // AnalyserNode internal smoothing — lower = snappier attack
   // Frequency band ranges (Hz). Tuned for typical music.
   const BAND_BASS   = [20,   180];
   const BAND_MID    = [180,  2000];
   const BAND_TREBLE = [2000, 9000];
-  // Beat detector: bass energy must exceed running avg by this factor.
-  // Loose-ish thresholds so dense kick patterns reliably register.
-  const BEAT_THRESHOLD = 1.20;
-  const BEAT_REFRACTORY_MS = 80;
+  // Smoothing time-constants (ms). Converted to a per-frame factor via dt so
+  // response is identical at 30 / 60 / 120fps. Bass is near-instant so kicks
+  // read through; the musical "feel" envelope lives in the app's modulators.
+  const BAND_TAU = { bass: 25, mid: 40, treble: 40, rms: 60 };
+  const PEAK_RISE_TAU = 60;       // latch new peaks fast
+  const PEAK_FALL_TAU = 4000;     // re-adapt sensitivity over a few seconds (was ~16s)
+  const BASS_AVG_TAU  = 350;      // adaptive baseline for beat detection
+  // Beat detector: bass must exceed the adaptive baseline by this factor.
+  const BEAT_THRESHOLD = 1.35;    // was 1.20 (too loose → false beats)
+  const BEAT_REFRACTORY_MS = 250; // was 80 (≈750 BPM); 250 ≈ 240 BPM ceiling
 
   const api = {
     ready: false,
@@ -167,20 +173,26 @@
     return (sum / n) / 255;
   }
 
-  // Update one band's running peak — fast rise (latch new highs), slow fall
-  // (so dynamics breathe rather than rescale wildly between sections).
-  function trackPeak(key, v) {
-    if (v > peak[key]) peak[key] += (v - peak[key]) * 0.5;
-    else               peak[key] += (PEAK_FLOOR - peak[key]) * 0.001;
+  // dt→alpha: how far to move toward a target this frame for a given time
+  // constant (ms). Makes every EMA below framerate-independent.
+  function alpha(tauMs, dt) { return 1 - Math.exp(-(dt || 16) / Math.max(1, tauMs)); }
+
+  // Update one band's running peak — latch new highs fast, re-adapt downward
+  // over a few seconds so quiet sections don't read as dead.
+  function trackPeak(key, v, dt) {
+    if (v > peak[key]) peak[key] += (v - peak[key]) * alpha(PEAK_RISE_TAU, dt);
+    else               peak[key] += (PEAK_FLOOR - peak[key]) * alpha(PEAK_FALL_TAU, dt);
     if (peak[key] < PEAK_FLOOR) peak[key] = PEAK_FLOOR;
   }
 
-  // Called once per render-loop frame.
-  function update() {
-    if (!analyser || !audioEl || audioEl.paused && !api.beat && smooth.rms < 0.001) {
+  // Called once per render-loop frame. dt = ms since last frame.
+  function update(dt) {
+    dt = dt || 16;
+    if (!analyser || !audioEl || (audioEl.paused && smooth.rms < 0.001)) {
       // Decay smoothed bands toward 0 when nothing's playing so visuals settle.
-      for (const k in smooth) smooth[k] *= 0.85;
+      const a = alpha(120, dt);
       for (const k in smooth) {
+        smooth[k] += (0 - smooth[k]) * a;
         api.bands[k] = smooth[k];
         api.levels[k] = Math.min(1, smooth[k] / peak[k]);
       }
@@ -198,30 +210,31 @@
     for (let i = 0; i < api.freq.length; i++) total += api.freq[i];
     const rms = (total / api.freq.length) / 255;
 
-    // Tight tracking: the AnalyserNode already smooths, so don't muffle peaks
-    // here. Bass especially snaps — kicks need to read through to the
-    // modulator without being averaged down.
-    smooth.bass   += (bass   - smooth.bass)   * 0.85;
-    smooth.mid    += (mid    - smooth.mid)    * 0.55;
-    smooth.treble += (treble - smooth.treble) * 0.55;
-    smooth.rms    += (rms    - smooth.rms)    * 0.5;
+    // Light, framerate-independent EMA on top of the analyser. Bass tracks
+    // almost instantly so kicks read through; the musical envelope is applied
+    // downstream by the app's modulators.
+    smooth.bass   += (bass   - smooth.bass)   * alpha(BAND_TAU.bass,   dt);
+    smooth.mid    += (mid    - smooth.mid)    * alpha(BAND_TAU.mid,    dt);
+    smooth.treble += (treble - smooth.treble) * alpha(BAND_TAU.treble, dt);
+    smooth.rms    += (rms    - smooth.rms)    * alpha(BAND_TAU.rms,    dt);
 
     // Track per-band peak and emit normalized levels (0..1).
-    trackPeak('bass',   smooth.bass);
-    trackPeak('mid',    smooth.mid);
-    trackPeak('treble', smooth.treble);
-    trackPeak('rms',    smooth.rms);
+    trackPeak('bass',   smooth.bass,   dt);
+    trackPeak('mid',    smooth.mid,    dt);
+    trackPeak('treble', smooth.treble, dt);
+    trackPeak('rms',    smooth.rms,    dt);
 
     for (const k in smooth) {
       api.bands[k] = smooth[k];
       api.levels[k] = Math.min(1, smooth[k] / peak[k]);
     }
 
-    // Beat detection on raw bass (not extra-smoothed) with refractory period.
-    bassAvg += (bass - bassAvg) * 0.03;
+    // Beat detection on raw bass against an adaptive baseline, with a
+    // refractory window so a single kick fires once (not a burst).
+    bassAvg += (bass - bassAvg) * alpha(BASS_AVG_TAU, dt);
     const now = performance.now();
     const isBeat = bass > bassAvg * BEAT_THRESHOLD
-                && bass > 0.10
+                && bass > 0.12
                 && (now - lastBeatTime) > BEAT_REFRACTORY_MS;
     if (isBeat) lastBeatTime = now;
     api.beat = isBeat;

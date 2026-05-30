@@ -10,7 +10,7 @@ const state = {
   density: 60,
   cellSize: 1,
   morph: 1,
-  speed: 0.3,
+  speed: 0.45,
   reaction: 72,           // 1..100 → 0.01..1.0 lerp
   noiseScale: 22,
   noiseType: 'simplex',   // simplex | ridged | warped (cycles on re-click)
@@ -27,30 +27,31 @@ const state = {
   randomSeed: Math.floor(Math.random() * 1e9),
   rects: [],              // current rectangle list (flat, editable)
   rectGradients: [],      // parallel array: per-rect gradient params {ang, vStart, vEnd}
-  strips: {               // Strips mode parameters (blocky grid of rectangles)
-    count: 6,
-    phaseShift: 0.35,
-    amplitude: 0.6,
+  strips: {               // Strips mode parameters (grid of outlined shapes)
+    count: 9,             // defaults mirror the "Fluid Waves" preset
+    phaseShift: 0.45,
+    amplitude: 0.5,
     phaseMode: 'sine',    // sine | triangle | square | sawtooth
     threshold: 1.50,
-    softness: 0.30,
-    contrast: 3.2,
+    softness: 0.28,
+    contrast: 1.8,
     quantize: 1,
     invertY: false,
-    animSpeed: 1.4,
-    noiseRatio: 18,
+    vertical: false,       // flip-axis: stream bands vertically instead of horizontally
+    animSpeed: 1.0,
+    noiseRatio: 7,
     audioDriven: false,    // when on: row heights come from the FFT spectrum
   },
   audioBeatInvert: false,  // flip invert on every detected beat (sustained)
   audioColorMode: false,   // override FG hue from bass/mid/treble balance
   randomAudioDriven: false,// Random mode: each rect's value = its band level
-  // Audio-reactivity rows. Bands are locked per target (chosen for what reads
-  // best musically): bass → size pulse, beat → morph snap, rms → time tempo.
-  // `env` is per-row envelope state (attack/decay) updated each frame.
+  // Audio-reactivity rows: each maps a frequency band to a visual parameter
+  // through an attack/decay envelope (`env`, updated per frame). Bass drives
+  // both the size pulse and the speed surge so motion locks onto the kick.
   audioMods: [
-    { target: 'cellSize',  band: 'bass', depth: 0.7, env: 0 },
-    { target: 'sparkle',   band: 'mid',  depth: 0.6, env: 0 },
-    { target: 'timeSpeed', band: 'rms',  depth: 0.6, env: 0 },
+    { target: 'cellSize',  band: 'bass', depth: 0.65, env: 0 },
+    { target: 'sparkle',   band: 'mid',  depth: 0.35, env: 0 },
+    { target: 'timeSpeed', band: 'bass', depth: 0.50, env: 0 },
   ],
 };
 
@@ -58,9 +59,9 @@ const state = {
 // cellSize/morph are *multiplicative* (effective = base * (1 + range*depth*level))
 // so swing scales with the user's slider value. timeSpeed multiplies dt.
 const AUDIO_MOD_RANGE = {
-  cellSize:  2.0,   // up to 3x base at full audio
+  cellSize:  2.0,   // strong bass pulse (up to ~3x base before clamp)
   sparkle:   0.7,   // per-cell size jitter as fraction of cell size at peak
-  timeSpeed: 5.0,   // up to 6x playback tempo
+  timeSpeed: 3.0,   // Noise/Strips surge up to ~4x on kicks (video leans gentler — see tick)
 };
 const AUDIO_MOD_CLAMP = {
   cellSize: [0, 2],
@@ -93,7 +94,12 @@ function audioMod(target) {
   return total;
 }
 
-function updateAudioMods() {
+// Attack/release envelope per modulator (ms). Fast snap up so a kick lands on
+// the frame it hits; musical release so it falls back in time with the groove
+// instead of either strobing or smearing. dt-based → framerate-independent.
+const MOD_ATTACK_TAU = 45;
+const MOD_RELEASE_TAU = 220;
+function updateAudioMods(dt) {
   if (!window.enodeAudio || !state.audioMods) return;
   for (const m of state.audioMods) {
     // Use normalized levels (rolling-max per band) so modulation reaches full
@@ -101,8 +107,9 @@ function updateAudioMods() {
     const tgt = m.band === 'beat'
       ? (enodeAudio.beat ? 1 : 0)
       : (enodeAudio.levels[m.band] || 0);
-    const rate = tgt > (m.env || 0) ? 0.55 : 0.08; // fast attack, slow decay
-    m.env = (m.env || 0) + (tgt - (m.env || 0)) * rate;
+    const tau = tgt > (m.env || 0) ? MOD_ATTACK_TAU : MOD_RELEASE_TAU;
+    const a = 1 - Math.exp(-(dt || 16) / tau);
+    m.env = (m.env || 0) + (tgt - (m.env || 0)) * a;
   }
 }
 
@@ -158,6 +165,8 @@ let imageEl = null;
 let cameraStream = null;
 let cameraVideo = null;
 let time = 0;
+let animClock = 0;          // wall-clock seconds; drives sparkle in every mode
+let videoRateSmooth = 1;    // smoothed video playback rate (gentle audio tempo lean)
 let smoothed = [];
 let lastDensity = 0;
 let lastRows = 0;
@@ -342,11 +351,11 @@ function paintRectsTo(c, rects, W, H, gradients) {
 }
 
 // ─── Strips field ───────────────────────────────────────────────
-// Discrete grid of rectangles, audio-visualizer style. The canvas is
-// divided into `count` rows × `cols` columns (cols derived from phaseShift).
-// Every cell holds one flat brightness value driven by a phase wave per
-// (row, col) and per-cell noise. Hard edges, no flowing curves — every
-// rectangle scales as a unit.
+// Continuous wave field sampled by the dot grid — smooth, flowing bands rather
+// than hard cell-blocks. `count` sets how many bands stack along the main axis,
+// `phaseShift` skews them diagonally, noise (amplitude × noiseRatio) warps them
+// organically, and `vertical` flips the axis. The Audio EQ path keeps its
+// discrete column-bars. Quantize posterizes for the stepped "Minimal" look.
 // FFT-band averaging for Audio Strips. Logarithmic frequency mapping matches
 // musical perception (each row covers an octave-ish range rather than a flat
 // slice). bandRowIdx 0 = lowest band, rows-1 = highest.
@@ -366,69 +375,51 @@ function stripsValue(x, y, t, p) {
   const yEff = p.invertY ? 1 - y : y;
   const TAU = Math.PI * 2;
 
-  // Grid resolution: rows from `count`, cols mapped from phaseShift
-  // (phaseShift 0 → ~2 cols, 2 → ~82 cols). Lets the slider stay meaningful.
-  const rows = Math.max(1, Math.floor(p.count));
-  const cols = Math.max(1, Math.round(2 + p.phaseShift * 40));
-
-  const rowIdx = Math.min(rows - 1, Math.floor(yEff * rows));
-  const colIdx = Math.min(cols - 1, Math.floor(x * cols));
-
-  // Audio Strips — classic EQ visualizer with soft edges:
-  //   each COLUMN is a frequency band (low at left, high at right)
-  //   ROWS light from the bottom up, height = band level.
-  //   The leading edge fades over one row so the bars look like animated
-  //   chart columns instead of stepped pixels.
+  // ── Audio EQ path: columns = frequency bands, rows light from the bottom up.
   if (p.audioDriven) {
+    const rows = Math.max(1, Math.floor(p.count));
+    const cols = Math.max(1, Math.round(2 + p.phaseShift * 40));
+    const rowIdx = Math.min(rows - 1, Math.floor(yEff * rows));
+    const colIdx = Math.min(cols - 1, Math.floor(x * cols));
     const level = bandLevelForRow(colIdx, cols);
-    // 0 at bottom row, 1 at top row.
     const rowFrac = rows > 1 ? (rows - 1 - rowIdx) / (rows - 1) : 0;
-    // Edge softness ≈ one row of fade. Wider = smoother but less precise.
     const edge = Math.max(0.04, 1 / rows * 0.9);
     let v = (level - rowFrac) / edge + 0.5;
-    if (v < 0) v = 0; else if (v > 1) v = 1;
-    return v;
+    return v < 0 ? 0 : v > 1 ? 1 : v;
   }
 
-  // Phase wave per block. Each row is phase-shifted so rows don't pulse in
-  // lockstep — gives the EQ-stack look. Amplitude scales the wave frequency
-  // across cols (so high amplitude = busier left-to-right variation).
-  const colN = cols > 1 ? colIdx / (cols - 1) : 0;
-  const cellPhase = colN * TAU * (0.5 + p.amplitude * 1.5) + rowIdx * 0.55 + t * p.animSpeed;
+  // ── Continuous wave field (no cell snapping → fluid, not pixelated). ──
+  // Bands stack along `u`; the cross-axis `w` skews them into diagonal flow.
+  // Flip-axis swaps the two so the bands stream vertically instead.
+  const u = p.vertical ? x : yEff;
+  const w = p.vertical ? yEff : x;
+
+  const bands = Math.max(1, p.count);
+  // Smooth domain-warp so the waves bend organically (amplitude = how much,
+  // noiseRatio = how fine). Sampling continuous coords keeps it gradient-smooth.
+  const ns = Math.max(0.001, p.noiseRatio) * 0.05;
+  const warp = simplex.noise3D(u * bands * ns * 3 + 11, w * ns * 3, t * 0.3) * p.amplitude;
+
+  const phase = u * bands * TAU
+              + w * p.phaseShift * TAU * 2.5
+              + warp * TAU
+              + t * p.animSpeed * TAU;
+
   let wave;
   switch (p.phaseMode) {
-    case 'triangle': wave = 4 * Math.abs(((cellPhase / TAU) % 1 + 1) % 1 - 0.5) - 1; break;
-    case 'square':   wave = Math.sin(cellPhase) >= 0 ? 1 : -1; break;
-    case 'sawtooth': wave = 2 * (((cellPhase / TAU) % 1 + 1) % 1) - 1; break;
+    case 'triangle': wave = 4 * Math.abs(((phase / TAU) % 1 + 1) % 1 - 0.5) - 1; break;
+    case 'square':   wave = Math.sin(phase) >= 0 ? 1 : -1; break;
+    case 'sawtooth': wave = 2 * (((phase / TAU) % 1 + 1) % 1) - 1; break;
     case 'sine':
-    default:         wave = Math.sin(cellPhase); break;
+    default:         wave = Math.sin(phase); break;
   }
 
-  // Per-block noise jitter (samples at the block coord so all pixels in the
-  // block get the same noise value — keeps each rectangle uniform).
-  const ns = p.noiseRatio * 0.05;
-  const noise = simplex.noise3D(colIdx * ns, rowIdx * ns, t * 0.35);
-
-  // Blend wave + noise into 0..1, then bias by threshold (1.5 ≈ neutral).
-  let v = ((wave + 1) * 0.5) * 0.65 + ((noise + 1) * 0.5) * 0.35;
-  v += (p.threshold - 1.5) * 0.5;
-
-  // Contrast steepens response around mid (sharper on/off).
-  v = (v - 0.5) * p.contrast + 0.5;
+  let v = (wave + 1) * 0.5;
+  v += (p.threshold - 1.5) * 0.5;          // brightness bias (1.5 ≈ neutral)
+  v = (v - 0.5) * p.contrast + 0.5;        // contrast steepens on/off
   v = v < 0 ? 0 : v > 1 ? 1 : v;
 
-  // Softness fades dots near the rectangle edges so blocks read as distinct
-  // tiles instead of one continuous field. 0 = touching, 1 = strongly inset.
-  if (p.softness > 0.01) {
-    const fx = (x * cols) - colIdx;
-    const fy = (yEff * rows) - rowIdx;
-    const edgeDist = Math.min(fx, 1 - fx, fy, 1 - fy); // 0 at edge, 0.5 mid
-    const edge = p.softness * 0.45;
-    if (edgeDist < edge) v *= edgeDist / edge;
-  }
-
-  // Quantize to discrete brightness levels (1 = continuous).
-  const q = Math.floor(p.quantize);
+  const q = Math.floor(p.quantize);        // posterize (1 = continuous)
   if (q > 1) v = Math.round(v * (q - 1)) / (q - 1);
 
   return v;
@@ -625,7 +616,9 @@ function drawScene(targetCtx, w, h, opts) {
       // twinkles instead of pulsing uniformly.
       let sparkle = 0;
       if (sparkleAmt > 0) {
-        sparkle = Math.sin(i * 5.13 + j * 7.91 + time * 18) * sparkleAmt;
+        // animClock (not `time`) so the twinkle actually animates in Video /
+        // Image / Camera / Random too — `time` only advances for Noise/Strips.
+        sparkle = Math.sin(i * 5.13 + j * 7.91 + animClock * 14) * sparkleAmt;
       }
       const size = cellSize * cellSizeMul * val * (1 + sparkle);
       const radius = (size / 2) * Math.min(1, val * morph);
@@ -662,14 +655,31 @@ function tick(now) {
   requestAnimationFrame(tick);
   const dt = _lastTickT ? (now - _lastTickT) : 16;
   _lastTickT = now;
-  // Audio-driven tempo: louder music → faster Noise drift / Strips waves /
-  // Video playback. Same modulation row drives all three.
+  animClock = now / 1000;   // always-advancing wall clock (drives sparkle in all modes)
+
+  // Update audio first so this frame's modulators read fresh band levels.
+  if (window.enodeAudio) {
+    enodeAudio.update(dt);
+    updateAudioMods(dt);
+    // Toggle the invert flag on each detected beat; reset when feature is off.
+    if (state.audioBeatInvert) {
+      if (enodeAudio.beat) audioInvertFlip = !audioInvertFlip;
+    } else if (audioInvertFlip) {
+      audioInvertFlip = false;
+    }
+  }
+
+  // Bass-driven speed surge for the generative modes so Noise/Strips visibly
+  // move with the kick. (Video uses a much gentler, smoothed lean below.)
   const speedBoost = 1 + audioMod('timeSpeed') * AUDIO_MOD_RANGE.timeSpeed;
-  if (state.playing && state.mode === 'Noise')  time += state.speed * 0.01 * speedBoost;
+  if (state.playing && state.mode === 'Noise')  time += state.speed * (dt / 1000) * speedBoost;
   if (state.playing && state.mode === 'Strips') time += (dt / 1000) * speedBoost;
+  // Video: a gentle, heavily-smoothed tempo lean — never the old 0.5–4× lurch.
   if (state.mode === 'Video' && activeVideo && activeVideo.readyState >= 2) {
-    const rate = Math.max(0.5, Math.min(4, speedBoost));
-    if (Math.abs(activeVideo.playbackRate - rate) > 0.02) activeVideo.playbackRate = rate;
+    const targetRate = 1 + audioMod('timeSpeed') * 0.35;   // ~1.0–1.35
+    videoRateSmooth += (targetRate - videoRateSmooth) * (1 - Math.exp(-dt / 400));
+    const rate = Math.max(0.9, Math.min(1.5, videoRateSmooth));
+    if (Math.abs(activeVideo.playbackRate - rate) > 0.01) activeVideo.playbackRate = rate;
   }
   if (state.mode === 'Random' && state.randomAudioDriven) repaintRandomAudio();
   // Detect video loop seam: time goes backward → next frame snaps smoothing
@@ -679,16 +689,7 @@ function tick(now) {
     if (t < lastVideoTime - 0.4) snapNextFrame = true;
     lastVideoTime = t;
   }
-  if (window.enodeAudio) {
-    enodeAudio.update();
-    updateAudioMods();
-    // Toggle the invert flag on each detected beat; reset when feature is off.
-    if (state.audioBeatInvert) {
-      if (enodeAudio.beat) audioInvertFlip = !audioInvertFlip;
-    } else if (audioInvertFlip) {
-      audioInvertFlip = false;
-    }
-  }
+
   drawScene(ctx, canvas.width, canvas.height);
   snapNextFrame = false;
   if (typeof previewTick === 'function') previewTick(dt);
@@ -820,23 +821,60 @@ stripModeSel.addEventListener('change', e => {
   clearActiveStripPreset();
 });
 
+// Each preset = the strip *dynamics* plus a shared "Strips look": a grid of
+// outlined squircles in warm grey-on-grey. Dynamics differ per preset; the look
+// (morph / outline / stroke / colors) is shared so the four read as one family.
+const STRIP_BASE = { morph: 1.5, outline: true, stroke: 1, fg: '#919191', bg: '#DBD8D8' };
 const STRIP_PRESETS = {
-  // Blocky rectangle grid, audio-EQ inspired. Tuned for the new stripsValue
-  // (cell-based field), not the old wave-band version.
-  fluid:    { count: 6,  phaseShift: 0.35, amplitude: 0.6,  phaseMode: 'sine',     threshold: 1.50, softness: 0.30, contrast: 3.2, quantize: 1, invertY: false, animSpeed: 1.4, noiseRatio: 18 },
-  glitch:   { count: 5,  phaseShift: 0.70, amplitude: 1.8,  phaseMode: 'square',   threshold: 1.25, softness: 0.05, contrast: 9.5, quantize: 2, invertY: false, animSpeed: 3.0, noiseRatio: 38 },
-  minimal:  { count: 3,  phaseShift: 0.18, amplitude: 0.4,  phaseMode: 'triangle', threshold: 1.35, softness: 0.15, contrast: 5.5, quantize: 4, invertY: false, animSpeed: 0.7, noiseRatio: 6  },
-  vertical: { count: 12, phaseShift: 0.08, amplitude: 1.1,  phaseMode: 'sine',     threshold: 1.55, softness: 0.40, contrast: 4.0, quantize: 1, invertY: false, animSpeed: 2.0, noiseRatio: 12 },
+  // Fluid Waves — smooth diagonal swell, continuous tones.
+  fluid:    { density: 100, strips: { count: 7,  phaseShift: 0.45, amplitude: 0.6,  phaseMode: 'sine',     threshold: 1.50, softness: 0.28, contrast: 1.6, quantize: 1, invertY: false, vertical: false, animSpeed: 1.0, noiseRatio: 6  } },
+  // Digital Glitch — dense, hard-edged, jittery, posterized.
+  glitch:   { density: 100, strips: { count: 14, phaseShift: 0.80, amplitude: 1.6,  phaseMode: 'square',   threshold: 1.30, softness: 0.02, contrast: 7.0, quantize: 4, invertY: false, vertical: false, animSpeed: 2.6, noiseRatio: 42 } },
+  // Minimal Steps — sparse, calm, strongly posterized tiers.
+  minimal:  { density: 80,  strips: { count: 5,  phaseShift: 0.20, amplitude: 0.25, phaseMode: 'triangle', threshold: 1.45, softness: 0.10, contrast: 3.5, quantize: 6, invertY: false, vertical: false, animSpeed: 0.6, noiseRatio: 5  } },
+  // Vertical Flow — tall streaming columns, soft and continuous.
+  vertical: { density: 100, strips: { count: 12, phaseShift: 0.50, amplitude: 0.4,  phaseMode: 'sine',     threshold: 1.50, softness: 0.06, contrast: 1.8, quantize: 1, invertY: false, vertical: true,  animSpeed: 1.0, noiseRatio: 8  } },
 };
 
 function applyStripPreset(name) {
   const p = STRIP_PRESETS[name];
   if (!p) return;
-  Object.assign(state.strips, p);
+  Object.assign(state.strips, p.strips);
+  // Apply the shared look so any preset yields the full grey-on-grey outline
+  // aesthetic. These are global, so they also carry into other modes/exports.
+  state.density = p.density;
+  state.morph   = STRIP_BASE.morph;
+  state.outline = STRIP_BASE.outline;
+  state.stroke  = STRIP_BASE.stroke;
+  state.fg      = STRIP_BASE.fg;
+  state.bg      = STRIP_BASE.bg;
   syncStripsUI();
+  syncStripLookUI();
   document.querySelectorAll('#stripsPresets button').forEach(b => {
     b.classList.toggle('active', b.dataset.preset === name);
   });
+}
+
+// Sync the global controls a strip preset touches (density / morph / outline /
+// stroke / colors) so the sliders, chip and swatches reflect the applied look.
+function syncStripLookUI() {
+  const setSlider = (id, valId, value, fmt) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value;
+    const out = document.getElementById(valId);
+    if (out) out.textContent = fmt ? fmt(value) : value;
+  };
+  setSlider('density', 'densityVal', state.density, n => Math.round(n));
+  setSlider('morph',   'morphVal',   state.morph,   n => n.toFixed(2));
+  setSlider('stroke',  'strokeVal',  state.stroke,  n => n.toFixed(1));
+  const outlineChip = document.getElementById('chipOutline');
+  if (outlineChip) outlineChip.classList.toggle('active', state.outline);
+  const strokeRow = document.getElementById('strokeRow');
+  if (strokeRow) strokeRow.style.display = state.outline ? '' : 'none';
+  const fgSw = document.getElementById('fgSwatch');
+  const bgSw = document.getElementById('bgSwatch');
+  if (fgSw) fgSw.style.background = state.fg;
+  if (bgSw) bgSw.style.background = state.bg;
 }
 
 function clearActiveStripPreset() {
@@ -857,6 +895,8 @@ function syncStripsUI() {
   setS('stripAnim', 'stripAnimVal', s.animSpeed, n => n.toFixed(2));
   setS('stripQuant', 'stripQuantVal', s.quantize, n => Math.round(n));
   if (stripModeSel) stripModeSel.value = s.phaseMode;
+  const flip = document.getElementById('stripFlipAxis');
+  if (flip) flip.classList.toggle('active', !!s.vertical);
 }
 
 document.getElementById('stripsPresets').addEventListener('click', e => {
@@ -879,6 +919,14 @@ const audioStripsToggle = document.getElementById('audioStripsToggle');
 audioStripsToggle.addEventListener('click', () => {
   state.strips.audioDriven = !state.strips.audioDriven;
   audioStripsToggle.classList.toggle('active', state.strips.audioDriven);
+});
+
+// Flip axis: stream the bands vertically instead of horizontally
+const stripFlipAxis = document.getElementById('stripFlipAxis');
+stripFlipAxis.addEventListener('click', () => {
+  state.strips.vertical = !state.strips.vertical;
+  stripFlipAxis.classList.toggle('active', state.strips.vertical);
+  clearActiveStripPreset();
 });
 
 // Invert on beat: sustained flip on each detected kick
@@ -2012,7 +2060,7 @@ enodeAudio.onTransport(updatePlayIcon);
 const MOD_META = {
   cellSize:  { label: 'Cell size',       hint: 'pulses on bass' },
   sparkle:   { label: 'Sparkle',         hint: 'twinkles on mids' },
-  timeSpeed: { label: 'Playback speed',  hint: 'follows energy' },
+  timeSpeed: { label: 'Playback speed',  hint: 'surges on the beat' },
 };
 const modListEl = document.getElementById('modList');
 

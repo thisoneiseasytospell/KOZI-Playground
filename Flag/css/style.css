@@ -782,27 +782,3 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .ffi-layout-block:hover { background: rgba(1,111,23,0.7); }
 .ffi-layout-block.dragging { background: var(--accent); }
 
-.ffi-readout {
-  position: fixed;
-  bottom: 16px; left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0,0,0,0.78);
-  color: #fff;
-  padding: 8px 14px;
-  border-radius: 999px;
-  font-family: 'ABC Diatype', sans-serif;
-  font-weight: 700;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
-  z-index: 9999;
-  cursor: pointer;
-  user-select: none;
-  display: none;
-  white-space: nowrap;
-  transition: background 0.15s ease;
-}
-.ffi-readout:hover { background: rgba(0,0,0,0.9); }
-.ffi-readout.visible { display: block; }
-.ffi-readout.copied { background: var(--accent); }
-

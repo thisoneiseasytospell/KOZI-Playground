@@ -2179,7 +2179,6 @@ document.querySelector('.panel-tabs').addEventListener('click', e => {
     someFrame.style.display = 'none';
     showPole = true;
   }
-  document.getElementById('ffiReadout').classList.toggle('visible', which === 'export' && (someFormat === 'ffi' || someFormat === 'print'));
 });
 
 const sizeWInput = document.getElementById('sizeW');
@@ -2220,23 +2219,10 @@ document.getElementById('someRow').addEventListener('click', e => {
   someFormat = btn.dataset.some;
   document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b === btn));
   const ffiSection = document.getElementById('ffiSection');
-  const ffiReadoutEl = document.getElementById('ffiReadout');
   const batchSection = document.getElementById('batchSection');
-  const ffiExportBtn = document.getElementById('ffiExportBtn');
-  if (someFormat === 'ffi') {
-    ffiSection.style.display = '';
-    batchSection.style.display = 'none';
-    ffiExportBtn.style.display = '';
-    ffiReadoutEl.classList.add('visible');
-    applyFFIPreset();
-    if (someActive) initSomeCrop();
-    return;
-  }
   if (someFormat === 'print') {
     ffiSection.style.display = '';
     batchSection.style.display = '';
-    ffiExportBtn.style.display = 'none';      // batch ZIP button replaces it
-    ffiReadoutEl.classList.add('visible');
     applyPrintPreset();
     someActive = true;
     initSomeCrop();
@@ -2245,9 +2231,7 @@ document.getElementById('someRow').addEventListener('click', e => {
   }
   ffiSection.style.display = 'none';
   batchSection.style.display = 'none';
-  ffiExportBtn.style.display = '';
-  ffiReadoutEl.classList.remove('visible');
-  // Leaving FFI/print — restore the studio surface + generic text rendering.
+  // Leaving print — restore the studio surface + generic text rendering.
   matteMode = false;
   const mt = document.getElementById('matteToggle');
   if (mt) mt.checked = false;
@@ -2299,60 +2283,6 @@ function ffiQueueRefresh() {
   if (_ffiRefreshRaf || textLayout !== 'titleCard') return;
   _ffiRefreshRaf = requestAnimationFrame(() => { _ffiRefreshRaf = null; refreshTexture(); });
 }
-
-// Live camera/flag values HUD — visible only when FFI preset is active.
-// Click to copy all current values to clipboard so you can dictate the
-// exact numbers you want me to lock in.
-const ffiReadout = document.createElement('div');
-ffiReadout.className = 'ffi-readout';
-ffiReadout.id = 'ffiReadout';
-ffiReadout.title = 'Click to copy all values';
-document.body.appendChild(ffiReadout);
-
-function ffiValuesObject() {
-  return {
-    flag: { aspectW, aspectH, flagW: +flagW.toFixed(3), flagH: +flagH.toFixed(3) },
-    cam: {
-      target: cam.tgtTarget.map(v => +v.toFixed(3)),
-      dist:  +cam.tgtDist.toFixed(3),
-      theta: +cam.tgtTheta.toFixed(3),
-      phi:   +cam.tgtPhi.toFixed(3),
-      roll:  +cam.tgtRoll.toFixed(3),
-    },
-    wind: { strength: SIM.windStrength, turbulence: SIM.turbulence },
-    blocks: titleBlocks.map(b => ({ text: b.text, size: b.size, font: b.font, y: +b.y.toFixed(3), lineH: b.lineH })),
-  };
-}
-
-function updateFFIReadout() {
-  if (!ffiReadout.classList.contains('visible')) return;
-  const t = cam.tgtTarget;
-  ffiReadout.textContent =
-    'aspect ' + aspectW + ':' + aspectH +
-    '  ·  tgt ' + t[0].toFixed(2) + ', ' + t[1].toFixed(2) + ', ' + t[2].toFixed(2) +
-    '  ·  dist ' + cam.tgtDist.toFixed(2) +
-    '  ·  θ ' + cam.tgtTheta.toFixed(2) +
-    '  ·  φ ' + cam.tgtPhi.toFixed(2) +
-    '  ·  roll ' + cam.tgtRoll.toFixed(2) +
-    '  ·  wind ' + SIM.windStrength + '/' + SIM.turbulence +
-    '  ·  click to copy';
-}
-setInterval(updateFFIReadout, 100);
-
-ffiReadout.addEventListener('click', async () => {
-  const payload = JSON.stringify(ffiValuesObject(), null, 2);
-  try {
-    await navigator.clipboard.writeText(payload);
-    ffiReadout.classList.add('copied');
-    const orig = ffiReadout.textContent;
-    ffiReadout.textContent = '✓ copied to clipboard';
-    setTimeout(() => { ffiReadout.classList.remove('copied'); updateFFIReadout(); }, 900);
-  } catch (e) {
-    console.warn('Clipboard write failed, payload:', payload);
-    ffiReadout.textContent = '⚠ clipboard blocked — check console';
-    setTimeout(updateFFIReadout, 1500);
-  }
-});
 
 // Live block edits.
 for (let i = 0; i < titleBlocks.length; i++) {
@@ -2432,77 +2362,9 @@ ffiLayoutBars.forEach((bar, i) => {
 // Initial paint.
 updateFFILayoutBars();
 
-function applyFFIPreset() {
-  // Set text layout first so the refreshTexture() inside fullRebuild paints
-  // the title card immediately (no empty-texture flash).
-  textLayout = 'titleCard';
-  textLayoutUserSet = true;
-
-  // 2.4 wide × 2.9 tall flag (FFI poster aspect).
-  fullRebuild(2.4, 2.9);
-  customAW = 2.4; customAH = 2.9;
-  activeRatio = null;
-  document.querySelectorAll('#ratioRow [data-r]').forEach(b => b.classList.remove('active'));
-  if (typeof updateMiniPreview === 'function') updateMiniPreview();
-
-  // Full-edge attachment keeps the flag from billowing into itself under wind.
-  ATTACH.mode = 'edge';
-  applyPinning();
-  document.querySelectorAll('#attachRow .pill').forEach(b => b.classList.toggle('active', b.dataset.attach === 'edge'));
-
-  // Wind: user wants at least 100 — keep turbulence low so the title stays legible.
-  SIM.windStrength = 100; SIM.turbulence = 10;
-  const windIn = document.getElementById('windStrength');
-  const turbIn = document.getElementById('turbulence');
-  if (windIn) { windIn.value = 100; document.getElementById('windVal').textContent = '100'; }
-  if (turbIn) { turbIn.value = 10; document.getElementById('turbVal').textContent = '10'; }
-
-  // Head-on camera, targeting the flag's geometric center.
-  // The flag spans x ∈ [0, flagW] and y ∈ [flagH*0.8 - flagH, flagH*0.8]
-  // (rebuild puts top at flagH*0.8). Center is (flagW/2, flagH*0.3, 0).
-  cam.tgtTheta = 0; cam.tgtPhi = 0; cam.tgtRoll = 0;
-  cam.tgtTarget[0] = flagW / 2;
-  cam.tgtTarget[1] = flagH * 0.3;
-  cam.tgtTarget[2] = 0;
-  // Snap distance so the flag fills the 16:9 crop tightly.
-  const halfTan = Math.tan((Math.PI / 4.5) / 2);
-  cam.tgtDist = (flagH * 0.55 / halfTan) * 1.05;
-  // Snap camera (no slow ease-in on tab open).
-  cam.curTheta = cam.tgtTheta;
-  cam.curPhi = cam.tgtPhi;
-  cam.curDist = cam.tgtDist;
-  cam.curRoll = cam.roll = cam.tgtRoll;
-  cam.target[0] = cam.tgtTarget[0];
-  cam.target[1] = cam.tgtTarget[1];
-  cam.target[2] = cam.tgtTarget[2];
-
-  // Export settings: 1920×1080 · 16:9 · cut.
-  sizeWInput.value = 1920;
-  sizeHInput.value = 1080;
-  someFormat = '16:9';
-  document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b.dataset.some === '16:9'));
-  someLoop = 'cut';
-}
-
-document.getElementById('ffiExportBtn').addEventListener('click', () => {
-  if (someRecording) return;
-  applyFFIPreset();
-  // Make sure crop frame is sized to 16:9 so renderToFBO's vFrac matches preview.
-  someActive = true;
-  initSomeCrop();
-  someFrame.style.display = 'block';
-  // Let the rebuild + texture refresh land, then trigger the standard recorder.
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      document.getElementById('someExportBtn').click();
-    });
-  });
-});
-
-// ─── A5 print preset + CSV batch export ─────────────────────
-// Mirrors applyFFIPreset but portrait A5 @ 300 DPI with matte on, and it
-// deliberately does NOT touch colours/fonts/sizes so the look stays driven
-// entirely by the live UI controls.
+// ─── Name Tags print preset + CSV batch export ─────────────────────
+// Portrait A5 @ 300 DPI with matte on. It seeds the print palette but otherwise
+// leaves fonts/sizes driven entirely by the live UI controls.
 function applyPrintPreset() {
   textLayout = 'titleCard';        // cloth text comes from titleBlocks
   textLayoutUserSet = true;
@@ -2664,9 +2526,16 @@ function loadCSVFile(file) {
   reader.readAsText(file);
 }
 
-if (csvInput) csvInput.addEventListener('change', () => loadCSVFile(csvInput.files[0]));
+if (csvInput) csvInput.addEventListener('change', () => {
+  loadCSVFile(csvInput.files[0]);
+  // Reset so picking the same file again still fires `change`.
+  csvInput.value = '';
+});
 if (csvDrop) {
-  csvDrop.addEventListener('click', () => csvInput && csvInput.click());
+  // The file input lives inside the dropzone, so a programmatic csvInput.click()
+  // bubbles back here — re-opening the dialog and forcing a second pick. Ignore
+  // clicks that originate from the input itself.
+  csvDrop.addEventListener('click', e => { if (e.target !== csvInput) csvInput && csvInput.click(); });
   csvDrop.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); csvDrop.classList.add('drag'); });
   csvDrop.addEventListener('dragleave', () => csvDrop.classList.remove('drag'));
   csvDrop.addEventListener('drop', e => {

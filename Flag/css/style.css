@@ -564,23 +564,19 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
   display: none;
   z-index: 5;
   border: 1.5px solid rgba(255,255,255,0.85);
-  box-shadow: 0 0 0 9999px rgba(0,0,0,0.45);
+  /* Heavy surround so the bright interior = exactly what gets exported. */
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.66);
   user-select: none;
   pointer-events: none;
 }
 .some-frame.recording {
   border-color: #e74c3c;
-  box-shadow: 0 0 0 9999px rgba(0,0,0,0.55);
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.74);
 }
 .some-guides {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  /* Gentle 8×8 alignment grid — pure CSS, scales with the crop frame. */
-  background-image:
-    linear-gradient(to right, rgba(255,255,255,0.07) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255,255,255,0.07) 1px, transparent 1px);
-  background-size: 12.5% 12.5%;
 }
 .some-guides::before,
 .some-guides::after {
@@ -590,14 +586,14 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .some-guides::before {
   left: 33.333%; right: 33.333%;
   top: 0; bottom: 0;
-  border-left: 1px solid rgba(255,255,255,0.15);
-  border-right: 1px solid rgba(255,255,255,0.15);
+  border-left: 1px solid rgba(255,255,255,0.10);
+  border-right: 1px solid rgba(255,255,255,0.10);
 }
 .some-guides::after {
   top: 33.333%; bottom: 33.333%;
   left: 0; right: 0;
-  border-top: 1px solid rgba(255,255,255,0.15);
-  border-bottom: 1px solid rgba(255,255,255,0.15);
+  border-top: 1px solid rgba(255,255,255,0.10);
+  border-bottom: 1px solid rgba(255,255,255,0.10);
 }
 .some-label {
   position: absolute;

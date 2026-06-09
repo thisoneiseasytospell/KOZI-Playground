@@ -188,6 +188,7 @@
           <button class="pill" data-some="9:16">9:16</button>
           <button class="pill" data-some="16:9">16:9</button>
           <button class="pill" data-some="print">Name Tags Print</button>
+          <button class="pill" data-some="student">Student Takeover</button>
         </div>
       </div>
       <div class="section" id="batchSection" style="display:none">
@@ -197,7 +198,7 @@
             <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/>
           </svg>
           <div class="dropzone-text"><strong>Drop CSV</strong> or click to browse</div>
-          <div class="dropzone-hint">project, name, extra · up to 300 rows</div>
+          <div class="dropzone-hint">project, name, extra, www · up to 300 rows</div>
           <input type="file" id="csvInput" accept=".csv,text/csv">
         </div>
         <div class="batch-status" id="batchStatus">No CSV loaded</div>
@@ -235,6 +236,7 @@
             <div class="ffi-layout-block" data-fblock="0"><span>1</span></div>
             <div class="ffi-layout-block" data-fblock="1"><span>2</span></div>
             <div class="ffi-layout-block" data-fblock="2"><span>3</span></div>
+            <div class="ffi-layout-block" data-fblock="3"><span>4</span></div>
           </div>
         </div>
         <div class="ffi-block" data-block="0">
@@ -269,6 +271,17 @@ Can't Do</textarea>
               <span class="control-value" id="ffiSizeVal2">35</span>
             </div>
             <input type="range" class="ffi-size" id="ffiSize2" min="10" max="120" value="35">
+          </div>
+        </div>
+        <div class="ffi-block" data-block="3">
+          <div class="ffi-block-head"><span class="ffi-block-num">4</span><span class="ffi-block-font">www / IG</span></div>
+          <textarea class="hex-input ffi-text ffi-textarea" id="ffiText3" rows="1" spellcheck="false">@albertkozikowski</textarea>
+          <div class="control-row">
+            <div class="control-label">
+              <span class="control-name">Size</span>
+              <span class="control-value" id="ffiSizeVal3">26</span>
+            </div>
+            <input type="range" class="ffi-size" id="ffiSize3" min="10" max="120" value="26">
           </div>
         </div>
       </div>

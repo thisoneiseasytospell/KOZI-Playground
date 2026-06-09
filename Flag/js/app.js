@@ -262,7 +262,11 @@ let simTime = 0;
 let windAngleDrift = 0, windAngleVel = 0, windStrengthDrift = 0;
 
 function simulate(frameDt) {
-  const dt = clamp(frameDt, 0.004, 0.016);
+  // The fixed sim step is SIM_DT (0.02s @ 50 Hz). The old 0.016 ceiling clamped
+  // every step down to 80% of its intended length, so both the live view and the
+  // MP4 export ran ~20% slow ("slow-mo"). Cap at 0.02 so a full step integrates
+  // fully; the lower bound still guards against zero/negative frame deltas.
+  const dt = clamp(frameDt, 0.004, 0.02);
   const subDt = dt / SUBSTEPS;
 
   // Update gusts once per frame
@@ -1201,14 +1205,17 @@ let textTexActive = false;
 let textScrollSpeed = 0; // 0 = static, >0 = pixels/sec scroll
 let textScrollTime = 0;
 
-// Film Festival Intro — three centered blocks (Jubilee, Diatype, Diatype).
+// Name-tag blocks — four centered blocks (Jubilee, Diatype, Diatype, Diatype).
 // y is the vertical center as a fraction of flag height (0 = top, 1 = bottom).
-// Block 0 = project title (serif), block 1 = name, block 2 = extra line.
-// CSV batch fills these per row; name + extra default to the same Diatype size.
+// Block 0 = project title (serif), block 1 = name, block 2 = role line,
+// block 3 = www / IG handle. Name + role default to the same Diatype size and
+// sit right next to each other; the www/IG line drops below them. CSV batch
+// fills these per row (columns: project, name, extra, www).
 const titleBlocks = [
   { text: "What Design\nCan't Do", size: 78, font: 'jubilee', y: 0.30, lineH: 1.00 },
-  { text: 'Albert Kozikowski',     size: 35, font: 'diatype', y: 0.56, lineH: 0.95 },
-  { text: 'Graphic Design',        size: 35, font: 'diatype', y: 0.66, lineH: 0.95 },
+  { text: 'Albert Kozikowski',     size: 35, font: 'diatype', y: 0.66, lineH: 0.95 },
+  { text: 'Graphic Design',        size: 35, font: 'diatype', y: 0.71, lineH: 0.95 },
+  { text: '@albertkozikowski',     size: 26, font: 'diatype', y: 0.84, lineH: 0.95 },
 ];
 
 // Deterministic pseudo-random per row (consistent across redraws)
@@ -1480,8 +1487,8 @@ function loadDefaultTexture() {
 
 // ─── UI ──────────────────────────────────────────────────────
 const panel = document.getElementById('panel');
-document.getElementById('panelClose').addEventListener('click', () => panel.classList.add('collapsed'));
-document.getElementById('panelToggle').addEventListener('click', () => panel.classList.remove('collapsed'));
+document.getElementById('panelClose').addEventListener('click', () => { panel.classList.add('collapsed'); if (someActive) initSomeCrop(); });
+document.getElementById('panelToggle').addEventListener('click', () => { panel.classList.remove('collapsed'); if (someActive) initSomeCrop(); });
 
 // Aspect ratio
 const ratioRow = document.getElementById('ratioRow');
@@ -1749,12 +1756,28 @@ scrollSpeedSlider.addEventListener('input', () => {
   scrollVal.textContent = scrollSpeedSlider.value;
 });
 
+// Snap the flag to a 5×5 square. Used when text is first typed and by the
+// Student Takeover preset — text reads best centred on a square.
+function setSquareRatio() {
+  customAW = 5; customAH = 5;
+  ensureCustomMode();
+  updateMiniPreview();
+  softRatioUpdate(5, 5);
+}
+
 // Text input
 const textInput = document.getElementById('textInput');
 let textDebounce = null;
+let _textWasEmpty = true; // tracks the empty→typed transition
 textInput.addEventListener('input', () => {
   currentText = textInput.value;
   textScrollTime = 0; // reset scroll position on new text
+  const nowEmpty = !currentText.trim();
+  // The moment a blank field gets text, snap to a 5×5 square. Only fires on the
+  // empty→typed transition so it never overrides a ratio the user picks later,
+  // and never in print/title-card mode (that drives its own portrait flag).
+  if (!nowEmpty && _textWasEmpty && textLayout !== 'titleCard') setSquareRatio();
+  _textWasEmpty = nowEmpty;
   clearTimeout(textDebounce);
   textDebounce = setTimeout(() => refreshTexture(), 80);
 });
@@ -1888,7 +1911,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   fontRow.querySelectorAll('[data-font]').forEach(b => b.classList.toggle('active', b.dataset.font === 'jubilee'));
   textLayoutUserSet = false;
   setTextLayout('repeat');
-  textInput.value = ''; currentText = '';
+  textInput.value = ''; currentText = ''; _textWasEmpty = true;
   textScrollSpeed = 0; textScrollTime = 0;
   scrollSpeedSlider.value = 0; scrollVal.textContent = '0';
   currentTextColor = '#016F17';
@@ -2193,11 +2216,17 @@ function getExportSize() {
 function initSomeCrop() {
   const [w, h] = getExportSize();
   const a = w / h;
-  const maxH = window.innerHeight * 0.6;
-  const maxW = window.innerWidth * 0.6;
-  let cropH, cropW;
-  if (a >= 1) { cropW = Math.min(maxW, maxH * a); cropH = cropW / a; }
-  else { cropH = Math.min(maxH, maxW / a); cropW = cropH * a; }
+  // Make the crop (= exact export bounds) as large as the layout allows so the
+  // preview reads as WYSIWYG. The crop stays centred — the export FOV math
+  // assumes a centred crop — so reserve room on both sides to clear the left
+  // control panel (off-screen when collapsed). Contain-fit the export aspect.
+  const collapsed = panel.classList.contains('collapsed');
+  const sideClear = collapsed ? 48 : 350; // 16 + 310 panel + margin
+  const maxW = Math.max(240, window.innerWidth - sideClear * 2);
+  const maxH = window.innerHeight * 0.86;
+  let cropW, cropH;
+  if (maxW / maxH >= a) { cropH = maxH; cropW = cropH * a; }
+  else { cropW = maxW; cropH = cropW / a; }
   someCrop.w = cropW; someCrop.h = cropH;
   someCrop.x = (window.innerWidth - cropW) / 2;
   someCrop.y = (window.innerHeight - cropH) / 2;
@@ -2238,6 +2267,15 @@ document.getElementById('someRow').addEventListener('click', e => {
   if (textLayout === 'titleCard') {
     textLayout = 'repeat';
     refreshTexture();
+  }
+  // Student Takeover is a content preset (square + scrolling Jubilee text),
+  // not a plain SoMe crop — it sets its own size, so bail before the lookup.
+  if (someFormat === 'student') {
+    applyStudentPreset();
+    someActive = true;
+    initSomeCrop();
+    someFrame.style.display = 'block';
+    return;
   }
   const [fw, fh] = SOME_FORMATS[someFormat];
   sizeWInput.value = fw;
@@ -2419,6 +2457,61 @@ function applyPrintPreset() {
   refreshTexture(); // repaint title card with the seeded text colour
 }
 
+// Student Takeover — a square, animated text flag: scrolling Jubilee on the
+// studio palette, sized for a 1080×1080 SoMe loop. Everything stays editable
+// via the Studio tab afterwards.
+function applyStudentPreset() {
+  // 5×5 square flag.
+  fullRebuild(5, 5);
+  customAW = 5; customAH = 5;
+  activeRatio = 'custom';
+  document.querySelectorAll('#ratioRow [data-r]').forEach(b => b.classList.remove('active'));
+  updateMiniPreview();
+
+  // Repeating Jubilee italic.
+  textLayout = 'repeat';
+  textLayoutUserSet = true;
+  layoutRow.querySelectorAll('[data-layout]').forEach(b => b.classList.toggle('active', b.dataset.layout === 'repeat'));
+  currentFont = 'jubilee';
+  fontRow.querySelectorAll('[data-font]').forEach(b => b.classList.toggle('active', b.dataset.font === 'jubilee'));
+
+  // Text + type controls.
+  currentText = 'Student Takeover';
+  textInput.value = 'Student Takeover';
+  _textWasEmpty = false;
+  currentFontSize = 66;
+  fontSizeSlider.value = 66; fontSizeVal.textContent = '66';
+  currentLineHeight = 0.85;
+  lineHeightSlider.value = 85; lineHeightVal.textContent = '0.85';
+  textScrollSpeed = 200; textScrollTime = 0;
+  scrollSpeedSlider.value = 200; scrollVal.textContent = '200';
+
+  // Studio palette: dark green text on mint.
+  currentTextColor = '#00330A';
+  textColorIn.value = '#00330A'; textColorHex.value = '#00330A';
+  SIM.bgColor = hexToRgb('#D3FED1');
+  bgColorIn.value = '#D3FED1'; bgColorHex.value = '#D3FED1';
+
+  // Free-flying banner that catches the wind; not a matte print surface.
+  matteMode = false;
+  if (matteToggle) matteToggle.checked = false;
+  ATTACH.mode = 'corners';
+  applyPinning();
+  document.querySelectorAll('#attachRow .pill').forEach(b => b.classList.toggle('active', b.dataset.attach === 'corners'));
+
+  // Square SoMe output.
+  sizeWInput.value = 1080;
+  sizeHInput.value = 1080;
+  someFormat = 'student';
+
+  // Frame head-on like the home view (pole already hidden in the export tab).
+  cam.tgtTheta = 0; cam.tgtPhi = 0.12; cam.tgtRoll = 0;
+  cam.tgtTarget[0] = 0; cam.tgtTarget[1] = 0; cam.tgtTarget[2] = 0;
+  autoFrame();
+
+  refreshTexture();
+}
+
 // CSV → records. Tolerates quotes, embedded commas/newlines, CRLF and a BOM.
 function parseCSV(text) {
   if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
@@ -2442,12 +2535,14 @@ function csvToRecords(text) {
   const rows = parseCSV(text).filter(r => r.some(c => c.trim() !== ''));
   if (!rows.length) return [];
   const head = rows[0].map(c => c.trim().toLowerCase());
-  const hasHeader = head.includes('project') || head.includes('name') || head.includes('extra');
+  const hasHeader = head.includes('project') || head.includes('name')
+    || head.includes('extra') || head.includes('www') || head.includes('ig');
   const body = (hasHeader ? rows.slice(1) : rows).slice(0, 300);
   return body.map(r => ({
     project: (r[0] || '').trim(),
     name:    (r[1] || '').trim(),
     extra:   (r[2] || '').trim(),
+    www:     (r[3] || '').trim(),
   }));
 }
 
@@ -2569,6 +2664,7 @@ async function runBatchExport() {
     titleBlocks[0].text = (rec.project || '').replace(/\|/g, '\n');
     titleBlocks[1].text = (rec.name || '').replace(/\|/g, '\n');
     titleBlocks[2].text = (rec.extra || '').replace(/\|/g, '\n');
+    titleBlocks[3].text = (rec.www || '').replace(/\|/g, '\n');
     generateTextTexture(0);
 
     for (let s = 0; s < STEP_FRAMES; s++) simulate(SIM_DT); // unique pose per row

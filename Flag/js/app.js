@@ -2592,8 +2592,8 @@ function applyStudentPreset() {
   refreshTexture();
 }
 
-// CSV → records. Tolerates quotes, embedded commas/newlines, CRLF and a BOM.
-function parseCSV(text) {
+// CSV → records. Tolerates quotes, embedded delimiters/newlines, CRLF and a BOM.
+function parseCSV(text, delim = ',') {
   if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
   const rows = [];
   let row = [], field = '', inQ = false;
@@ -2603,7 +2603,7 @@ function parseCSV(text) {
       if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
       else field += c;
     } else if (c === '"') inQ = true;
-    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === delim) { row.push(field); field = ''; }
     else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
     else if (c !== '\r') field += c;
   }
@@ -2611,19 +2611,73 @@ function parseCSV(text) {
   return rows;
 }
 
+// Sniff the delimiter from the header line. Excel in many (esp. European)
+// locales saves `;`-separated CSVs; the old comma-only parser dumped a whole
+// such row into one field, which then overflowed the tag as a single line.
+function sniffDelimiter(text) {
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const line = text.split(/\r?\n/).find(l => l.trim() !== '') || '';
+  let best = ',', bestN = -1;
+  for (const d of [',', ';', '\t']) {
+    let n = 0, inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') inQ = !inQ;
+      else if (c === d && !inQ) n++;
+    }
+    if (n > bestN) { bestN = n; best = d; }
+  }
+  return best;
+}
+
+// Column header aliases → tag block. Lets people reorder/rename columns or
+// add an "ig"/"instagram" handle column and still have it land correctly.
+const CSV_ALIASES = {
+  project: ['project', 'title', 'flag', 'headline', 'work'],
+  name:    ['name', 'student', 'fullname', 'full name', 'author'],
+  extra:   ['extra', 'discipline', 'course', 'programme', 'program', 'department', 'dept'],
+  www:     ['www', 'ig', 'instagram', 'handle', 'social', 'url', 'web', 'website'],
+};
+
 function csvToRecords(text) {
-  const rows = parseCSV(text).filter(r => r.some(c => c.trim() !== ''));
+  const delim = sniffDelimiter(text);
+  const rows = parseCSV(text, delim).filter(r => r.some(c => c.trim() !== ''));
   if (!rows.length) return [];
   const head = rows[0].map(c => c.trim().toLowerCase());
-  const hasHeader = head.includes('project') || head.includes('name')
-    || head.includes('extra') || head.includes('www') || head.includes('ig');
+  // Map each known field to a column by header name when a header is present.
+  const idx = {};
+  let hasHeader = false;
+  for (const key in CSV_ALIASES) {
+    const j = head.findIndex(h => CSV_ALIASES[key].includes(h));
+    if (j !== -1) { idx[key] = j; hasHeader = true; }
+  }
+  // No recognizable header → assume the documented positional order.
+  if (!hasHeader) { idx.project = 0; idx.name = 1; idx.extra = 2; idx.www = 3; }
   const body = (hasHeader ? rows.slice(1) : rows).slice(0, 300);
+  const get = (r, k) => (idx[k] != null ? (r[idx[k]] || '') : '').trim();
   return body.map(r => ({
-    project: (r[0] || '').trim(),
-    name:    (r[1] || '').trim(),
-    extra:   (r[2] || '').trim(),
-    www:     (r[3] || '').trim(),
+    project: get(r, 'project'),
+    name:    get(r, 'name'),
+    extra:   get(r, 'extra'),
+    www:     get(r, 'www'),
   }));
+}
+
+// Canonical fillable template — single source of truth for both the in-app
+// download button and the repo's flags-template.csv. `|` = forced line break.
+const CSV_TEMPLATE = [
+  'project,name,extra,www',
+  "What Design|Can't Do,Albert Kozikowski,Graphic Design,@albertkozikowski",
+  'Soft Systems,Mira Lindqvist,Social Practices,@miralindqvist',
+  'After the Archive,Tomás Berg,Lens-Based Media,@tomasberg',
+  'Holding Patterns,Yuki Tanaka,Graphic Design,@yukitanaka',
+  'Ground Noise,Sam de Vries,Spatial Design,@samdevries',
+  'Tender Machines,Noa Ben-Ami,,@noabenami',
+  '',
+].join('\n');
+
+function downloadCSVTemplate() {
+  downloadBlob(new Blob([CSV_TEMPLATE], { type: 'text/csv;charset=utf-8' }), 'flags-template.csv');
 }
 
 // Filename-safe slug: strip accents, lowercase, dashes.
@@ -2706,6 +2760,10 @@ if (csvInput) csvInput.addEventListener('change', () => {
   loadCSVFile(csvInput.files[0]);
   // Reset so picking the same file again still fires `change`.
   csvInput.value = '';
+});
+const csvTemplateBtn = document.getElementById('csvTemplateBtn');
+if (csvTemplateBtn) csvTemplateBtn.addEventListener('click', e => {
+  e.stopPropagation(); downloadCSVTemplate();
 });
 if (csvDrop) {
   // The file input lives inside the dropzone, so a programmatic csvInput.click()

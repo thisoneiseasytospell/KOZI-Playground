@@ -347,6 +347,13 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .dropzone-text strong { color: var(--text); font-weight: 500; }
 .dropzone-hint { font-size: 10px; color: var(--text-dim); margin-top: 4px; opacity: 0.6; }
 .dropzone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.csv-template-link {
+  display: block; width: 100%; margin-top: 8px; padding: 0;
+  background: none; border: none; cursor: pointer;
+  font-family: inherit; font-size: 10px; text-align: center;
+  color: var(--text-dim); text-decoration: underline; text-underline-offset: 2px;
+}
+.csv-template-link:hover { color: var(--accent); }
 
 .texture-preview {
   margin-top: 10px; border-radius: 10px; overflow: hidden;

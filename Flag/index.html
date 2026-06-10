@@ -198,9 +198,10 @@
             <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/>
           </svg>
           <div class="dropzone-text"><strong>Drop CSV</strong> or click to browse</div>
-          <div class="dropzone-hint">project, name, extra, www · up to 300 rows</div>
+          <div class="dropzone-hint">project, name, extra, www · up to 300 rows · use <strong>|</strong> in a cell for a line break</div>
           <input type="file" id="csvInput" accept=".csv,text/csv">
         </div>
+        <button type="button" class="csv-template-link" id="csvTemplateBtn">↓ Download blank template (.csv)</button>
         <div class="batch-status" id="batchStatus">No CSV loaded</div>
         <label class="matte-row"><input type="checkbox" id="matteToggle" checked> Matte — no glare (print)</label>
         <button class="btn-export" id="batchExportBtn" disabled>Export ZIP · A5 300dpi</button>

@@ -76,7 +76,8 @@ const ATTACH = { mode: 'corners' };
 // Tuned for the head-on matte print view, where shading is the only depth
 // cue: amp 0.09 → ~±30% diffuse swing + a visibly wavy fly edge, while the
 // worst-case perspective warp on the text stays under 5% (still legible).
-const GENTLE = { amp: 0.09, freqU: 3.5, freqV: 2.6, drift: 0.18 };
+// strength is the live multiplier driven by the Strength slider (1 = baked).
+const GENTLE = { amp: 0.09, freqU: 3.5, freqV: 2.6, drift: 0.18, strength: 1 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -232,7 +233,7 @@ function flattenCloth() {
 // pattern (batch export passes the row index: every tag differs, re-exports
 // are identical); `time` slowly drifts the pattern for the live preview.
 function gentleClothPose(seed = 0, time = 0) {
-  const amp = flagW * GENTLE.amp;
+  const amp = flagW * GENTLE.amp * GENTLE.strength;
   for (let j = 0; j < rows; j++) {
     const v = j / (rows - 1);
     const row3 = j * cols * 3;
@@ -2792,10 +2793,14 @@ document.getElementById('someRow').addEventListener('click', e => {
   document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b === btn));
   const ffiSection = document.getElementById('ffiSection');
   const batchSection = document.getElementById('batchSection');
-  if (someFormat === 'print') {
+  const singlePdfBtn = document.getElementById('pdfBtn');
+  // Print + Student are both title-card presets sharing the Name Tag Text
+  // blocks; only print gets the CSV batch + PDF machinery.
+  if (someFormat === 'print' || someFormat === 'student') {
     ffiSection.style.display = '';
-    batchSection.style.display = '';
-    applyPrintPreset();
+    batchSection.style.display = someFormat === 'print' ? '' : 'none';
+    if (singlePdfBtn) singlePdfBtn.style.display = someFormat === 'print' ? '' : 'none';
+    if (someFormat === 'print') applyPrintPreset(); else applyStudentPreset();
     someActive = true;
     initSomeCrop();
     someFrame.style.display = 'block';
@@ -2803,22 +2808,14 @@ document.getElementById('someRow').addEventListener('click', e => {
   }
   ffiSection.style.display = 'none';
   batchSection.style.display = 'none';
-  // Leaving print — restore the studio surface + generic text rendering.
+  if (singlePdfBtn) singlePdfBtn.style.display = '';
+  // Leaving print/student — restore the studio surface + generic text rendering.
   matteMode = false;
   const mt = document.getElementById('matteToggle');
   if (mt) mt.checked = false;
   if (textLayout === 'titleCard') {
     textLayout = 'repeat';
     refreshTexture();
-  }
-  // Student Takeover is a content preset (square + scrolling Jubilee text),
-  // not a plain SoMe crop — it sets its own size, so bail before the lookup.
-  if (someFormat === 'student') {
-    applyStudentPreset();
-    someActive = true;
-    initSomeCrop();
-    someFrame.style.display = 'block';
-    return;
   }
   const [fw, fh] = SOME_FORMATS[someFormat];
   sizeWInput.value = fw;
@@ -2966,10 +2963,6 @@ function applyPrintPreset() {
   matteMode = true;
   if (matteToggle) matteToggle.checked = true;
 
-  // Slight wave by default — every name tag stays legible with a gentle,
-  // per-row-unique crease (switchable back to Full / Flat afterwards).
-  setClothMode('slight');
-
   // Seed the print palette you specified (bg #D3FED1, text #00330A) — both
   // stay fully editable via the Studio tab colour controls afterwards.
   SIM.bgColor = hexToRgb('#D3FED1');
@@ -3003,60 +2996,61 @@ function applyPrintPreset() {
   refreshTexture(); // repaint title card with the seeded text colour
 }
 
-// Student Takeover — a square, animated text flag: scrolling Jubilee on the
-// studio palette, sized for a 1080×1080 SoMe loop. Everything stays editable
-// via the Studio tab afterwards.
+// Student Takeover — the name-tag flag as a 9:16 social video: same title-card
+// text blocks and print palette, 1080×1920, 10s MP4 export. None of the
+// print/batch machinery (no CSV, no PDF, no A5).
 function applyStudentPreset() {
-  // 5×5 square flag.
-  fullRebuild(5, 5);
-  customAW = 5; customAH = 5;
-  activeRatio = 'custom';
-  document.querySelectorAll('#ratioRow [data-r]').forEach(b => b.classList.remove('active'));
-  updateMiniPreview();
-
-  // Repeating Jubilee italic.
-  textLayout = 'repeat';
+  textLayout = 'titleCard';        // cloth text comes from titleBlocks
   textLayoutUserSet = true;
-  layoutRow.querySelectorAll('[data-layout]').forEach(b => b.classList.toggle('active', b.dataset.layout === 'repeat'));
-  currentFont = 'jubilee';
-  fontRow.querySelectorAll('[data-font]').forEach(b => b.classList.toggle('active', b.dataset.font === 'jubilee'));
 
-  // Text + type controls.
-  currentText = 'Student Takeover';
-  textInput.value = 'Student Takeover';
-  _textWasEmpty = false;
-  currentFontSize = 66;
-  fontSizeSlider.value = 66; fontSizeVal.textContent = '66';
-  currentLineHeight = 0.85;
-  lineHeightSlider.value = 85; lineHeightVal.textContent = '0.85';
-  textScrollSpeed = 200; textScrollTime = 0;
-  scrollSpeedSlider.value = 200; scrollVal.textContent = '200';
+  // Same portrait flag as the name tags.
+  fullRebuild(2.4, 2.9);
+  customAW = 2.4; customAH = 2.9;
+  activeRatio = null;
+  document.querySelectorAll('#ratioRow [data-r]').forEach(b => b.classList.remove('active'));
+  if (typeof updateMiniPreview === 'function') updateMiniPreview();
 
-  // Studio palette: dark green text on mint.
-  currentTextColor = '#00330A';
-  textColorIn.value = '#00330A'; textColorHex.value = '#00330A';
-  SIM.bgColor = hexToRgb('#D3FED1');
-  bgColorIn.value = '#D3FED1'; bgColorHex.value = '#D3FED1';
+  // Full-edge attachment keeps the title card readable while the cloth waves.
+  ATTACH.mode = 'edge';
+  applyPinning();
+  document.querySelectorAll('#attachRow .pill').forEach(b => b.classList.toggle('active', b.dataset.attach === 'edge'));
 
-  // Free-flying banner that catches the wind; not a matte print surface.
+  // Video surface — keep the sheen; matte is a print thing.
   matteMode = false;
   if (matteToggle) matteToggle.checked = false;
-  setClothMode('full'); // animated loop wants the real cloth sim
-  ATTACH.mode = 'corners';
-  applyPinning();
-  document.querySelectorAll('#attachRow .pill').forEach(b => b.classList.toggle('active', b.dataset.attach === 'corners'));
 
-  // Square SoMe output.
+  // Name-tag palette: dark green text on mint.
+  SIM.bgColor = hexToRgb('#D3FED1');
+  if (bgColorIn) bgColorIn.value = '#D3FED1';
+  if (bgColorHex) bgColorHex.value = '#D3FED1';
+  currentTextColor = '#00330A';
+  if (textColorIn) textColorIn.value = '#00330A';
+  if (textColorHex) textColorHex.value = '#00330A';
+
+  // 9:16 story video.
   sizeWInput.value = 1080;
-  sizeHInput.value = 1080;
+  sizeHInput.value = 1920;
   someFormat = 'student';
+  document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b.dataset.some === 'student'));
 
-  // Frame head-on like the home view (pole already hidden in the export tab).
-  cam.tgtTheta = 0; cam.tgtPhi = 0.12; cam.tgtRoll = 0;
-  cam.tgtTarget[0] = 0; cam.tgtTarget[1] = 0; cam.tgtTarget[2] = 0;
-  autoFrame();
+  // Head-on, same target as the print framing, but pulled back so the full
+  // flag width fits the narrower 9:16 crop: d = flagW / (2·tan(20°)·0.86·9/16)
+  // ≈ 6.8 (0.86 = crop height fraction from initSomeCrop), plus a hair of
+  // margin. Background and flag share the mint, so the surround is seamless.
+  cam.tgtTheta = 0; cam.tgtPhi = 0; cam.tgtRoll = 0;
+  cam.tgtTarget[0] = 1.191;
+  cam.tgtTarget[1] = 0.782;
+  cam.tgtTarget[2] = 0;
+  cam.tgtDist = 6.9;
+  cam.curTheta = cam.tgtTheta;
+  cam.curPhi = cam.tgtPhi;
+  cam.curDist = cam.tgtDist;
+  cam.curRoll = cam.roll = cam.tgtRoll;
+  cam.target[0] = cam.tgtTarget[0];
+  cam.target[1] = cam.tgtTarget[1];
+  cam.target[2] = cam.tgtTarget[2];
 
-  refreshTexture();
+  refreshTexture(); // repaint title card with the seeded text colour
 }
 
 // CSV → records. Tolerates quotes, embedded delimiters/newlines, CRLF and a BOM.
@@ -3349,10 +3343,12 @@ if (batchPdfBtn) batchPdfBtn.addEventListener('click', () => {
 
 // ── Cloth mode pills + single PDF + PNG-frame-sequence wiring ──
 const clothModeRow = document.getElementById('clothModeRow');
+const gentleStrengthRow = document.getElementById('gentleStrengthRow');
 function setClothMode(mode) {
   clothMode = mode;
   if (clothModeRow) clothModeRow.querySelectorAll('[data-cloth]')
     .forEach(b => b.classList.toggle('active', b.dataset.cloth === mode));
+  if (gentleStrengthRow) gentleStrengthRow.style.display = mode === 'slight' ? '' : 'none';
   if (mode === 'flat') flattenCloth();
   else if (mode === 'slight') gentleClothPose(0, gentleTime);
 }
@@ -3360,6 +3356,15 @@ if (clothModeRow) clothModeRow.addEventListener('click', e => {
   const btn = e.target.closest('[data-cloth]');
   if (!btn || btn.classList.contains('active')) return;
   setClothMode(btn.dataset.cloth);
+});
+// Strength slider — 50 = the baked default amplitude, 100 = double.
+const gentleStrengthIn = document.getElementById('gentleStrength');
+if (gentleStrengthIn) gentleStrengthIn.addEventListener('input', () => {
+  const v = parseInt(gentleStrengthIn.value, 10) || 50;
+  GENTLE.strength = v / 50;
+  const lbl = document.getElementById('gentleStrengthVal');
+  if (lbl) lbl.textContent = v;
+  if (clothMode === 'slight') gentleClothPose(0, gentleTime);
 });
 
 const pdfBtn = document.getElementById('pdfBtn');
@@ -3641,7 +3646,7 @@ async function finalizeExport() {
   } catch (e) {
     console.error('MP4 finalize failed:', e);
     btn.textContent = 'Export failed';
-    setTimeout(() => { btn.textContent = 'Export 10s Loop'; }, 3000);
+    setTimeout(() => { btn.textContent = 'Export 10s Video'; }, 3000);
     return;
   }
   _encoder = null; _muxer = null; _muxerTarget = null;
@@ -3650,7 +3655,7 @@ async function finalizeExport() {
   _loopHeadPos = null; _loopHeadPrev = null;
   if (_audioEncoder) { try { _audioEncoder.close(); } catch (_) {} _audioEncoder = null; }
   someFrame.classList.remove('recording');
-  btn.textContent = 'Export 10s Loop';
+  btn.textContent = 'Export 10s Video';
 }
 
 document.getElementById('someExportBtn').addEventListener('click', async () => {
@@ -3694,7 +3699,7 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
       } catch (e) {
         console.error('Audio load failed:', e);
         alert('Audio load failed: ' + (e && e.message ? e.message : e));
-        btn.textContent = 'Export 10s Loop';
+        btn.textContent = 'Export 10s Video';
         return;
       }
     }
@@ -3735,7 +3740,7 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
   } catch (e) {
     console.error('Encoder init failed:', e);
     btn.textContent = 'Export failed';
-    setTimeout(() => { btn.textContent = 'Export 10s Loop'; }, 2000);
+    setTimeout(() => { btn.textContent = 'Export 10s Video'; }, 2000);
     return;
   }
   _frameIdx = 0;

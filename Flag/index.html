@@ -296,10 +296,17 @@ Can't Do</textarea>
           <button class="pill" data-cloth="slight">Slight wave</button>
           <button class="pill" data-cloth="flat">Flat</button>
         </div>
+        <div class="control-row" id="gentleStrengthRow" style="display:none; margin-top:10px">
+          <div class="control-label">
+            <span class="control-name">Strength</span>
+            <span class="control-value" id="gentleStrengthVal">50</span>
+          </div>
+          <input type="range" id="gentleStrength" min="5" max="100" value="50">
+        </div>
       </div>
       <div class="section">
         <div class="section-label">Export</div>
-        <button class="btn-export" id="someExportBtn">Export 10s Loop</button>
+        <button class="btn-export" id="someExportBtn">Export 10s Video</button>
         <button class="btn-export" id="someSeqBtn" style="margin-top:8px">Export PNG sequence</button>
         <button class="btn-export" id="exportBtn" style="margin-top:8px">Export PNG</button>
         <button class="btn-export" id="pdfBtn" style="margin-top:8px">Export PDF</button>

@@ -204,6 +204,7 @@
         <div class="batch-status" id="batchStatus">No CSV loaded</div>
         <label class="matte-row"><input type="checkbox" id="matteToggle" checked> Matte — no glare (print)</label>
         <button class="btn-export" id="batchExportBtn" disabled>Export ZIP · A5 300dpi</button>
+        <button class="btn-export" id="batchPdfBtn" style="margin-top:8px" disabled>Export PDF · A5 (multi-page)</button>
       </div>
       <div class="section">
         <div class="section-label">Size</div>
@@ -287,8 +288,11 @@ Can't Do</textarea>
       </div>
       <div class="section">
         <div class="section-label">Export</div>
+        <label class="matte-row"><input type="checkbox" id="flatToggle"> Flat — no cloth effect</label>
         <button class="btn-export" id="someExportBtn">Export 10s Loop</button>
+        <button class="btn-export" id="someSeqBtn" style="margin-top:8px">Export PNG sequence</button>
         <button class="btn-export" id="exportBtn" style="margin-top:8px">Export PNG</button>
+        <button class="btn-export" id="pdfBtn" style="margin-top:8px">Export PDF</button>
       </div>
     </div>
   </div>

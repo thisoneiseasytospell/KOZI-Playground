@@ -130,6 +130,21 @@ function initCloth() {
   }
 }
 
+// Snap the cloth to a flat plane (z = 0) with zero velocity — used by the
+// "Flat — no cloth effect" toggle so the flag renders as a clean flat panel.
+function flattenCloth() {
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const idx = j * cols + i, i3 = idx * 3;
+      const u = i / (cols - 1), v = j / (rows - 1);
+      pos[i3] = prev[i3] = u * flagW;
+      pos[i3 + 1] = prev[i3 + 1] = -v * flagH + flagH * 0.8;
+      pos[i3 + 2] = prev[i3 + 2] = 0;
+    }
+  }
+  computeMeshNormals();
+}
+
 function applyPinning() {
   if (ATTACH.mode === 'corners') {
     for (let i = 0; i < totalPts; i++) fixed[i] = 0;
@@ -1100,6 +1115,7 @@ let partyMode = false, partyTime = 0;
 // Matte print mode — when true the cloth shader drops all specular/rim/sheen
 // (set live by the Matte toggle and forced on by the A5 print preset).
 let matteMode = false;
+let flatMode = false; // "turn off the flag effect" — render a flat plane, no wind
 
 function render(dt) {
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -1212,10 +1228,10 @@ let textScrollTime = 0;
 // sit right next to each other; the www/IG line drops below them. CSV batch
 // fills these per row (columns: project, name, extra, www).
 const titleBlocks = [
-  { text: "What Design\nCan't Do", size: 78, font: 'jubilee', y: 0.30, lineH: 1.00 },
-  { text: 'Albert Kozikowski',     size: 35, font: 'diatype', y: 0.66, lineH: 0.95 },
-  { text: 'Graphic Design',        size: 35, font: 'diatype', y: 0.71, lineH: 0.95 },
-  { text: '@albertkozikowski',     size: 26, font: 'diatype', y: 0.84, lineH: 0.95 },
+  { text: "What Design\nCan't Do", size: 94, font: 'jubilee', y: 0.21,  lineH: 1.00 },
+  { text: 'Albert Kozikowski',     size: 30, font: 'diatype', y: 0.56,  lineH: 0.95 },
+  { text: 'Graphic Design',        size: 30, font: 'diatype', y: 0.592, lineH: 0.95 },
+  { text: '@albertkozikowski',     size: 30, font: 'diatype', y: 0.809, lineH: 0.95 },
 ];
 
 // Deterministic pseudo-random per row (consistent across redraws)
@@ -1963,10 +1979,52 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// ── PDF export via jsPDF (loaded on demand from CDN, like the MP4 muxer) ──
+let _jspdfMod = null;
+async function getJsPDF() {
+  if (_jspdfMod) return _jspdfMod;
+  const mod = await import('https://cdn.jsdelivr.net/npm/jspdf@2.5.2/+esm');
+  _jspdfMod = mod.jsPDF || (mod.default && (mod.default.jsPDF || mod.default)) || mod;
+  return _jspdfMod;
+}
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = reject;
+    fr.readAsDataURL(blob);
+  });
+}
+// Single-page PDF: A5 (mm, true print size) for the print preset, otherwise a
+// page sized to the image pixels.
+async function exportFlagPDF() {
+  const btn = document.getElementById('pdfBtn');
+  const prev = btn ? btn.textContent : '';
+  if (btn) { btn.textContent = 'PDF…'; btn.style.pointerEvents = 'none'; }
+  try {
+    if (flatMode) flattenCloth();
+    const [outW, outH] = getExportSize();
+    const JsPDF = await getJsPDF();
+    const blob = await renderFlagToBlob(outW, outH, matteMode);
+    const dataUrl = await blobToDataURL(blob);
+    const portrait = outH >= outW;
+    const doc = someFormat === 'print'
+      ? new JsPDF({ unit: 'mm', format: 'a5', orientation: portrait ? 'portrait' : 'landscape' })
+      : new JsPDF({ unit: 'px', format: [outW, outH], orientation: portrait ? 'portrait' : 'landscape' });
+    const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
+    doc.addImage(dataUrl, 'PNG', 0, 0, pw, ph);
+    doc.save(`flag-${outW}x${outH}.pdf`);
+  } catch (e) {
+    console.error('PDF export failed:', e);
+    alert('PDF export failed: ' + (e && e.message ? e.message : e));
+  }
+  if (btn) { btn.textContent = prev || 'Export PDF'; btn.style.pointerEvents = ''; }
+}
+
 // Render the current flag to a PNG Blob at outW×outH using the high-res
 // interpolated mesh (+2× supersample when the GPU allows). matte=true drops
 // all specular/sheen. Shared by the single-PNG button and the CSV batch.
-function renderFlagToBlob(outW, outH, matte) {
+function renderFlagToBlob(outW, outH, matte, transparent) {
   const meshScale = 3; // 3x denser mesh via bilinear interpolation
   // 2× supersample if the GPU can host the larger renderbuffer/texture.
   const maxRb = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
@@ -2056,24 +2114,32 @@ function renderFlagToBlob(outW, outH, matte) {
 
   // ── Render high-res flag to FBO ──
   gl.viewport(0, 0, w, h);
-  gl.clearColor(SIM.bgColor[0], SIM.bgColor[1], SIM.bgColor[2], 1.0);
+  // transparent → clear fully transparent and skip the bg quad so only the flag's
+  // textured/opaque pixels survive (alpha channel preserved for compositing).
+  gl.clearColor(transparent ? 0 : SIM.bgColor[0], transparent ? 0 : SIM.bgColor[1],
+                transparent ? 0 : SIM.bgColor[2], transparent ? 0 : 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-  // Background quad (flat color)
-  gl.disable(gl.DEPTH_TEST);
-  gl.useProgram(bgProg);
-  gl.uniform3f(bgLoc.uBg, SIM.bgColor[0], SIM.bgColor[1], SIM.bgColor[2]);
-  gl.disableVertexAttribArray(loc.aNrm);
-  gl.disableVertexAttribArray(loc.aUV);
-  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-  gl.enableVertexAttribArray(bgLoc.aP);
-  gl.vertexAttribPointer(bgLoc.aP, 2, gl.FLOAT, false, 0, 0);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-  gl.disableVertexAttribArray(bgLoc.aP);
-  gl.enable(gl.DEPTH_TEST);
+  if (!transparent) {
+    // Background quad (flat color)
+    gl.disable(gl.DEPTH_TEST);
+    gl.useProgram(bgProg);
+    gl.uniform3f(bgLoc.uBg, SIM.bgColor[0], SIM.bgColor[1], SIM.bgColor[2]);
+    gl.disableVertexAttribArray(loc.aNrm);
+    gl.disableVertexAttribArray(loc.aUV);
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+    gl.enableVertexAttribArray(bgLoc.aP);
+    gl.vertexAttribPointer(bgLoc.aP, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.disableVertexAttribArray(bgLoc.aP);
+    gl.enable(gl.DEPTH_TEST);
+  }
 
   gl.enable(gl.BLEND);
-  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  // Separate alpha factors (src ONE) so the alpha channel accumulates straight
+  // instead of being squared by SRC_ALPHA when drawing over the clear.
+  if (transparent) gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+  else gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
   const ld = [0.5, 0.8, 0.35];
   const ll = Math.sqrt(ld[0] ** 2 + ld[1] ** 2 + ld[2] ** 2);
@@ -2124,6 +2190,21 @@ function renderFlagToBlob(outW, outH, matte) {
   // Read pixels
   const pixels = new Uint8Array(w * h * 4);
   gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+  if (transparent) {
+    // GL left RGB premultiplied by alpha; un-premultiply for straight-alpha PNG
+    // (otherwise text/edges pick up a dark fringe when composited).
+    for (let p = 0; p < pixels.length; p += 4) {
+      const a = pixels[p + 3];
+      if (a === 0) { pixels[p] = pixels[p + 1] = pixels[p + 2] = 0; }
+      else if (a < 255) {
+        pixels[p]     = Math.min(255, Math.round(pixels[p]     * 255 / a));
+        pixels[p + 1] = Math.min(255, Math.round(pixels[p + 1] * 255 / a));
+        pixels[p + 2] = Math.min(255, Math.round(pixels[p + 2] * 255 / a));
+      }
+    }
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); // restore default blend
+  }
 
   // Cleanup FBO + high-res buffers — restore main canvas
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -2432,14 +2513,13 @@ function applyPrintPreset() {
   if (textColorIn) textColorIn.value = '#00330A';
   if (textColorHex) textColorHex.value = '#00330A';
 
-  // Head-on camera framed on the flag centre. A5 is taller than the flag, so
-  // fit by height and leave clean margins left/right.
+  // Head-on framing, tuned by hand (via the Copy-debug snapshot) for the
+  // 2.4×2.9 print flag.
   cam.tgtTheta = 0; cam.tgtPhi = 0; cam.tgtRoll = 0;
-  cam.tgtTarget[0] = flagW / 2;
-  cam.tgtTarget[1] = flagH * 0.3;
+  cam.tgtTarget[0] = 1.191;
+  cam.tgtTarget[1] = 0.782;
   cam.tgtTarget[2] = 0;
-  const halfTan = Math.tan((Math.PI / 4.5) / 2);
-  cam.tgtDist = (flagH * 0.62 / halfTan) * 1.05;
+  cam.tgtDist = 4.233;
   cam.curTheta = cam.tgtTheta;
   cam.curPhi = cam.tgtPhi;
   cam.curDist = cam.tgtDist;
@@ -2616,6 +2696,7 @@ function loadCSVFile(file) {
       ? `${n} row${n === 1 ? '' : 's'} loaded → ${n} PNG${n === 1 ? '' : 's'}`
       : 'No valid rows found in that CSV.';
     if (batchExportBtn) batchExportBtn.disabled = !n;
+    const bp = document.getElementById('batchPdfBtn'); if (bp) bp.disabled = !n;
     if (csvDrop) csvDrop.classList.toggle('has-file', !!n);
   };
   reader.readAsText(file);
@@ -2639,8 +2720,10 @@ if (csvDrop) {
   });
 }
 
-async function runBatchExport() {
+async function runBatchExport(format = 'zip', btn = batchExportBtn) {
   if (batchExporting || !batchRecords.length) return;
+  const isPdf = format === 'pdf';
+  const doneLabel = isPdf ? 'Export PDF · A5 (multi-page)' : 'Export ZIP · A5 300dpi';
   // Ensure print framing (camera + A5 size + matte + crop) is in place.
   if (someFormat !== 'print') {
     applyPrintPreset();
@@ -2651,10 +2734,17 @@ async function runBatchExport() {
   // Fonts must be ready or early rows render in a fallback face.
   try { await document.fonts.ready; } catch (e) {}
 
+  let JsPDF = null;
+  if (isPdf) {
+    try { JsPDF = await getJsPDF(); }
+    catch (e) { console.error(e); if (batchStatus) batchStatus.textContent = 'Could not load PDF library (offline?).'; return; }
+  }
+
   batchExporting = true; batchCancel = false;
-  batchExportBtn.classList.add('batch-cancel');
+  btn.classList.add('batch-cancel');
 
   const files = [], usedNames = new Set();
+  let doc = null;
   const STEP_FRAMES = 28; // ~0.5s of wind between rows → every pose differs
 
   for (let i = 0; i < batchRecords.length; i++) {
@@ -2667,42 +2757,124 @@ async function runBatchExport() {
     titleBlocks[3].text = (rec.www || '').replace(/\|/g, '\n');
     generateTextTexture(0);
 
-    for (let s = 0; s < STEP_FRAMES; s++) simulate(SIM_DT); // unique pose per row
+    // Flat = identical clean panel per row; otherwise advance wind for a unique pose.
+    if (flatMode) flattenCloth();
+    else for (let s = 0; s < STEP_FRAMES; s++) simulate(SIM_DT);
 
     const blob = await renderFlagToBlob(outW, outH, matteMode);
-    const data = new Uint8Array(await blob.arrayBuffer());
 
-    let base = slugify(rec.project) || ('flag-' + (i + 1));
-    let name = base + '.png', n = 2;
-    while (usedNames.has(name)) name = base + '-' + (n++) + '.png';
-    usedNames.add(name);
-    files.push({ name, data });
+    if (isPdf) {
+      const dataUrl = await blobToDataURL(blob);
+      if (!doc) doc = new JsPDF({ unit: 'mm', format: 'a5', orientation: 'portrait' });
+      else doc.addPage('a5', 'portrait');
+      const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
+      doc.addImage(dataUrl, 'PNG', 0, 0, pw, ph);
+    } else {
+      const data = new Uint8Array(await blob.arrayBuffer());
+      let base = slugify(rec.project) || ('flag-' + (i + 1));
+      let name = base + '.png', n = 2;
+      while (usedNames.has(name)) name = base + '-' + (n++) + '.png';
+      usedNames.add(name);
+      files.push({ name, data });
+    }
 
     if (batchStatus) batchStatus.textContent = `Rendering ${i + 1} / ${batchRecords.length}…`;
-    batchExportBtn.textContent = `Cancel (${i + 1}/${batchRecords.length})`;
+    btn.textContent = `Cancel (${i + 1}/${batchRecords.length})`;
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
   }
 
+  const count = isPdf ? (doc ? doc.getNumberOfPages() : 0) : files.length;
   batchExporting = false;
-  batchExportBtn.classList.remove('batch-cancel');
-  batchExportBtn.textContent = 'Export ZIP · A5 300dpi';
+  btn.classList.remove('batch-cancel');
+  btn.textContent = doneLabel;
 
-  if (batchCancel || !files.length) {
+  if (batchCancel || !count) {
     if (batchStatus) batchStatus.textContent = batchCancel
-      ? `Cancelled — ${files.length} rendered, not saved.` : 'Nothing to export.';
+      ? `Cancelled — ${count} rendered, not saved.` : 'Nothing to export.';
     return;
   }
 
-  if (batchStatus) batchStatus.textContent = 'Packing ZIP…';
-  await new Promise(r => requestAnimationFrame(r));
   const stamp = new Date().toISOString().slice(0, 10);
-  downloadBlob(makeZip(files), `flags-a5-300dpi-${stamp}.zip`);
-  if (batchStatus) batchStatus.textContent = `Done — ${files.length} PNGs zipped.`;
+  if (isPdf) {
+    if (batchStatus) batchStatus.textContent = 'Saving PDF…';
+    await new Promise(r => requestAnimationFrame(r));
+    doc.save(`flags-a5-${stamp}.pdf`);
+    if (batchStatus) batchStatus.textContent = `Done — ${count}-page PDF.`;
+  } else {
+    if (batchStatus) batchStatus.textContent = 'Packing ZIP…';
+    await new Promise(r => requestAnimationFrame(r));
+    downloadBlob(makeZip(files), `flags-a5-300dpi-${stamp}.zip`);
+    if (batchStatus) batchStatus.textContent = `Done — ${count} PNGs zipped.`;
+  }
 }
 
 if (batchExportBtn) batchExportBtn.addEventListener('click', () => {
   if (batchExporting) { batchCancel = true; return; }
-  runBatchExport();
+  runBatchExport('zip', batchExportBtn);
+});
+const batchPdfBtn = document.getElementById('batchPdfBtn');
+if (batchPdfBtn) batchPdfBtn.addEventListener('click', () => {
+  if (batchExporting) { batchCancel = true; return; }
+  runBatchExport('pdf', batchPdfBtn);
+});
+
+// ── Flat toggle + single PDF + PNG-frame-sequence wiring ──
+const flatToggle = document.getElementById('flatToggle');
+if (flatToggle) flatToggle.addEventListener('change', () => {
+  flatMode = flatToggle.checked;
+  if (flatMode) flattenCloth();
+});
+
+const pdfBtn = document.getElementById('pdfBtn');
+if (pdfBtn) pdfBtn.addEventListener('click', exportFlagPDF);
+
+let pngSeqExporting = false, pngSeqCancel = false;
+async function runPngSequenceExport() {
+  if (pngSeqExporting || batchExporting || someRecording) return;
+  const btn = document.getElementById('someSeqBtn');
+  const [outW, outH] = getExportSize();
+  try { await document.fonts.ready; } catch (e) {}
+  pngSeqExporting = true; pngSeqCancel = false;
+  btn.classList.add('batch-cancel');
+
+  const files = [];
+  const total = REC_TOTAL_FRAMES; // 250 frames = 10s @ 25fps
+  for (let f = 0; f < total; f++) {
+    if (pngSeqCancel) break;
+    // Advance one video-frame's worth of motion (or hold flat), keeping text scroll in sync.
+    if (flatMode) {
+      flattenCloth();
+      if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
+        textScrollTime += SIM_DT * REC_STEPS * textScrollSpeed * 2.5;
+        generateTextTexture(textScrollTime);
+      }
+    } else {
+      for (let s = 0; s < REC_STEPS; s++) {
+        simulate(SIM_DT);
+        if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
+          textScrollTime += SIM_DT * textScrollSpeed * 2.5;
+          generateTextTexture(textScrollTime);
+        }
+      }
+    }
+    const blob = await renderFlagToBlob(outW, outH, matteMode, true); // transparent bg
+    files.push({ name: String(f + 1).padStart(4, '0') + '.png', data: new Uint8Array(await blob.arrayBuffer()) });
+    btn.textContent = `Cancel (${f + 1}/${total})`;
+    await new Promise(r => requestAnimationFrame(r));
+  }
+
+  pngSeqExporting = false;
+  btn.classList.remove('batch-cancel');
+  btn.textContent = 'Export PNG sequence';
+  lastTime = 0; // avoid a giant catch-up dt when the on-screen loop resumes
+  if (pngSeqCancel || !files.length) return;
+  const stamp = new Date().toISOString().slice(0, 10);
+  downloadBlob(makeZip(files), `flag-${outW}x${outH}-seq-${stamp}.zip`);
+}
+const someSeqBtn = document.getElementById('someSeqBtn');
+if (someSeqBtn) someSeqBtn.addEventListener('click', () => {
+  if (pngSeqExporting) { pngSeqCancel = true; return; }
+  runPngSequenceExport();
 });
 
 window.addEventListener('resize', () => { if (someActive) initSomeCrop(); });
@@ -3151,13 +3323,14 @@ function loop(now) {
   // output[N-1] → output[0] is a one-sim-step jump (visually continuous).
   if (someRecording && _recCtx && _encoder) {
     for (let i = 0; i < REC_STEPS; i++) {
-      simulate(SIM_DT);
+      if (!flatMode) simulate(SIM_DT);
       updateCamera(SIM_DT);
       if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
         textScrollTime += SIM_DT * textScrollSpeed * 2.5;
         generateTextTexture(textScrollTime);
       }
     }
+    if (flatMode) flattenCloth();
     updateOrbitBall();
 
     const totalFramesForRun = _useSeamless ? REC_RAW_FRAMES : REC_TOTAL_FRAMES;
@@ -3223,8 +3396,9 @@ function loop(now) {
     return;
   }
 
-  // CSV batch drives the cloth + renders to its own FBO — skip on-screen work.
-  if (batchExporting) { lastTime = 0; return; }
+  // CSV batch / PNG-sequence drive the cloth + render to their own FBO — skip
+  // the on-screen render loop while they run.
+  if (batchExporting || pngSeqExporting) { lastTime = 0; return; }
 
   // Normal playback — 60hz physics via accumulator, render every frame
   if (!lastTime) { lastTime = now; return; }
@@ -3242,13 +3416,14 @@ function loop(now) {
   if (simAccum > 0.1) simAccum = 0.1;
   while (simAccum >= SIM_DT) {
     simAccum -= SIM_DT;
-    simulate(SIM_DT);
+    if (!flatMode) simulate(SIM_DT);
     updateCamera(SIM_DT);
     if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
       textScrollTime += SIM_DT * textScrollSpeed * 2.5;
       generateTextTexture(textScrollTime);
     }
   }
+  if (flatMode) flattenCloth();
   updateOrbitBall();
   render(SIM_DT);
 }

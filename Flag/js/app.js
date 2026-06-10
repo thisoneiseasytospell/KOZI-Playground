@@ -73,7 +73,10 @@ const ATTACH = { mode: 'corners' };
 // Slight-wave cloth mode — hand-tuned ripple for the name-tag prints.
 // amp is a fraction of flag width (caps text distortion so every tag stays
 // legible); freqU/freqV set the fold count; drift paces the live preview.
-const GENTLE = { amp: 0.045, freqU: 2.3, freqV: 1.7, drift: 0.18 };
+// Tuned for the head-on matte print view, where shading is the only depth
+// cue: amp 0.09 → ~±30% diffuse swing + a visibly wavy fly edge, while the
+// worst-case perspective warp on the text stays under 5% (still legible).
+const GENTLE = { amp: 0.09, freqU: 3.5, freqV: 2.6, drift: 0.18 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 

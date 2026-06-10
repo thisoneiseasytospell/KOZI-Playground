@@ -296,6 +296,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
   box-shadow: 0 1px 4px rgba(0,0,0,0.25);
   cursor: nwse-resize;
   transition: transform 0.15s ease;
+  z-index: 3; /* above shape dots — bbox resize wins at the corner */
 }
 .mini-handle-corner:hover { transform: scale(1.18); }
 .mini-handle-corner:active { transform: scale(0.92); }
@@ -329,6 +330,40 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .mini-flag-rect.editing-h .mini-dim-h {
   color: var(--accent);
 }
+
+/* ── Custom shape editor (mini box) ─────────────────────── */
+.mini-shape-svg {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  display: none;
+}
+.mini-shape-svg polygon {
+  fill: rgba(1,111,23,0.05);
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+/* custom shape active: the SVG outline replaces the rect border */
+.mini-flag-rect.shaped { border-color: transparent; background: none; }
+.mini-flag-rect.shaped .mini-handle-corner { display: none; }
+.mini-shape-dot {
+  position: absolute;
+  width: 9px; height: 9px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  cursor: grab;
+  z-index: 2;
+  opacity: 0.5;
+  transition: opacity 0.15s ease;
+}
+.mini-flag-rect.shaped .mini-shape-dot,
+.mini-shape-dot:hover { opacity: 1; }
+.mini-shape-dot:active { cursor: grabbing; }
 
 /* ── Dropzone ───────────────────────────────────────────── */
 

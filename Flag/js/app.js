@@ -70,6 +70,11 @@ const WEATHER = { mode: 'normal', angleDriftMax: 24, angleDriftForce: 1.0 };
 // top-left + bottom-left (banner/rope attachment) so the hoist edge itself flaps.
 const ATTACH = { mode: 'corners' };
 
+// Slight-wave cloth mode — hand-tuned ripple for the name-tag prints.
+// amp is a fraction of flag width (caps text distortion so every tag stays
+// legible); freqU/freqV set the fold count; drift paces the live preview.
+const GENTLE = { amp: 0.045, freqU: 2.3, freqV: 1.7, drift: 0.18 };
+
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // ─── 2D value noise + FBM (for fabric flutter) ──────────────
@@ -111,6 +116,78 @@ function allocArrays() {
   fixed = new Uint8Array(totalPts);
 }
 
+// ─── Custom shape (silhouette polygon) ───────────────────────
+// shapePoints: null = plain rectangle. Otherwise a polygon in normalized flag
+// space ([0..1]×[0..1], v down — same orientation as the cloth UVs), edited
+// via the mini ratio box. The polygon trims the simulated mesh (particles
+// outside go inactive) and an alpha mask cuts the exact silhouette in the
+// fragment shader, so the staircase trim edge never shows.
+let shapePoints = null;
+let clothActive = null;   // Uint8Array(totalPts) | null (null = all active)
+let cellActive = null;    // Uint8Array((cols-1)*(rows-1)) | null
+let _lastValidShape = null;
+const SHAPE_MARGIN_CELLS = 2; // keep a ring of live cells outside the polygon
+
+function isCustomShape() { return shapePoints !== null; }
+
+// Even-odd ray cast — must agree with the canvas fill('evenodd') used for the
+// visual mask so the sim trim and the silhouette never disagree.
+function pointInPoly(x, y, pts) {
+  let inside = false;
+  for (let i = 0, k = pts.length - 1; i < pts.length; k = i++) {
+    const xi = pts[i][0], yi = pts[i][1], xk = pts[k][0], yk = pts[k][1];
+    if ((yi > y) !== (yk > y) && x < (xk - xi) * (y - yi) / (yk - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+// Mark particles inside the polygon (plus a margin ring, measured in grid
+// cells) as active and derive per-cell renderability. Returns false when the
+// polygon is degenerate (too few live cells to simulate), leaving the
+// previous mask untouched so the caller can revert.
+function computeActiveMask() {
+  if (!shapePoints) { clothActive = null; cellActive = null; return true; }
+  const pts = shapePoints;
+  const act = new Uint8Array(totalPts);
+  const m2 = SHAPE_MARGIN_CELLS * SHAPE_MARGIN_CELLS;
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const u = i / (cols - 1), v = j / (rows - 1);
+      let on = pointInPoly(u, v, pts);
+      if (!on) {
+        // distance to the polygon outline, measured in grid-index space
+        for (let s = 0; s < pts.length && !on; s++) {
+          const a = pts[s], b = pts[(s + 1) % pts.length];
+          const ax = a[0] * (cols - 1), ay = a[1] * (rows - 1);
+          const bx = b[0] * (cols - 1), by = b[1] * (rows - 1);
+          const dx = bx - ax, dy = by - ay;
+          const L2 = dx * dx + dy * dy;
+          let t = L2 > 0 ? ((i - ax) * dx + (j - ay) * dy) / L2 : 0;
+          if (t < 0) t = 0; else if (t > 1) t = 1;
+          const ox = ax + dx * t - i, oy = ay + dy * t - j;
+          if (ox * ox + oy * oy <= m2) on = true;
+        }
+      }
+      act[j * cols + i] = on ? 1 : 0;
+    }
+  }
+  const cell = new Uint8Array((cols - 1) * (rows - 1));
+  let live = 0;
+  for (let j = 0; j < rows - 1; j++) {
+    for (let i = 0; i < cols - 1; i++) {
+      const a = j * cols + i;
+      if (act[a] && act[a + 1] && act[a + cols] && act[a + cols + 1]) {
+        cell[j * (cols - 1) + i] = 1;
+        live++;
+      }
+    }
+  }
+  if (live < 8) return false;
+  clothActive = act;
+  cellActive = cell;
+  return true;
+}
+
 function initCloth() {
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
@@ -131,7 +208,7 @@ function initCloth() {
 }
 
 // Snap the cloth to a flat plane (z = 0) with zero velocity — used by the
-// "Flat — no cloth effect" toggle so the flag renders as a clean flat panel.
+// "Flat" cloth mode so the flag renders as a clean flat panel.
 function flattenCloth() {
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
@@ -145,45 +222,110 @@ function flattenCloth() {
   computeMeshNormals();
 }
 
+// "Slight wave" cloth mode — a flat panel with a small deterministic FBM
+// ripple instead of the wind sim. z-only displacement with the hoist column
+// held flat, so the texture-mapped text can never fold over or drift off
+// centre; GENTLE.amp caps how far it can distort. `seed` picks the fold
+// pattern (batch export passes the row index: every tag differs, re-exports
+// are identical); `time` slowly drifts the pattern for the live preview.
+function gentleClothPose(seed = 0, time = 0) {
+  const amp = flagW * GENTLE.amp;
+  for (let j = 0; j < rows; j++) {
+    const v = j / (rows - 1);
+    const row3 = j * cols * 3;
+    for (let i = 0; i < cols; i++) {
+      const u = i / (cols - 1);
+      const i3 = row3 + i * 3;
+      pos[i3] = u * flagW;
+      pos[i3 + 1] = -v * flagH + flagH * 0.8;
+      pos[i3 + 2] = fbm2(
+        u * GENTLE.freqU + seed * 13.71 + time * GENTLE.drift,
+        v * GENTLE.freqV + seed * 7.31
+      ) * amp * Math.pow(u, 0.7);
+    }
+    // Re-space x so each row keeps its rest length in 3D — the fly edge pulls
+    // in slightly where the wave is bigger, reading as fabric, not embossing.
+    for (let i = 1; i < cols; i++) {
+      const i3 = row3 + i * 3;
+      const dz = pos[i3 + 2] - pos[i3 - 1];
+      const dx2 = restDx * restDx - dz * dz;
+      pos[i3] = pos[i3 - 3] + Math.sqrt(Math.max(dx2, restDx * restDx * 0.25));
+    }
+  }
+  prev.set(pos); // zero velocity so switching back to Full doesn't pop
+  computeMeshNormals();
+}
+
+let _lastPinKey = '';
 function applyPinning() {
+  const active = i => !clothActive || clothActive[i];
+  // Particles outside the custom shape are parked as fixed — every sim pass
+  // already skips fixed[], so they cost nothing and never move.
+  for (let i = 0; i < totalPts; i++) fixed[i] = active(i) ? 0 : 1;
+  // Hoist = leftmost column that still has active particles, so a shape cut
+  // away from the pole edge stays attached instead of flying off.
+  let L = 0;
+  if (clothActive) {
+    outer:
+    for (let i = 0; i < cols; i++) {
+      for (let j = 0; j < rows; j++) {
+        if (clothActive[j * cols + i]) { L = i; break outer; }
+      }
+    }
+  }
   if (ATTACH.mode === 'corners') {
-    for (let i = 0; i < totalPts; i++) fixed[i] = 0;
-    fixed[0] = 1;
-    fixed[(rows - 1) * cols] = 1;
+    let topJ = -1, botJ = -1;
+    for (let j = 0; j < rows; j++) {
+      if (active(j * cols + L)) { if (topJ < 0) topJ = j; botJ = j; }
+    }
+    if (topJ < 0) { topJ = 0; botJ = rows - 1; }
+    fixed[topJ * cols + L] = 1;
+    fixed[botJ * cols + L] = 1;
+    const pinKey = `corners:${cols}x${rows}:${L}:${topJ}:${botJ}`;
     // Kickstart: nudge the now-free hoist column slightly outward in z so it
-    // immediately starts billowing instead of hanging dead at z=0.
-    if (pos) {
-      for (let j = 1; j < rows - 1; j++) {
-        const idx = j * cols;
+    // immediately starts billowing instead of hanging dead at z=0. Only when
+    // the pinned set actually changed — re-running it on every live shape
+    // tweak would keep resetting the hoist.
+    if (pos && pinKey !== _lastPinKey) {
+      for (let j = topJ + 1; j < botJ; j++) {
+        const idx = j * cols + L;
+        if (!active(idx)) continue;
         const i3 = idx * 3;
         const bow = Math.sin(j / (rows - 1) * Math.PI) * restDx * 0.8;
         pos[i3 + 2] = bow;
         prev[i3 + 2] = bow - 0.001;
       }
     }
+    _lastPinKey = pinKey;
   } else {
-    for (let i = 0; i < totalPts; i++) fixed[i] = (i % cols === 0) ? 1 : 0;
+    const pinKey = `edge:${cols}x${rows}:${L}`;
     // Snap hoist column back to its initial straight position — otherwise
     // particles stay pinned wherever they drifted to during 'corners' mode.
-    if (pos) {
-      for (let j = 0; j < rows; j++) {
-        const idx = j * cols;
+    const snap = pos && pinKey !== _lastPinKey;
+    for (let j = 0; j < rows; j++) {
+      const idx = j * cols + L;
+      if (!active(idx)) continue;
+      fixed[idx] = 1;
+      if (snap) {
         const i3 = idx * 3;
         const y = -(j / (rows - 1)) * flagH + flagH * 0.8;
-        pos[i3] = prev[i3] = 0;
+        pos[i3] = prev[i3] = L * restDx;
         pos[i3 + 1] = prev[i3 + 1] = y;
         pos[i3 + 2] = prev[i3 + 2] = 0;
       }
     }
+    _lastPinKey = pinKey;
   }
 }
 
 function buildMesh() {
+  computeActiveMask();
   applyPinning();
 
   triIdx = [];
   for (let j = 0; j < rows - 1; j++) {
     for (let i = 0; i < cols - 1; i++) {
+      if (cellActive && !cellActive[j * (cols - 1) + i]) continue;
       const a = j * cols + i;
       triIdx.push(a, a + cols, a + 1, a + 1, a + cols, a + cols + 1);
     }
@@ -191,7 +333,8 @@ function buildMesh() {
   indexData = new Uint32Array(triIdx);
 
   const cA = [], cB = [], cR = [];
-  const addC = (a, b, r) => { cA.push(a); cB.push(b); cR.push(r); };
+  const act = i => !clothActive || clothActive[i];
+  const addC = (a, b, r) => { if (act(a) && act(b)) { cA.push(a); cB.push(b); cR.push(r); } };
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
       const idx = j * cols + i;
@@ -201,8 +344,10 @@ function buildMesh() {
         addC(idx, idx + cols + 1, restDiag);
         addC(idx + 1, idx + cols, restDiag);
       }
-      if (i < cols - 2) addC(idx, idx + 2, restDx * 2 * 0.98);
-      if (j < rows - 2) addC(idx, idx + cols * 2, restDy * 2 * 0.98);
+      // Bend constraints also require the in-between particle — they must not
+      // bridge across a notch cut into the shape (e.g. a swallowtail).
+      if (i < cols - 2 && act(idx + 1)) addC(idx, idx + 2, restDx * 2 * 0.98);
+      if (j < rows - 2 && act(idx + cols)) addC(idx, idx + cols * 2, restDy * 2 * 0.98);
     }
   }
   numC = cA.length;
@@ -565,6 +710,10 @@ function simulate(frameDt) {
       for (let i = 1; i < cols - 1; i++) {
         const idx = j * cols + i;
         if (fixed[idx]) continue;
+        // Inactive (out-of-shape) neighbors hold stale parked positions —
+        // averaging them in would yank the cloth boundary every substep.
+        if (clothActive && !(clothActive[idx - 1] && clothActive[idx + 1] &&
+            clothActive[idx - cols] && clothActive[idx + cols])) continue;
         const i3 = idx * 3;
         const avgZ = (
           pos[(idx - 1) * 3 + 2] + pos[(idx + 1) * 3 + 2] +
@@ -584,6 +733,7 @@ function simulate(frameDt) {
       for (let j = 0; j < rows; j++) {
         for (let i = 1; i < cols; i++) {
           const left = j * cols + i - 1, curr = left + 1;
+          if (clothActive && !(clothActive[left] && clothActive[curr])) continue;
           const l3 = left * 3, c3 = curr * 3;
           const overlap = (pos[l3] + minSep) - pos[c3];
           if (overlap > 0) {
@@ -667,9 +817,9 @@ precision highp float;
 varying vec3 vNrm, vPos;
 varying vec2 vUV;
 uniform vec3 uLight, uColor, uEye;
-uniform sampler2D uTex;
+uniform sampler2D uTex, uMask;
 uniform float uFace, uAlpha, uAmbient, uPartyTime, uMatte;
-uniform bool uHasTex, uIsGlass;
+uniform bool uHasTex, uIsGlass, uHasMask;
 vec3 hsv(float h, float s, float v) {
   vec3 r = clamp(abs(mod(h*6.0+vec3(0,4,2),6.0)-3.0)-1.0,0.0,1.0);
   return v * mix(vec3(1), r, s);
@@ -697,6 +847,16 @@ void main() {
     return;
   }
 
+  // Custom shape silhouette — sampled in cloth UV space, identical on both
+  // faces (no back-face mirror: the mask is geometry, not print). LINEAR
+  // filtering on the mask provides the anti-aliased edge; hard discard keeps
+  // fully-outside fragments from polluting the depth buffer.
+  float m = 1.0;
+  if (uHasMask) {
+    m = texture2D(uMask, vUV).r;
+    if (m < 0.01) discard;
+  }
+
   // Get base color + alpha from texture
   vec3 base = uColor;
   float alpha = uAlpha;
@@ -713,7 +873,7 @@ void main() {
     float t = uPartyTime;
     float strobe = step(0.0, sin(t * 12.0));
     vec3 lit = base * mix(0.02, 2.2, strobe);
-    gl_FragColor = vec4(lit, alpha);
+    gl_FragColor = vec4(lit, alpha * m);
     return;
   }
 
@@ -733,7 +893,7 @@ void main() {
   float sheen = pow(1.0 - max(dot(n, vd), 0.0), 4.0) * 0.07 * em;
   vec3 sheenTint = mix(vec3(0.84, 0.90, 0.98), vec3(0.98, 0.90, 0.84), vUV.y);
   vec3 lit = base * light + sheenTint * sheen;
-  gl_FragColor = vec4(lit, alpha);
+  gl_FragColor = vec4(lit, alpha * m);
 }`;
 
 // ─── WebGL init ──────────────────────────────────────────────
@@ -774,7 +934,7 @@ gl.linkProgram(prog); gl.useProgram(prog);
 
 const loc = {};
 ['aPos', 'aNrm', 'aUV'].forEach(n => loc[n] = gl.getAttribLocation(prog, n));
-['uProj', 'uView', 'uLight', 'uColor', 'uEye', 'uTex', 'uFace', 'uAlpha', 'uAmbient', 'uHasTex', 'uIsGlass', 'uPartyTime', 'uMatte']
+['uProj', 'uView', 'uLight', 'uColor', 'uEye', 'uTex', 'uFace', 'uAlpha', 'uAmbient', 'uHasTex', 'uIsGlass', 'uPartyTime', 'uMatte', 'uMask', 'uHasMask']
   .forEach(n => loc[n] = gl.getUniformLocation(prog, n));
 
 // ─── Buffers ─────────────────────────────────────────────────
@@ -897,6 +1057,141 @@ function loadTexture(source) {
 function removeTexture() {
   if (flagTex) { gl.deleteTexture(flagTex); flagTex = null; }
   hasTex = false;
+}
+
+// ─── Shape mask texture (custom silhouette) ──────────────────
+// 1×1 white fallback keeps the uMask sampler valid when no shape is active.
+const whiteTex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, whiteTex);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+  new Uint8Array([255, 255, 255, 255]));
+
+let maskTex = null;
+const maskCanvas = document.createElement('canvas');
+
+function buildMaskTexture() {
+  if (!shapePoints) {
+    if (maskTex) { gl.deleteTexture(maskTex); maskTex = null; }
+    return;
+  }
+  // 1024 on the longest side is plenty — the mask is a hard-edged polygon and
+  // LINEAR filtering supplies the anti-aliasing.
+  const MAX = 1024;
+  let mw, mh;
+  if (aspectW >= aspectH) { mw = MAX; mh = Math.max(2, Math.round(MAX * aspectH / aspectW)); }
+  else { mh = MAX; mw = Math.max(2, Math.round(MAX * aspectW / aspectH)); }
+  maskCanvas.width = mw; maskCanvas.height = mh;
+  const mctx = maskCanvas.getContext('2d');
+  mctx.fillStyle = '#000';
+  mctx.fillRect(0, 0, mw, mh);
+  mctx.fillStyle = '#fff';
+  mctx.beginPath();
+  for (let i = 0; i < shapePoints.length; i++) {
+    const p = shapePoints[i];
+    if (i === 0) mctx.moveTo(p[0] * mw, p[1] * mh);
+    else mctx.lineTo(p[0] * mw, p[1] * mh);
+  }
+  mctx.closePath();
+  mctx.fill('evenodd');
+  if (!maskTex) maskTex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, maskTex);
+  // NPOT texture in WebGL1: clamp to edge, no mipmaps
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, maskCanvas);
+  gl.activeTexture(gl.TEXTURE0);
+}
+
+// Bind mask state for the cloth draws (texture unit 1).
+function setMaskUniforms(on) {
+  const use = !!(on && maskTex);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, use ? maskTex : whiteTex);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.uniform1i(loc.uMask, 1);
+  gl.uniform1i(loc.uHasMask, use ? 1 : 0);
+}
+
+// ─── Custom shape application ────────────────────────────────
+// Newly re-activated particles sat parked at stale lattice spots; clone the
+// state of the nearest previously-live grid neighbor so they join the cloth
+// without a visible snap.
+function reseedNewParticles(oldActive) {
+  if (!oldActive) return;
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const idx = j * cols + i;
+      if (oldActive[idx] || (clothActive && !clothActive[idx])) continue;
+      let src = -1;
+      for (let d = 1; d <= 4 && src < 0; d++) {
+        if (i - d >= 0 && oldActive[idx - d]) src = idx - d;
+        else if (i + d < cols && oldActive[idx + d]) src = idx + d;
+        else if (j - d >= 0 && oldActive[idx - d * cols]) src = idx - d * cols;
+        else if (j + d < rows && oldActive[idx + d * cols]) src = idx + d * cols;
+      }
+      const i3 = idx * 3;
+      if (src >= 0) {
+        const s3 = src * 3;
+        pos[i3] = pos[s3]; pos[i3 + 1] = pos[s3 + 1]; pos[i3 + 2] = pos[s3 + 2];
+        prev[i3] = prev[s3]; prev[i3 + 1] = prev[s3 + 1]; prev[i3 + 2] = prev[s3 + 2];
+      } else {
+        const u = i / (cols - 1), v = j / (rows - 1);
+        pos[i3] = prev[i3] = u * flagW;
+        pos[i3 + 1] = prev[i3 + 1] = -v * flagH + flagH * 0.8;
+        pos[i3 + 2] = prev[i3 + 2] = 0;
+      }
+    }
+  }
+}
+
+function applyShape(finalize = true) {
+  const oldActive = clothActive;
+  if (!computeActiveMask()) {
+    // Degenerate polygon. Mid-drag (finalize=false): keep simulating the last
+    // valid shape and let the user drag back. On release: revert for real.
+    if (!finalize) return;
+    shapePoints = _lastValidShape ? _lastValidShape.map(p => p.slice()) : null;
+    computeActiveMask();
+  } else {
+    _lastValidShape = shapePoints ? shapePoints.map(p => p.slice()) : null;
+  }
+  buildMesh();
+  reseedNewParticles(oldActive);
+  computeMeshNormals();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indexData, gl.STATIC_DRAW);
+  buildMaskTexture();
+}
+
+let _shapeRaf = null;
+function queueApplyShape() {
+  if (_shapeRaf) return;
+  _shapeRaf = requestAnimationFrame(() => { _shapeRaf = null; applyShape(false); });
+}
+
+// Drop shape state without rebuilding — fullRebuild() re-creates the whole
+// grid right after, so only the mask + UI need clearing here.
+function clearShapeState() {
+  shapePoints = null;
+  _lastValidShape = null;
+  clothActive = null;
+  cellActive = null;
+  if (maskTex) { gl.deleteTexture(maskTex); maskTex = null; }
+  updateShapeUI();
+}
+
+function resetShape() {
+  shapePoints = null;
+  _lastValidShape = null;
+  applyShape();
+  updateShapeUI();
 }
 
 // ─── Matrix utilities ────────────────────────────────────────
@@ -1104,7 +1399,20 @@ function resize() {
   canvas.height = window.innerHeight * dpr;
   gl.viewport(0, 0, canvas.width, canvas.height);
 }
-window.addEventListener('resize', resize);
+// Coalesce resize bursts — each resize() reallocates the backing canvas, so a
+// window drag shouldn't pay that per event. Leading call keeps the canvas
+// responsive, trailing call settles on the final size.
+let _resizeLast = 0, _resizeTimer = null;
+window.addEventListener('resize', () => {
+  const t = performance.now();
+  if (t - _resizeLast > 100) {
+    _resizeLast = t;
+    resize();
+  } else {
+    clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(() => { _resizeLast = performance.now(); resize(); }, 120);
+  }
+});
 resize();
 autoFrame();
 cam.curDist = cam.tgtDist; // no zoom animation on load
@@ -1115,7 +1423,10 @@ let partyMode = false, partyTime = 0;
 // Matte print mode — when true the cloth shader drops all specular/rim/sheen
 // (set live by the Matte toggle and forced on by the A5 print preset).
 let matteMode = false;
-let flatMode = false; // "turn off the flag effect" — render a flat plane, no wind
+// Cloth mode — 'full' = wind sim · 'slight' = gentle deterministic ripple
+// (name-tag prints) · 'flat' = plain panel, no cloth effect at all.
+let clothMode = 'full';
+let gentleTime = 0; // drives the slow drift of the slight-wave live preview
 
 function render(dt) {
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -1183,6 +1494,7 @@ function render(dt) {
   } else {
     gl.uniform1i(loc.uHasTex, 0);
   }
+  setMaskUniforms(isCustomShape());
 
   gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
   gl.bufferSubData(gl.ARRAY_BUFFER, 0, pos);
@@ -1459,6 +1771,9 @@ function softRatioUpdate(aw, ah) {
 
 // ─── Full rebuild ────────────────────────────────────────────
 function fullRebuild(aw, ah, smooth) {
+  // Ratio presets / Reset All / print presets start from a clean rectangle —
+  // the grid is rebuilt from scratch below, so only mask + UI need clearing.
+  clearShapeState();
   const oldW = flagW, oldH = flagH;
   const oldCols = cols, oldRows = rows;
   const oldPos = smooth && pos ? new Float32Array(pos) : null;
@@ -1649,9 +1964,140 @@ function setEditingAxis(axis) {
   });
 })();
 
-// Keep mini-preview in sync when the user clicks a preset ratio.
-const _origRatioClick = ratioRow.onclick;
 updateMiniPreview();
+
+// ── Custom shape editor — drag the outline points, double-click the flag to
+// add a point on the nearest edge, double-click a point to remove it. ──
+const miniShapeSvg = document.getElementById('miniShapeSvg');
+const miniShapePoly = document.getElementById('miniShapePoly');
+const shapeResetBtn = document.getElementById('shapeResetBtn');
+
+const RECT_POINTS = () => [[0, 0], [1, 0], [1, 1], [0, 1]];
+
+function materializeShape() {
+  if (!shapePoints) shapePoints = RECT_POINTS();
+}
+
+function shapePolyAttr() {
+  return (shapePoints || RECT_POINTS()).map(p => p[0] + ',' + p[1]).join(' ');
+}
+
+function positionShapeDot(el, p) {
+  el.style.left = (p[0] * 100) + '%';
+  el.style.top = (p[1] * 100) + '%';
+}
+
+function syncShapeOutline() {
+  const custom = isCustomShape();
+  miniFlagRect.classList.toggle('shaped', custom);
+  miniShapeSvg.style.display = custom ? 'block' : 'none';
+  miniShapePoly.setAttribute('points', shapePolyAttr());
+  shapeResetBtn.style.display = custom ? 'block' : 'none';
+}
+
+// Full refresh — also rebuilds the dot elements, so never call mid-drag
+// (it would destroy the dot holding the pointer capture).
+function updateShapeUI() {
+  syncShapeOutline();
+  miniFlagRect.querySelectorAll('.mini-shape-dot').forEach(el => el.remove());
+  (shapePoints || RECT_POINTS()).forEach((p, i) => {
+    const el = document.createElement('div');
+    el.className = 'mini-shape-dot';
+    el.dataset.pt = i;
+    el.title = 'Drag to move · double-click to remove';
+    positionShapeDot(el, p);
+    miniFlagRect.appendChild(el);
+  });
+}
+
+function insertShapePoint(u, v, pxW, pxH) {
+  let best = 0, bestPt = [u, v], bestD = Infinity;
+  for (let i = 0; i < shapePoints.length; i++) {
+    const a = shapePoints[i], b = shapePoints[(i + 1) % shapePoints.length];
+    // project the click onto each segment in on-screen pixel space
+    const ax = a[0] * pxW, ay = a[1] * pxH, bx = b[0] * pxW, by = b[1] * pxH;
+    const px = u * pxW, py = v * pxH;
+    const dx = bx - ax, dy = by - ay;
+    const L2 = dx * dx + dy * dy;
+    let t = L2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0.5;
+    t = clamp(t, 0.05, 0.95);
+    const qx = ax + dx * t, qy = ay + dy * t;
+    const d = (px - qx) ** 2 + (py - qy) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+      bestPt = [Math.round(qx / pxW * 100) / 100, Math.round(qy / pxH * 100) / 100];
+    }
+  }
+  shapePoints.splice(best + 1, 0, bestPt);
+}
+
+(function initShapeEditor() {
+  let sdrag = null;
+  const rectUV = e => {
+    const r = miniFlagRect.getBoundingClientRect();
+    return [
+      clamp(Math.round((e.clientX - r.left) / r.width * 100) / 100, 0, 1),
+      clamp(Math.round((e.clientY - r.top) / r.height * 100) / 100, 0, 1),
+    ];
+  };
+  const onMove = e => {
+    if (!sdrag) return;
+    materializeShape();
+    const [u, v] = rectUV(e);
+    const p = shapePoints[sdrag.idx];
+    if (p[0] === u && p[1] === v) return;
+    p[0] = u; p[1] = v;
+    sdrag.moved = true;
+    positionShapeDot(sdrag.el, p);
+    syncShapeOutline();
+    queueApplyShape();
+  };
+  const onUp = e => {
+    if (!sdrag) return;
+    sdrag.el.releasePointerCapture?.(e.pointerId);
+    const moved = sdrag.moved;
+    sdrag = null;
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    if (!moved) return; // plain click (e.g. half of a dblclick) — nothing to do
+    // Final apply — also snaps the UI back if the polygon went degenerate.
+    applyShape();
+    updateShapeUI();
+  };
+  miniFlagRect.addEventListener('pointerdown', e => {
+    const dot = e.target.closest('.mini-shape-dot');
+    if (!dot) return;
+    e.stopPropagation();
+    e.preventDefault();
+    sdrag = { el: dot, idx: +dot.dataset.pt };
+    dot.setPointerCapture?.(e.pointerId);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
+  miniFlagRect.addEventListener('dblclick', e => {
+    const dot = e.target.closest('.mini-shape-dot');
+    if (dot) {
+      const pts = shapePoints || RECT_POINTS();
+      if (pts.length <= 3) return; // a flag needs at least a triangle
+      materializeShape();
+      shapePoints.splice(+dot.dataset.pt, 1);
+      applyShape();
+      updateShapeUI();
+      return;
+    }
+    if (e.target.closest('.mini-edge, [data-handle], .mini-dim')) return;
+    const r = miniFlagRect.getBoundingClientRect();
+    const u = clamp((e.clientX - r.left) / r.width, 0, 1);
+    const v = clamp((e.clientY - r.top) / r.height, 0, 1);
+    materializeShape();
+    insertShapePoint(u, v, r.width, r.height);
+    applyShape();
+    updateShapeUI();
+  });
+  shapeResetBtn.addEventListener('click', resetShape);
+})();
+updateShapeUI();
 
 // Wind sliders
 function slider(id, valId, fn) {
@@ -1969,14 +2415,19 @@ function exportFlagPNG() {
     .then(blob => downloadBlob(blob, `flag-${outW}x${outH}.png`));
 }
 
-// Helper: trigger a browser download for a Blob.
+// Helper: trigger a browser download for a Blob. The anchor must be in the
+// document — Firefox ignores clicks on detached anchors, and Safari is more
+// reliable with it attached too.
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
 }
 
 // ── PDF export via jsPDF (loaded on demand from CDN, like the MP4 muxer) ──
@@ -2002,7 +2453,8 @@ async function exportFlagPDF() {
   const prev = btn ? btn.textContent : '';
   if (btn) { btn.textContent = 'PDF…'; btn.style.pointerEvents = 'none'; }
   try {
-    if (flatMode) flattenCloth();
+    if (clothMode === 'flat') flattenCloth();
+    else if (clothMode === 'slight') gentleClothPose(0, gentleTime);
     const [outW, outH] = getExportSize();
     const JsPDF = await getJsPDF();
     const blob = await renderFlagToBlob(outW, outH, matteMode);
@@ -2013,7 +2465,10 @@ async function exportFlagPDF() {
       : new JsPDF({ unit: 'px', format: [outW, outH], orientation: portrait ? 'portrait' : 'landscape' });
     const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
     doc.addImage(dataUrl, 'PNG', 0, 0, pw, ph);
-    doc.save(`flag-${outW}x${outH}.pdf`);
+    // Save through our own anchor download instead of doc.save() — jsPDF's
+    // bundled FileSaver falls back to window.open on Safari, where the popup
+    // blocker eats the PDF silently (no error, nothing in Downloads).
+    downloadBlob(doc.output('blob'), `flag-${outW}x${outH}.pdf`);
   } catch (e) {
     console.error('PDF export failed:', e);
     alert('PDF export failed: ' + (e && e.message ? e.message : e));
@@ -2066,10 +2521,13 @@ function renderFlagToBlob(outW, outH, matte, transparent) {
     }
   }
 
-  // Build triangle indices for dense mesh
+  // Build triangle indices for dense mesh. Each dense cell lies fully inside
+  // one coarse cell — skip those whose parent is trimmed away by the custom
+  // shape, so no triangles interpolate toward parked inactive particles.
   const eTriIdx = [];
   for (let j = 0; j < eRows - 1; j++) {
     for (let i = 0; i < eCols - 1; i++) {
+      if (cellActive && !cellActive[Math.floor(j / meshScale) * (cols - 1) + Math.floor(i / meshScale)]) continue;
       const a = j * eCols + i;
       eTriIdx.push(a, a + eCols, a + 1, a + 1, a + eCols, a + eCols + 1);
     }
@@ -2164,6 +2622,7 @@ function renderFlagToBlob(outW, outH, matte, transparent) {
   } else {
     gl.uniform1i(loc.uHasTex, 0);
   }
+  setMaskUniforms(isCustomShape());
 
   gl.bindBuffer(gl.ARRAY_BUFFER, ePosBuf);
   gl.enableVertexAttribArray(loc.aPos);
@@ -2504,6 +2963,10 @@ function applyPrintPreset() {
   matteMode = true;
   if (matteToggle) matteToggle.checked = true;
 
+  // Slight wave by default — every name tag stays legible with a gentle,
+  // per-row-unique crease (switchable back to Full / Flat afterwards).
+  setClothMode('slight');
+
   // Seed the print palette you specified (bg #D3FED1, text #00330A) — both
   // stay fully editable via the Studio tab colour controls afterwards.
   SIM.bgColor = hexToRgb('#D3FED1');
@@ -2575,6 +3038,7 @@ function applyStudentPreset() {
   // Free-flying banner that catches the wind; not a matte print surface.
   matteMode = false;
   if (matteToggle) matteToggle.checked = false;
+  setClothMode('full'); // animated loop wants the real cloth sim
   ATTACH.mode = 'corners';
   applyPinning();
   document.querySelectorAll('#attachRow .pill').forEach(b => b.classList.toggle('active', b.dataset.attach === 'corners'));
@@ -2815,8 +3279,11 @@ async function runBatchExport(format = 'zip', btn = batchExportBtn) {
     titleBlocks[3].text = (rec.www || '').replace(/\|/g, '\n');
     generateTextTexture(0);
 
-    // Flat = identical clean panel per row; otherwise advance wind for a unique pose.
-    if (flatMode) flattenCloth();
+    // Flat = identical clean panel per row; slight = unique-but-bounded ripple
+    // seeded by the row index (deterministic — re-exporting the same CSV gives
+    // identical files); full = advance wind for a unique untamed pose.
+    if (clothMode === 'flat') flattenCloth();
+    else if (clothMode === 'slight') gentleClothPose(i + 1);
     else for (let s = 0; s < STEP_FRAMES; s++) simulate(SIM_DT);
 
     const blob = await renderFlagToBlob(outW, outH, matteMode);
@@ -2856,7 +3323,8 @@ async function runBatchExport(format = 'zip', btn = batchExportBtn) {
   if (isPdf) {
     if (batchStatus) batchStatus.textContent = 'Saving PDF…';
     await new Promise(r => requestAnimationFrame(r));
-    doc.save(`flags-a5-${stamp}.pdf`);
+    // Same Safari-safe path as ZIP/PNG (see exportFlagPDF for why not doc.save).
+    downloadBlob(doc.output('blob'), `flags-a5-${stamp}.pdf`);
     if (batchStatus) batchStatus.textContent = `Done — ${count}-page PDF.`;
   } else {
     if (batchStatus) batchStatus.textContent = 'Packing ZIP…';
@@ -2876,11 +3344,19 @@ if (batchPdfBtn) batchPdfBtn.addEventListener('click', () => {
   runBatchExport('pdf', batchPdfBtn);
 });
 
-// ── Flat toggle + single PDF + PNG-frame-sequence wiring ──
-const flatToggle = document.getElementById('flatToggle');
-if (flatToggle) flatToggle.addEventListener('change', () => {
-  flatMode = flatToggle.checked;
-  if (flatMode) flattenCloth();
+// ── Cloth mode pills + single PDF + PNG-frame-sequence wiring ──
+const clothModeRow = document.getElementById('clothModeRow');
+function setClothMode(mode) {
+  clothMode = mode;
+  if (clothModeRow) clothModeRow.querySelectorAll('[data-cloth]')
+    .forEach(b => b.classList.toggle('active', b.dataset.cloth === mode));
+  if (mode === 'flat') flattenCloth();
+  else if (mode === 'slight') gentleClothPose(0, gentleTime);
+}
+if (clothModeRow) clothModeRow.addEventListener('click', e => {
+  const btn = e.target.closest('[data-cloth]');
+  if (!btn || btn.classList.contains('active')) return;
+  setClothMode(btn.dataset.cloth);
 });
 
 const pdfBtn = document.getElementById('pdfBtn');
@@ -2899,9 +3375,11 @@ async function runPngSequenceExport() {
   const total = REC_TOTAL_FRAMES; // 250 frames = 10s @ 25fps
   for (let f = 0; f < total; f++) {
     if (pngSeqCancel) break;
-    // Advance one video-frame's worth of motion (or hold flat), keeping text scroll in sync.
-    if (flatMode) {
-      flattenCloth();
+    // Advance one video-frame's worth of motion (or hold flat / drift the
+    // gentle ripple), keeping text scroll in sync.
+    if (clothMode !== 'full') {
+      if (clothMode === 'flat') flattenCloth();
+      else { gentleTime += SIM_DT * REC_STEPS; gentleClothPose(0, gentleTime); }
       if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
         textScrollTime += SIM_DT * REC_STEPS * textScrollSpeed * 2.5;
         generateTextTexture(textScrollTime);
@@ -3017,6 +3495,7 @@ function renderToFBO(fw, fh) {
   } else {
     gl.uniform1i(loc.uHasTex, 0);
   }
+  setMaskUniforms(isCustomShape());
 
   gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
   gl.bufferSubData(gl.ARRAY_BUFFER, 0, pos);
@@ -3380,15 +3859,20 @@ function loop(now) {
   // At alpha=1 the rendered geometry exactly matches sim frame L-1, so
   // output[N-1] → output[0] is a one-sim-step jump (visually continuous).
   if (someRecording && _recCtx && _encoder) {
+    let recScrollDirty = false;
     for (let i = 0; i < REC_STEPS; i++) {
-      if (!flatMode) simulate(SIM_DT);
+      if (clothMode === 'full') simulate(SIM_DT);
+      else if (clothMode === 'slight') gentleTime += SIM_DT;
       updateCamera(SIM_DT);
       if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
         textScrollTime += SIM_DT * textScrollSpeed * 2.5;
-        generateTextTexture(textScrollTime);
+        recScrollDirty = true;
       }
     }
-    if (flatMode) flattenCloth();
+    // Texture only needs to be current at capture time — once per frame.
+    if (recScrollDirty) generateTextTexture(textScrollTime);
+    if (clothMode === 'flat') flattenCloth();
+    else if (clothMode === 'slight') gentleClothPose(0, gentleTime);
     updateOrbitBall();
 
     const totalFramesForRun = _useSeamless ? REC_RAW_FRAMES : REC_TOTAL_FRAMES;
@@ -3472,16 +3956,22 @@ function loop(now) {
   simAccum += (now - lastTime) / 1000;
   lastTime = now;
   if (simAccum > 0.1) simAccum = 0.1;
+  let scrollDirty = false;
   while (simAccum >= SIM_DT) {
     simAccum -= SIM_DT;
-    if (!flatMode) simulate(SIM_DT);
+    if (clothMode === 'full') simulate(SIM_DT);
+    else if (clothMode === 'slight') gentleTime += SIM_DT;
     updateCamera(SIM_DT);
     if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
       textScrollTime += SIM_DT * textScrollSpeed * 2.5;
-      generateTextTexture(textScrollTime);
+      scrollDirty = true;
     }
   }
-  if (flatMode) flattenCloth();
+  // Regenerate the scrolled text texture once per rendered frame — repainting
+  // the 4K canvas per substep compounded lag on slow frames (2-3 substeps).
+  if (scrollDirty) generateTextTexture(textScrollTime);
+  if (clothMode === 'flat') flattenCloth();
+  else if (clothMode === 'slight') gentleClothPose(0, gentleTime);
   updateOrbitBall();
   render(SIM_DT);
 }

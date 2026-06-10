@@ -38,6 +38,7 @@
         <div class="mini-flag-preview">
           <div class="mini-flag-stage" id="miniFlagStage">
             <div class="mini-flag-rect" id="miniFlagRect">
+              <svg class="mini-shape-svg" id="miniShapeSvg" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true"><polygon id="miniShapePoly" fill-rule="evenodd"/></svg>
               <div class="mini-edge mini-edge-top" data-edge="h"></div>
               <div class="mini-edge mini-edge-bottom" data-edge="h"></div>
               <div class="mini-edge mini-edge-left" data-edge="w"></div>
@@ -48,6 +49,7 @@
             </div>
           </div>
         </div>
+        <button type="button" class="csv-template-link" id="shapeResetBtn" style="display:none">↺ Reset shape</button>
       </div>
     </div>
 
@@ -288,8 +290,15 @@ Can't Do</textarea>
         </div>
       </div>
       <div class="section">
+        <div class="section-label">Cloth</div>
+        <div class="pill-row" id="clothModeRow" style="gap:5px">
+          <button class="pill active" data-cloth="full">Full</button>
+          <button class="pill" data-cloth="slight">Slight wave</button>
+          <button class="pill" data-cloth="flat">Flat</button>
+        </div>
+      </div>
+      <div class="section">
         <div class="section-label">Export</div>
-        <label class="matte-row"><input type="checkbox" id="flatToggle"> Flat — no cloth effect</label>
         <button class="btn-export" id="someExportBtn">Export 10s Loop</button>
         <button class="btn-export" id="someSeqBtn" style="margin-top:8px">Export PNG sequence</button>
         <button class="btn-export" id="exportBtn" style="margin-top:8px">Export PNG</button>

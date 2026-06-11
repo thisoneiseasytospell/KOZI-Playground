@@ -18,6 +18,7 @@ const state = {
   angle: 0,               // halftone angle 0..45
   invert: false,
   outline: false,
+  voxel: false,           // render cells as gapped square voxels (pixel/LED grid)
   stroke: 1,
   gradient: false,        // Random mode: linear gradients in rectangles
   editRects: false,       // Random mode: show drag/resize handles
@@ -48,29 +49,76 @@ const state = {
   // Audio-reactivity rows: each maps a frequency band to a visual parameter
   // through an attack/decay envelope (`env`, updated per frame). Bass drives
   // both the size pulse and the speed surge so motion locks onto the kick.
+  // Modulation matrix: each row routes a SOURCE (band level, per-band hit, beat,
+  // BPM tick, or a generator) to a visual TARGET through an attack/release
+  // envelope. The three seeded rows reproduce the original hardcoded reactivity.
   audioMods: [
-    { target: 'cellSize',  band: 'bass', depth: 0.65, env: 0 },
-    { target: 'sparkle',   band: 'mid',  depth: 0.35, env: 0 },
-    { target: 'timeSpeed', band: 'bass', depth: 0.50, env: 0 },
+    { source: 'bass', target: 'cellSize',  depth: 0.65, attack: 45, release: 220, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
+    { source: 'beat', target: 'ripple',    depth: 0.55, attack: 45, release: 220, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
+    { source: 'bass', target: 'timeSpeed', depth: 0.50, attack: 45, release: 220, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
   ],
 };
 
-// How much each parameter swings at depth=1.0 with a normalized level of 1.0.
-// cellSize/morph are *multiplicative* (effective = base * (1 + range*depth*level))
-// so swing scales with the user's slider value. timeSpeed multiplies dt.
-const AUDIO_MOD_RANGE = {
-  cellSize:  2.0,   // strong bass pulse (up to ~3x base before clamp)
-  sparkle:   0.7,   // per-cell size jitter as fraction of cell size at peak
-  timeSpeed: 3.0,   // Noise/Strips surge up to ~4x on kicks (video leans gentler — see tick)
-};
-const AUDIO_MOD_CLAMP = {
-  cellSize: [0, 2],
-};
 function _clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+// ─── Modulation registries ───────────────────────────────────────
+// TARGETS: how each routable parameter responds. `apply:'mul'` scales the base
+// (effective = base × (1 + Σ·range)); `apply:'add'` offsets it (base + Σ·range).
+// `ripple`/`scan`/`flicker`/`timeSpeed`/`hue` have no base slider — they read Σ via
+// a synthetic base (0 or 1). New target = one entry here + one apply-site.
+const MOD_TARGETS = {
+  cellSize:      { label: 'Cell size',      apply: 'mul', range: 2.0, clamp: [0, 2] },
+  ripple:        { label: 'Ripple (pulse)', apply: 'add', range: 1.2 },
+  scan:          { label: 'Scan (sweep)',   apply: 'add', range: 1.4 },
+  flicker:       { label: 'Flicker (data)', apply: 'add', range: 1.0 },
+  timeSpeed:     { label: 'Playback speed', apply: 'mul', range: 3.0 },
+  density:       { label: 'Density',        apply: 'add', range: 36,  clamp: [4, 240] },
+  morph:         { label: 'Morph',          apply: 'add', range: 1.2, clamp: [0, 4] },
+  angle:         { label: 'Halftone angle', apply: 'add', range: 45,  clamp: [0, 45] },
+  noiseScale:    { label: 'Noise scale',    apply: 'add', range: 24,  clamp: [1, 120] },
+  noiseContrast: { label: 'Noise contrast', apply: 'add', range: 2.0, clamp: [0.2, 6] },
+  hue:           { label: 'Hue rotate',     apply: 'add', range: 180 },
+  stripCount:    { label: 'Strips · count', apply: 'add', range: 12,  clamp: [1, 64] },
+  stripPhase:    { label: 'Strips · phase', apply: 'add', range: 1.0 },
+  stripAnim:     { label: 'Strips · speed', apply: 'add', range: 3.0 },
+  stripAmp:      { label: 'Strips · warp',  apply: 'add', range: 1.0, clamp: [0, 2] },
+};
+
+// SOURCES: what drives a row. kind 'level' = continuous 0..1; 'event' = momentary
+// hit (drives a percussive attack/decay envelope); 'gen' = self-running LFO/saw/noise.
+const MOD_SOURCES = {
+  bass:         { label: 'Bass level',   kind: 'level', read: () => enodeAudio.levels.bass },
+  mid:          { label: 'Mid level',    kind: 'level', read: () => enodeAudio.levels.mid },
+  treble:       { label: 'Treble level', kind: 'level', read: () => enodeAudio.levels.treble },
+  rms:          { label: 'Volume',       kind: 'level', read: () => enodeAudio.levels.rms },
+  beat:         { label: 'Beat (kick)',  kind: 'event', read: () => enodeAudio.beat },
+  'hit.bass':   { label: 'Hit · bass',   kind: 'event', read: () => enodeAudio.onsets.bass },
+  'hit.mid':    { label: 'Hit · snare',  kind: 'event', read: () => enodeAudio.onsets.mid },
+  'hit.treble': { label: 'Hit · hat',    kind: 'event', read: () => enodeAudio.onsets.treble },
+  'beat/1':     { label: 'BPM · 1',      kind: 'event', read: () => bpmTick(1) },
+  'beat/2':     { label: 'BPM · 2',      kind: 'event', read: () => bpmTick(2) },
+  'beat/4':     { label: 'BPM · 4',      kind: 'event', read: () => bpmTick(4) },
+  'beat/8':     { label: 'BPM · 8',      kind: 'event', read: () => bpmTick(8) },
+  'beat/16':    { label: 'BPM · 16',     kind: 'event', read: () => bpmTick(16) },
+  lfo:          { label: 'LFO (sine)',   kind: 'gen' },
+  saw:          { label: 'Ramp (saw)',   kind: 'gen' },
+  noise:        { label: 'Noise',        kind: 'gen' },
+};
+function bpmTick(n) { return !!(window.enodeBpm && enodeBpm.onBeat[n]); }
+
+// Display order for the pickers.
+const MOD_SOURCE_ORDER = ['bass','mid','treble','rms','beat','hit.bass','hit.mid','hit.treble','beat/1','beat/2','beat/4','beat/8','beat/16','lfo','saw','noise'];
+const MOD_TARGET_ORDER = ['cellSize','ripple','scan','flicker','timeSpeed','density','morph','angle','noiseScale','noiseContrast','hue','stripCount','stripPhase','stripAnim','stripAmp'];
+
+// Generators: free-run speed (slider 0..1 → ~0.15..2 Hz) or quantized BPM sync.
+const GEN_SYNC_BEATS = [16, 8, 4, 2, 1];
 
 // Color-mode helper: returns an HSL color whose hue is weighted by spectral
 // balance. Bass-heavy → warm red, mid-heavy → green, treble-heavy → blue.
 // Lightness lifts a touch with overall loudness so quiet sections aren't dim.
+// Smoothed band-balance colour. The raw hue jumps every frame as the spectrum
+// shifts, which strobes; a heavy EMA makes it drift slowly between hues instead.
+let _bandHue = 120, _bandLight = 50;
 function audioBandColor() {
   if (!window.enodeAudio) return null;
   const bs = enodeAudio.levels.bass;
@@ -80,37 +128,74 @@ function audioBandColor() {
   if (total < 0.05) return null; // near-silence: don't override FG
   // Hue stops: bass ~14° (red-orange), mid ~120° (green), treble ~220° (blue)
   const hue = (14 * bs + 120 * ms + 220 * ts) / total;
-  const sat = 75;
   const light = 50 + Math.min(15, total * 6);
-  return `hsl(${hue.toFixed(1)}, ${sat}%, ${light.toFixed(1)}%)`;
+  _bandHue   += (hue   - _bandHue)   * 0.03;   // ~0.4 s glide @60fps
+  _bandLight += (light - _bandLight) * 0.03;
+  return `hsl(${_bandHue.toFixed(1)}, 75%, ${_bandLight.toFixed(1)}%)`;
 }
 
-function audioMod(target) {
-  if (!window.enodeAudio || !state.audioMods) return 0;
-  let total = 0;
-  for (const m of state.audioMods) {
-    if (m.target === target && m.depth > 0) total += (m.env || 0) * m.depth;
+// dt → EMA factor for a time constant (ms); framerate-independent.
+function modAlpha(tau, dt) { return 1 - Math.exp(-(dt || 16) / Math.max(1, tau)); }
+// Probability gate for event rows (chance < 1 thins out hits for variation).
+function chance(p) { return p >= 1 || Math.random() < p; }
+
+// Advance + sample a generator row → 0..1.
+function generatorValue(m, dt) {
+  let p;
+  if (m.bpmSync && window.enodeBpm) {
+    const i = _clamp(Math.floor(m.speed * GEN_SYNC_BEATS.length), 0, GEN_SYNC_BEATS.length - 1);
+    p = enodeBpm.rhythm(GEN_SYNC_BEATS[i]);
+  } else {
+    m.phase = (m.phase || 0) + (0.15 + m.speed * 1.85) * ((dt || 16) / 1000);
+    p = m.phase;
   }
-  return total;
+  if (m.source === 'saw') return ((p % 1) + 1) % 1;
+  if (m.source === 'noise') {
+    if (m._seed === undefined) m._seed = Math.random() * 1000;
+    return (simplex.noise3D(p * 1.3, m._seed, 0) + 1) / 2;
+  }
+  return 0.5 + 0.5 * Math.sin(p * Math.PI * 2); // lfo
 }
 
-// Attack/release envelope per modulator (ms). Fast snap up so a kick lands on
-// the frame it hits; musical release so it falls back in time with the groove
-// instead of either strobing or smearing. dt-based → framerate-independent.
-const MOD_ATTACK_TAU = 45;
-const MOD_RELEASE_TAU = 220;
-function updateAudioMods(dt) {
+// Per-frame: advance every row's envelope/generator → m.env (0..1) and m._value
+// (depth-scaled, post-invert). `level` sources chase the band with attack/release;
+// `event` sources snap to 1 on a hit (instant attack) then decay; `gen` is direct.
+function updateMods(dt) {
   if (!window.enodeAudio || !state.audioMods) return;
   for (const m of state.audioMods) {
-    // Use normalized levels (rolling-max per band) so modulation reaches full
-    // swing regardless of how loud the track itself is. `beat` stays binary.
-    const tgt = m.band === 'beat'
-      ? (enodeAudio.beat ? 1 : 0)
-      : (enodeAudio.levels[m.band] || 0);
-    const tau = tgt > (m.env || 0) ? MOD_ATTACK_TAU : MOD_RELEASE_TAU;
-    const a = 1 - Math.exp(-(dt || 16) / tau);
-    m.env = (m.env || 0) + (tgt - (m.env || 0)) * a;
+    const src = MOD_SOURCES[m.source];
+    if (!src) { m.env = 0; m._value = 0; continue; }
+    if (src.kind === 'gen') {
+      m.env = generatorValue(m, dt);
+    } else if (src.kind === 'event') {
+      if (src.read() && chance(m.chance)) m.env = 1;
+      else m.env += (0 - m.env) * modAlpha(m.release, dt);
+    } else {
+      const tgt = src.read() || 0;
+      m.env += (tgt - m.env) * modAlpha(tgt > m.env ? m.attack : m.release, dt);
+    }
+    m._value = (m.invert ? 1 - m.env : m.env) * m.depth;
   }
+}
+
+// Σ of depth-scaled values for a target across all rows.
+function modSum(target) {
+  if (!state.audioMods) return 0;
+  let s = 0;
+  for (const m of state.audioMods) if (m.target === target) s += (m._value || 0);
+  return s;
+}
+
+// Apply a target's modulation to a base value (live render only). Returns the
+// base unchanged when nothing drives that target.
+function applyMods(base, target) {
+  const t = MOD_TARGETS[target];
+  if (!t) return base;
+  const sum = modSum(target);
+  if (sum === 0) return base;
+  let v = t.apply === 'mul' ? base * (1 + sum * t.range) : base + sum * t.range;
+  if (t.clamp) v = _clamp(v, t.clamp[0], t.clamp[1]);
+  return v;
 }
 
 const DEMO_VIDEO_URL = 'demo/demo.mp4';
@@ -165,7 +250,7 @@ let imageEl = null;
 let cameraStream = null;
 let cameraVideo = null;
 let time = 0;
-let animClock = 0;          // wall-clock seconds; drives sparkle in every mode
+let animClock = 0;          // wall-clock seconds; drives the per-cell effects in every mode
 let videoRateSmooth = 1;    // smoothed video playback rate (gentle audio tempo lean)
 let smoothed = [];
 let lastDensity = 0;
@@ -391,10 +476,18 @@ function stripsValue(x, y, t, p) {
   // ── Continuous wave field (no cell snapping → fluid, not pixelated). ──
   // Bands stack along `u`; the cross-axis `w` skews them into diagonal flow.
   // Flip-axis swaps the two so the bands stream vertically instead.
-  const u = p.vertical ? x : yEff;
-  const w = p.vertical ? yEff : x;
+  let u = p.vertical ? x : yEff;
+  let w = p.vertical ? yEff : x;
 
   const bands = Math.max(1, p.count);
+  // Square mode (Voxel toggle): snap the sampling coords to a grid so the bands
+  // break into hard rectangular blocks instead of flowing — the warp + wave then
+  // read as steps. The Source preview and exports honour this too.
+  if (p.square) {
+    const gx = Math.max(2, Math.round(bands * 2));
+    u = (Math.floor(u * gx) + 0.5) / gx;
+    w = (Math.floor(w * gx) + 0.5) / gx;
+  }
   // Smooth domain-warp so the waves bend organically (amplitude = how much,
   // noiseRatio = how fine). Sampling continuous coords keeps it gradient-smooth.
   const ns = Math.max(0.001, p.noiseRatio) * 0.05;
@@ -435,6 +528,25 @@ function hexToRgb(hex) {
   };
 }
 
+// Rotate a hex color's hue by `deg` (for the `hue` mod target). Returns an hsl()
+// string with the source saturation/lightness preserved.
+function rotateHue(hex, deg) {
+  const { r, g, b } = hexToRgb(hex);
+  const rn = r / 255, gn = g / 255, bn = b / 255;
+  const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+  let h = 0, s = 0; const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === rn)      h = (gn - bn) / d + (gn < bn ? 6 : 0);
+    else if (max === gn) h = (bn - rn) / d + 2;
+    else                 h = (rn - gn) / d + 4;
+    h /= 6;
+  }
+  h = ((h * 360 + deg) % 360 + 360) % 360;
+  return `hsl(${h.toFixed(1)}, ${(s * 100).toFixed(1)}%, ${(l * 100).toFixed(1)}%)`;
+}
+
 // ─── Canvas sizing ──────────────────────────────────────────────
 function setExportSize(w, h) {
   state.exportW = Math.max(2, Math.round(w));
@@ -473,22 +585,39 @@ function applyAspect(val) {
 window.addEventListener('resize', fitCanvasToStage);
 
 // ─── Renderer ───────────────────────────────────────────────────
+// Voxel render: each cell becomes a gapped square tile switched fully on/off by
+// a threshold, so a field reads as a discrete pixel/LED grid instead of dots.
+const VOXEL_GAP = 0.18;        // fraction of each cell left empty (the grid gap)
+const VOXEL_THRESHOLD = 0.5;   // value at/above which a tile is "on"
+// Deterministic per-cell hash (0..1) — drives the Flicker effect's addressing.
+function _hashCell(i, j, k) {
+  const h = Math.sin(i * 127.1 + j * 311.7 + k * 74.7) * 43758.5453;
+  return h - Math.floor(h);
+}
 function drawScene(targetCtx, w, h, opts) {
   opts = opts || {};
-  // Audio modulation: applied only on live render. Variation thumbnails and
-  // exports use the smoothing-disabled path (noSmoothing) and stay static.
-  // cellSize is multiplicative so swing scales with the user's base slider.
-  // Sparkle is a per-cell jitter amplitude applied inside the inner loop.
   const liveMod = !opts.noSmoothing;
-  const modCSFactor = 1 + (liveMod ? audioMod('cellSize') * AUDIO_MOD_RANGE.cellSize : 0);
-  const sparkleAmt  = liveMod ? audioMod('sparkle') * AUDIO_MOD_RANGE.sparkle : 0;
 
-  const density = Math.floor(opts.density != null ? opts.density : state.density);
+  // Each modulatable param reads its base from state and is pushed by the matrix
+  // via applyMods() — but only on the live render. Variation thumbnails / exports
+  // use the noSmoothing path (liveMod=false) and stay static, never modulated.
+  const density = Math.floor(opts.density != null ? opts.density
+      : (liveMod ? applyMods(state.density, 'density') : state.density));
   const cellSizeMul = opts.cellSize != null
       ? opts.cellSize
-      : _clamp(state.cellSize * modCSFactor, AUDIO_MOD_CLAMP.cellSize[0], AUDIO_MOD_CLAMP.cellSize[1]);
-  const morph = state.morph;
-  const angle = (opts.angle != null ? opts.angle : state.angle) * Math.PI / 180;
+      : (liveMod ? applyMods(state.cellSize, 'cellSize') : state.cellSize);
+  // timeSpeed / hue / the per-cell effects have no base slider — they read Σ via a
+  // synthetic base. Ripple / Scan / Flicker replace the old sparkle jitter.
+  const rippleAmt  = liveMod ? applyMods(0, 'ripple')  : 0;
+  const scanAmt    = liveMod ? applyMods(0, 'scan')    : 0;
+  const flickerAmt = liveMod ? applyMods(0, 'flicker') : 0;
+  const fxActive = rippleAmt > 0.001 || scanAmt > 0.001 || flickerAmt > 0.001;
+  const scanPos = (animClock * 0.35) % 1;           // scan sweep position 0..1
+  const flickerFrame = Math.floor(animClock * 14);  // flicker refresh rate
+  const morph = liveMod ? applyMods(state.morph, 'morph') : state.morph;
+  const angleDeg = opts.angle != null ? opts.angle
+      : (liveMod ? applyMods(state.angle, 'angle') : state.angle);
+  const angle = angleDeg * Math.PI / 180;
   // Audio Strips keeps the buffer smoothing on — combined with soft-edge
   // strip values it gives the fluid "animated chart" feel.
   const reactionLerp = state.reaction / 100;
@@ -496,14 +625,31 @@ function drawScene(targetCtx, w, h, opts) {
   // the next one — rhythmic color swap rather than a single-frame strobe.
   const invert = (liveMod && audioInvertFlip) ? !state.invert : state.invert;
   const outline = state.outline;
+  const voxel = state.voxel;
   const stroke = state.stroke;
-  // Color mode: override FG with a band-weighted hue. The user's BG slider
-  // still applies. Falls back to state.fg when audio is silent or off.
+  // Color mode overrides FG with a band-weighted hue; otherwise a `hue` mod row
+  // can rotate the FG hue. The user's BG slider still applies. Falls back to
+  // state.fg when audio is silent / off.
   const bandFg = (liveMod && state.audioColorMode) ? audioBandColor() : null;
-  const fg = bandFg || state.fg;
+  const hueRot = liveMod ? modSum('hue') * MOD_TARGETS.hue.range : 0;
+  const fg = bandFg || (hueRot !== 0 ? rotateHue(state.fg, hueRot) : state.fg);
   const bg = state.bg;
-  const noiseScale = 1 / (state.noiseScale * 2 + 0.1);
+  const noiseScaleBase = liveMod ? applyMods(state.noiseScale, 'noiseScale') : state.noiseScale;
+  const noiseScale = 1 / (noiseScaleBase * 2 + 0.1);
+  const noiseContrast = liveMod ? applyMods(state.noiseContrast, 'noiseContrast') : state.noiseContrast;
   const mode = state.mode;
+  // Strips params: square mode (Voxel) folds in everywhere; live modulation only
+  // on the live render (exports/thumbnails keep static param values).
+  let stripsParams = state.strips;
+  if (mode === 'Strips' && (voxel || liveMod)) {
+    stripsParams = { ...state.strips, square: voxel };
+    if (liveMod) {
+      stripsParams.count      = applyMods(state.strips.count,      'stripCount');
+      stripsParams.phaseShift = applyMods(state.strips.phaseShift, 'stripPhase');
+      stripsParams.animSpeed  = applyMods(state.strips.animSpeed,  'stripAnim');
+      stripsParams.amplitude  = applyMods(state.strips.amplitude,  'stripAmp');
+    }
+  }
 
   // BG
   targetCtx.fillStyle = bg;
@@ -575,11 +721,11 @@ function drawScene(targetCtx, w, h, opts) {
       let target;
       const inBounds = i >= 0 && i < density && j >= 0 && j < rows;
       if (mode === 'Noise') {
-        target = sampleNoise(state.noiseType, i, j, time, noiseScale, state.noiseContrast);
+        target = sampleNoise(state.noiseType, i, j, time, noiseScale, noiseContrast);
       } else if (mode === 'Strips') {
         const nx = density > 1 ? i / (density - 1) : 0;
         const ny = rows > 1 ? j / (rows - 1) : 0;
-        target = stripsValue(nx, ny, time, state.strips);
+        target = stripsValue(nx, ny, time, stripsParams);
       } else if (sampleData && inBounds) {
         const idx = (j * density + i) * 4;
         target = (0.299 * sampleData[idx] + 0.587 * sampleData[idx + 1] + 0.114 * sampleData[idx + 2]) / 255;
@@ -611,16 +757,44 @@ function drawScene(targetCtx, w, h, opts) {
 
       const x = i * cellSize + cellSize / 2;
       const y = j * cellSize + cellSize / 2;
-      // Sparkle: per-cell size jitter driven by the mid band. The trig hash
-      // gives each cell a unique-but-deterministic phase so the field
-      // twinkles instead of pulsing uniformly.
-      let sparkle = 0;
-      if (sparkleAmt > 0) {
-        // animClock (not `time`) so the twinkle actually animates in Video /
-        // Image / Camera / Random too — `time` only advances for Noise/Strips.
-        sparkle = Math.sin(i * 5.13 + j * 7.91 + animClock * 14) * sparkleAmt;
+
+      // Technical per-cell effects (replace sparkle): ripple radiates from the
+      // centre (one integration → all devices), scan sweeps a column across, and
+      // flicker addresses cells like device telemetry. They add to the cell
+      // value, so they read in both dot and voxel rendering.
+      if (fxActive) {
+        const ncx = (i + 0.5) / density, ncy = (j + 0.5) / rows;
+        let boost = 0;
+        if (rippleAmt > 0.001) {
+          const dx = ncx - 0.5, dy = ncy - 0.5;
+          boost += rippleAmt * Math.sin(Math.sqrt(dx * dx + dy * dy) * 26 - animClock * 5) * 0.5;
+        }
+        if (scanAmt > 0.001) {
+          let d = Math.abs(ncx - scanPos); d = Math.min(d, 1 - d);
+          boost += scanAmt * Math.max(0, 1 - d * 10);
+        }
+        if (flickerAmt > 0.001) {
+          const r = _hashCell(i, j, flickerFrame);
+          if (r > 0.62) boost += flickerAmt * (0.5 + r * 0.5);
+        }
+        val += boost;
+        if (val < 0) val = 0; else if (val > 1) val = 1;
       }
-      const size = cellSize * cellSizeMul * val * (1 + sparkle);
+
+      // Voxel: gapped square tile, on/off by threshold → pixel/LED-grid look.
+      // cellSizeMul (audio) shrinks tiles but is clamped so they never overlap.
+      if (voxel) {
+        if (val >= VOXEL_THRESHOLD) {
+          const s = cellSize * Math.min(1, cellSizeMul) * (1 - VOXEL_GAP);
+          if (s > (outline ? Math.max(2, stroke * 3) : 0.5)) {
+            if (outline) targetCtx.strokeRect(x - s / 2, y - s / 2, s, s);
+            else targetCtx.fillRect(x - s / 2, y - s / 2, s, s);
+          }
+        }
+        continue;
+      }
+
+      const size = cellSize * cellSizeMul * val;
       const radius = (size / 2) * Math.min(1, val * morph);
 
       // Outline mode: skip cells that are too small for a clean stroke. A 1px
@@ -655,12 +829,14 @@ function tick(now) {
   requestAnimationFrame(tick);
   const dt = _lastTickT ? (now - _lastTickT) : 16;
   _lastTickT = now;
-  animClock = now / 1000;   // always-advancing wall clock (drives sparkle in all modes)
+  animClock = now / 1000;   // always-advancing wall clock (drives the per-cell effects in all modes)
 
-  // Update audio first so this frame's modulators read fresh band levels.
+  // Advance the BPM grid + audio first so this frame's modulators read fresh
+  // band levels, onsets, and beat ticks.
+  if (window.enodeBpm) enodeBpm.update();
   if (window.enodeAudio) {
     enodeAudio.update(dt);
-    updateAudioMods(dt);
+    updateMods(dt);
     // Toggle the invert flag on each detected beat; reset when feature is off.
     if (state.audioBeatInvert) {
       if (enodeAudio.beat) audioInvertFlip = !audioInvertFlip;
@@ -671,12 +847,12 @@ function tick(now) {
 
   // Bass-driven speed surge for the generative modes so Noise/Strips visibly
   // move with the kick. (Video uses a much gentler, smoothed lean below.)
-  const speedBoost = 1 + audioMod('timeSpeed') * AUDIO_MOD_RANGE.timeSpeed;
+  const speedBoost = applyMods(1, 'timeSpeed');
   if (state.playing && state.mode === 'Noise')  time += state.speed * (dt / 1000) * speedBoost;
   if (state.playing && state.mode === 'Strips') time += (dt / 1000) * speedBoost;
   // Video: a gentle, heavily-smoothed tempo lean — never the old 0.5–4× lurch.
   if (state.mode === 'Video' && activeVideo && activeVideo.readyState >= 2) {
-    const targetRate = 1 + audioMod('timeSpeed') * 0.35;   // ~1.0–1.35
+    const targetRate = 1 + modSum('timeSpeed') * 0.35;   // ~1.0–1.35
     videoRateSmooth += (targetRate - videoRateSmooth) * (1 - Math.exp(-dt / 400));
     const rate = Math.max(0.9, Math.min(1.5, videoRateSmooth));
     if (Math.abs(activeVideo.playbackRate - rate) > 0.01) activeVideo.playbackRate = rate;
@@ -990,6 +1166,7 @@ noiseContrastEl.addEventListener('input', e => {
 // Big toggle chips replace the old <input type=checkbox> controls.
 const chipInvert = document.getElementById('chipInvert');
 const chipOutline = document.getElementById('chipOutline');
+const chipVoxel = document.getElementById('chipVoxel');
 const chipGradient = document.getElementById('chipGradient');
 
 chipInvert.addEventListener('click', () => {
@@ -1005,6 +1182,10 @@ chipGradient.addEventListener('click', () => {
   state.gradient = !state.gradient;
   chipGradient.classList.toggle('active', state.gradient);
   if (state.mode === 'Random') rebuildRandomSource();
+});
+if (chipVoxel) chipVoxel.addEventListener('click', () => {
+  state.voxel = !state.voxel;
+  chipVoxel.classList.toggle('active', state.voxel);
 });
 
 // Color combo presets — pair of (fg, bg) one-click
@@ -1748,10 +1929,11 @@ function updateSourcePreview() {
   if (state.mode === 'Strips') {
     sourcePreviewCtx.fillStyle = '#202020';
     sourcePreviewCtx.fillRect(0, 0, targetW, targetH);
+    const sp = state.voxel ? { ...state.strips, square: true } : state.strips;
     const step = 3;
     for (let i = 0; i < targetW; i += step) {
       for (let j = 0; j < targetH; j += step) {
-        const v = stripsValue(i / Math.max(1, targetW - 1), j / Math.max(1, targetH - 1), time, state.strips);
+        const v = stripsValue(i / Math.max(1, targetW - 1), j / Math.max(1, targetH - 1), time, sp);
         const g = Math.round(v * 255);
         sourcePreviewCtx.fillStyle = `rgb(${g},${g},${g})`;
         sourcePreviewCtx.fillRect(i, j, step, step);
@@ -1958,6 +2140,7 @@ const audioTimeEl     = document.getElementById('audioTime');
 const audioStatusEl   = document.getElementById('audioStatus');
 const audioVizCanvas  = document.getElementById('audioViz');
 const audioVizCtx     = audioVizCanvas.getContext('2d');
+const soundAnalysisEl = document.getElementById('soundAnalysis');
 const audioDrop       = document.getElementById('audioDrop');
 
 let audioSeekDragging = false;
@@ -1977,7 +2160,7 @@ function loadAudioTrack(url, displayName) {
   enodeAudio.play();
   // UI updates
   audioTransport.style.display = '';
-  audioVizCanvas.style.display = '';
+  if (soundAnalysisEl) soundAnalysisEl.style.display = '';
   audioStatusEl.textContent = displayName || '';
   audioStatusEl.classList.add('live');
   // Highlight matching track button (if any)
@@ -2054,59 +2237,156 @@ function updatePlayIcon() {
 
 enodeAudio.onTransport(updatePlayIcon);
 
-// ─── Modulator panel ───────────────────────────────────────────
-// Locked target → label + tiny hint about what band drives it. Bands are
-// fixed (no per-row picker) because each pairing is what reads best musically.
-const MOD_META = {
-  cellSize:  { label: 'Cell size',       hint: 'pulses on bass' },
-  sparkle:   { label: 'Sparkle',         hint: 'twinkles on mids' },
-  timeSpeed: { label: 'Playback speed',  hint: 'surges on the beat' },
-};
+// ─── Modulation matrix ─────────────────────────────────────────
+// Each row routes a SOURCE (band level / per-band hit / beat / BPM tick /
+// generator) to a visual TARGET. The advanced panel exposes the envelope, hit
+// chance, and generator speed; its visible fields adapt to the source kind.
 const modListEl = document.getElementById('modList');
+
+function modOptions(ids, registry, selected) {
+  return ids.map(id => `<option value="${id}"${id === selected ? ' selected' : ''}>${registry[id].label}</option>`).join('');
+}
+
+// Advanced controls vary by source kind: levels expose attack+release; events a
+// decay + a probability gate; generators a speed + BPM-sync. All offer invert.
+function modAdvHtml(m) {
+  const kind = (MOD_SOURCES[m.source] || {}).kind || 'level';
+  const sl = (k, label, min, max, step, val) =>
+    `<label class="mod-adv-field"><span>${label}</span><input type="range" class="mod-adv" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${val}"></label>`;
+  const cb = (k, label, val) =>
+    `<label class="mod-adv-check"><input type="checkbox" class="mod-adv" data-k="${k}"${val ? ' checked' : ''}><span>${label}</span></label>`;
+  // Attack/release are kept at sensible fixed defaults (snappy attack, musical
+  // release) — only the controls users actually reach for are exposed.
+  if (kind === 'level') return cb('invert', 'Invert', m.invert);
+  if (kind === 'event') return sl('chance', 'Chance', 0, 1, 0.01, m.chance) + cb('invert', 'Invert', m.invert);
+  return sl('speed', 'Speed', 0, 1, 0.01, m.speed) + cb('bpmSync', 'BPM sync', m.bpmSync) + cb('invert', 'Invert', m.invert);
+}
 
 function renderModList() {
   modListEl.innerHTML = '';
   state.audioMods.forEach((m, i) => {
-    const meta = MOD_META[m.target] || { label: m.target, hint: '' };
     const row = document.createElement('div');
     row.className = 'mod-row';
     row.dataset.index = String(i);
     row.innerHTML = `
       <div class="mod-row-head">
-        <span><span class="mod-target">${meta.label}</span>
-          <span class="mod-hint">${meta.hint}</span>
-        </span>
+        <select class="mod-src" data-k="source" title="Source">${modOptions(MOD_SOURCE_ORDER, MOD_SOURCES, m.source)}</select>
+        <span class="mod-arrow">→</span>
+        <select class="mod-tgt" data-k="target" title="Target">${modOptions(MOD_TARGET_ORDER, MOD_TARGETS, m.target)}</select>
+        <button class="mod-icon mod-adv-toggle" title="Advanced" aria-label="Advanced">⋯</button>
+        <button class="mod-icon mod-remove" title="Remove" aria-label="Remove">×</button>
+      </div>
+      <div class="mod-depth-row">
+        <input type="range" class="mod-depth" min="0" max="1" step="0.01" value="${m.depth}">
         <span class="mod-depth-val">${m.depth.toFixed(2)}</span>
       </div>
-      <input type="range" class="mod-depth" min="0" max="1" step="0.01" value="${m.depth}">
+      <div class="mod-adv-panel" hidden>${modAdvHtml(m)}</div>
     `;
     modListEl.appendChild(row);
   });
 }
 
-modListEl.addEventListener('input', e => {
-  if (!e.target.classList.contains('mod-depth')) return;
+function modRowOf(e) {
   const row = e.target.closest('.mod-row');
-  const idx = +row.dataset.index;
-  const v = parseFloat(e.target.value);
-  state.audioMods[idx].depth = v;
-  row.querySelector('.mod-depth-val').textContent = v.toFixed(2);
+  return row ? { row, m: state.audioMods[+row.dataset.index] } : null;
+}
+
+modListEl.addEventListener('input', e => {
+  const ctx = modRowOf(e); if (!ctx || !ctx.m) return;
+  if (e.target.classList.contains('mod-depth')) {
+    ctx.m.depth = parseFloat(e.target.value);
+    ctx.row.querySelector('.mod-depth-val').textContent = ctx.m.depth.toFixed(2);
+  } else if (e.target.classList.contains('mod-adv') && e.target.type === 'range') {
+    ctx.m[e.target.dataset.k] = parseFloat(e.target.value);
+  }
 });
 
-// Light up a row's label when its envelope is firing, so the user sees which
-// param is currently being pushed by the music.
+modListEl.addEventListener('change', e => {
+  const ctx = modRowOf(e); if (!ctx || !ctx.m) return;
+  const k = e.target.dataset.k;
+  if (k === 'source') {
+    ctx.m.source = e.target.value;
+    ctx.m.env = 0; ctx.m.phase = 0; ctx.m._value = 0; delete ctx.m._seed;
+    renderModList();                    // advanced fields depend on source kind
+  } else if (k === 'target') {
+    ctx.m.target = e.target.value;
+  } else if (e.target.classList.contains('mod-adv') && e.target.type === 'checkbox') {
+    ctx.m[k] = e.target.checked;
+  }
+});
+
+modListEl.addEventListener('click', e => {
+  if (e.target.classList.contains('mod-adv-toggle')) {
+    const panel = e.target.closest('.mod-row').querySelector('.mod-adv-panel');
+    if (panel) panel.hidden = !panel.hidden;
+  } else if (e.target.classList.contains('mod-remove')) {
+    const row = e.target.closest('.mod-row');
+    state.audioMods.splice(+row.dataset.index, 1);
+    renderModList();
+  }
+});
+
+const modAddBtn = document.getElementById('modAddBtn');
+if (modAddBtn) modAddBtn.addEventListener('click', () => {
+  state.audioMods.push({ source: 'treble', target: 'angle', depth: 0.5, attack: 45, release: 220, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 });
+  renderModList();
+});
+
+// Randomize: build a fresh set of routings that still "makes sense" — low-end &
+// beats drive structural params, mids drive texture, highs drive fine/fast ones,
+// and generators add slow drift. One target per row so they don't pile up.
+const RANDOM_POOLS = [
+  { src: ['bass', 'beat', 'hit.bass', 'beat/4'], tgt: ['cellSize', 'density', 'stripCount', 'timeSpeed', 'ripple'] },
+  { src: ['mid', 'hit.mid', 'rms'],              tgt: ['morph', 'noiseContrast', 'stripPhase', 'scan'] },
+  { src: ['treble', 'hit.treble', 'beat/8'],     tgt: ['angle', 'noiseScale', 'hue', 'flicker'] },
+  { src: ['lfo', 'noise', 'saw'],                tgt: ['hue', 'noiseScale', 'stripAnim', 'angle'] },
+];
+const _pick = a => a[Math.floor(Math.random() * a.length)];
+function randomizeMods() {
+  const used = new Set();
+  const rows = [];
+  for (const pool of RANDOM_POOLS) {
+    const free = pool.tgt.filter(t => !used.has(t));
+    if (!free.length) continue;
+    const target = _pick(free);
+    used.add(target);
+    rows.push({
+      source: _pick(pool.src), target,
+      depth: +(0.45 + Math.random() * 0.45).toFixed(2),
+      attack: 45, release: 220, chance: 1, invert: Math.random() < 0.15,
+      speed: +(0.2 + Math.random() * 0.6).toFixed(2), bpmSync: Math.random() < 0.5,
+      env: 0, phase: 0,
+    });
+  }
+  if (rows.length) { state.audioMods = rows; renderModList(); }
+}
+const modRandomBtn = document.getElementById('modRandomBtn');
+if (modRandomBtn) modRandomBtn.addEventListener('click', randomizeMods);
+
+// Light up a row while its value is pushing the visual, so the user sees which
+// routing is currently active.
 function modRowsTick() {
-  if (!modListEl.children.length) return;
+  const rows = modListEl.children;
+  if (!rows.length) return;
   for (let i = 0; i < state.audioMods.length; i++) {
-    const row = modListEl.children[i];
-    if (!row) continue;
-    const m = state.audioMods[i];
-    const active = m.depth > 0 && (m.env || 0) > 0.08;
-    row.classList.toggle('live', active);
+    const row = rows[i];
+    if (row) row.classList.toggle('live', (state.audioMods[i]._value || 0) > 0.04);
   }
 }
 
 renderModList();
+
+// ─── BPM controls ──────────────────────────────────────────────
+const bpmInput  = document.getElementById('bpmInput');
+const bpmDotsEl = document.getElementById('bpmDots');
+if (bpmInput && window.enodeBpm) {
+  bpmInput.value = enodeBpm.bpm;
+  bpmInput.addEventListener('input', () => enodeBpm.setBpm(bpmInput.value));
+  enodeBpm.onTick(n => {
+    const dot = bpmDotsEl && bpmDotsEl.querySelector(`[data-bpm="${n}"]`);
+    if (dot) { dot.classList.add('on'); setTimeout(() => dot.classList.remove('on'), 90); }
+  });
+}
 
 // Per-frame: refresh transport readout and draw the mini FFT visualizer.
 function audioVizTick() {
@@ -2120,33 +2400,51 @@ function audioVizTick() {
   drawAudioViz();
 }
 
+// Sound Analysis: a log-frequency spectrum with the Low/Mid/High bands marked,
+// each flashing cyan on its onset.
 function drawAudioViz() {
-  const W = audioVizCanvas.width;
-  const H = audioVizCanvas.height;
-  // Background
   const css = getComputedStyle(document.documentElement);
-  audioVizCtx.fillStyle = css.getPropertyValue('--bg-3').trim() || '#1e1e1e';
-  audioVizCtx.fillRect(0, 0, W, H);
-  // Bars: condense ~256 bins into N bars
-  const bars = 48;
-  const bins = enodeAudio.freq.length;
-  const binsPerBar = Math.floor(bins / 2 / bars); // use first half (drop high empty bins)
-  const barW = W / bars - 1;
-  const fg = css.getPropertyValue('--fg-dim').trim() || '#c8c8c8';
-  audioVizCtx.fillStyle = fg;
-  for (let i = 0; i < bars; i++) {
-    let sum = 0;
-    for (let j = 0; j < binsPerBar; j++) sum += enodeAudio.freq[i * binsPerBar + j];
-    const v = (sum / binsPerBar) / 255;
-    const h = Math.max(1, v * H);
-    audioVizCtx.fillRect(i * (barW + 1), H - h, barW, h);
+  const col = (name, fb) => css.getPropertyValue(name).trim() || fb;
+  const c = audioVizCtx;
+  const W = audioVizCanvas.width, H = audioVizCanvas.height;
+  c.clearRect(0, 0, W, H);
+
+  const specH = H;
+
+  // ── Spectrum (log frequency) ──
+  c.fillStyle = col('--bg-3', '#1e1e1e');
+  c.fillRect(0, 0, W, specH);
+
+  const F_MIN = 20, F_MAX = 20000;
+  const lMin = Math.log(F_MIN), lSpan = Math.log(F_MAX) - lMin;
+  const xForHz = hz => (Math.log(hz) - lMin) / lSpan * W;
+
+  // Band regions behind the bars, flashing cyan on their onset.
+  const ranges = enodeAudio.bandRanges || { bass: [20, 180], mid: [180, 2000], treble: [2000, 9000] };
+  const regions = [
+    { key: 'bass',   label: 'Low'  },
+    { key: 'mid',    label: 'Mid'  },
+    { key: 'treble', label: 'High' },
+  ];
+  c.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+  c.textBaseline = 'top';
+  for (const r of regions) {
+    const x0 = xForHz(ranges[r.key][0]), x1 = xForHz(ranges[r.key][1]);
+    c.fillStyle = enodeAudio.onsets[r.key] ? 'rgba(0,212,255,0.22)' : 'rgba(255,255,255,0.05)';
+    c.fillRect(x0, 0, x1 - x0, specH);
+    c.strokeStyle = 'rgba(255,255,255,0.10)';
+    c.strokeRect(x0 + 0.5, 0.5, x1 - x0 - 1, specH - 1);
+    c.fillStyle = col('--fg-mute', '#8a8a8a');
+    c.fillText(r.label, x0 + 4, 3);
   }
-  // Beat flash
-  if (enodeAudio.beat) {
-    audioVizCtx.fillStyle = css.getPropertyValue('--cyan').trim() || '#00d4ff';
-    audioVizCtx.globalAlpha = 0.35;
-    audioVizCtx.fillRect(0, 0, W, H);
-    audioVizCtx.globalAlpha = 1;
+
+  // Spectrum bars.
+  const spec = enodeAudio.getSpectrumLog(Math.min(96, Math.floor(W / 3)), F_MIN, F_MAX);
+  const bw = W / spec.length;
+  c.fillStyle = col('--fg-dim', '#c8c8c8');
+  for (let i = 0; i < spec.length; i++) {
+    const h = Math.max(1, spec[i] * (specH - 2));
+    c.fillRect(i * bw, specH - h, Math.max(1, bw - 1), h);
   }
 }
 

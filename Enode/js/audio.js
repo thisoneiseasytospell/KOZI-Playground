@@ -9,6 +9,7 @@
  *   .freq[]         — Uint8Array of latest frequency magnitudes (0..255)
  *   .bands          — { bass, mid, treble, rms } each 0..1, EMA-smoothed
  *   .beat           — momentarily true on detected kick (single-frame pulse)
+ *   .onsets         — { bass, mid, treble } momentarily true on per-band hits
  *   .load(url)      — load a track by URL (also accepts a File via objectURL upstream)
  *   .play()/.pause()/.toggle()/.seek(t)
  *   .update(dt)     — call once per frame from the render loop (dt = ms elapsed)
@@ -34,6 +35,18 @@
   // Beat detector: bass must exceed the adaptive baseline by this factor.
   const BEAT_THRESHOLD = 1.35;    // was 1.20 (too loose → false beats)
   const BEAT_REFRACTORY_MS = 250; // was 80 (≈750 BPM); 250 ≈ 240 BPM ceiling
+  // ── Auto-gain floor (companion to the rolling peak/ceiling). Snaps down to
+  // new lows fast, re-adapts upward slowly, so each band's level is compressed
+  // between an adaptive floor and ceiling — quiet passages still read, loud
+  // songs don't clip.
+  const FLOOR_DROP_TAU = 90;      // track new lows quickly
+  const FLOOR_RISE_TAU = 3000;    // re-adapt the floor upward over seconds
+  const LEVEL_MIN_GAP  = 0.04;    // never compress against a near-zero span
+  // Per-band onset (discrete hit) detection on the normalized level. Fires once
+  // when a band crosses its threshold, re-arms after falling below 0.8× it, and
+  // honours a per-band refractory so one hit fires once.
+  const ONSET_THRESHOLD  = { bass: 0.55, mid: 0.5, treble: 0.5 };
+  const ONSET_REFRACTORY = { bass: 200, mid: 120, treble: 120 };
 
   const api = {
     ready: false,
@@ -46,6 +59,10 @@
     // so quiet songs and loud songs both drive visuals to full swing.
     levels: { bass: 0, mid: 0, treble: 0, rms: 0 },
     beat: false,
+    // Per-band discrete hits (kick / snare / hat) — single-frame pulses.
+    onsets: { bass: false, mid: false, treble: false },
+    // Frequency-band Hz ranges (so the analyzer viz can mark each region).
+    bandRanges: { bass: BAND_BASS, mid: BAND_MID, treble: BAND_TREBLE },
     get currentTime() { return audioEl ? audioEl.currentTime : 0; },
     get duration() { return audioEl && isFinite(audioEl.duration) ? audioEl.duration : 0; },
     load,
@@ -54,6 +71,7 @@
     toggle,
     seek,
     update,
+    getSpectrumLog,
     onLoaded(fn) { loadedCbs.push(fn); },
     onTransport(fn) { transportCbs.push(fn); },
   };
@@ -71,6 +89,11 @@
   // decays slowly (so a chorus doesn't get rescaled away during a verse).
   const peak = { bass: 0.05, mid: 0.05, treble: 0.05, rms: 0.05 };
   const PEAK_FLOOR = 0.05;       // never normalize against noise-floor
+  // Adaptive floor per band (lower rail of the auto-gain compressor).
+  const floor = { bass: 0, mid: 0, treble: 0, rms: 0 };
+  // Per-band onset detector state: armed flag + last-fire time.
+  const onsetArmed = { bass: true, mid: true, treble: true };
+  const lastOnset  = { bass: 0, mid: 0, treble: 0 };
   const loadedCbs = [];
   const transportCbs = [];
   // Cache for bin → Hz mapping (recomputed lazily on ctx.sampleRate)
@@ -185,6 +208,35 @@
     if (peak[key] < PEAK_FLOOR) peak[key] = PEAK_FLOOR;
   }
 
+  function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+  // Adaptive floor: snap down to new lows fast, re-adapt upward slowly so the
+  // level reads against the current quiet-baseline, not a stale one.
+  function trackFloor(key, v, dt) {
+    const tau = v < floor[key] ? FLOOR_DROP_TAU : FLOOR_RISE_TAU;
+    floor[key] += (v - floor[key]) * alpha(tau, dt);
+    if (floor[key] < 0) floor[key] = 0;
+  }
+
+  // Compressed 0..1 level between the adaptive floor and peak for a band.
+  function normLevel(key) {
+    const span = Math.max(LEVEL_MIN_GAP, peak[key] - floor[key]);
+    return clamp01((smooth[key] - floor[key]) / span);
+  }
+
+  // Per-band onset: fire on threshold cross, re-arm under 0.8× it, refractory-gated.
+  function detectOnset(band, now) {
+    const lv = api.levels[band];
+    const thr = ONSET_THRESHOLD[band];
+    if (onsetArmed[band] && lv >= thr && (now - lastOnset[band]) > ONSET_REFRACTORY[band]) {
+      lastOnset[band] = now;
+      onsetArmed[band] = false;
+      return true;
+    }
+    if (!onsetArmed[band] && lv < thr * 0.8) onsetArmed[band] = true;
+    return false;
+  }
+
   // Called once per render-loop frame. dt = ms since last frame.
   function update(dt) {
     dt = dt || 16;
@@ -193,10 +245,12 @@
       const a = alpha(120, dt);
       for (const k in smooth) {
         smooth[k] += (0 - smooth[k]) * a;
+        trackFloor(k, smooth[k], dt);
         api.bands[k] = smooth[k];
-        api.levels[k] = Math.min(1, smooth[k] / peak[k]);
+        api.levels[k] = normLevel(k);
       }
       api.beat = false;
+      api.onsets.bass = api.onsets.mid = api.onsets.treble = false;
       return;
     }
     analyser.getByteFrequencyData(api.freq);
@@ -218,26 +272,50 @@
     smooth.treble += (treble - smooth.treble) * alpha(BAND_TAU.treble, dt);
     smooth.rms    += (rms    - smooth.rms)    * alpha(BAND_TAU.rms,    dt);
 
-    // Track per-band peak and emit normalized levels (0..1).
-    trackPeak('bass',   smooth.bass,   dt);
-    trackPeak('mid',    smooth.mid,    dt);
-    trackPeak('treble', smooth.treble, dt);
-    trackPeak('rms',    smooth.rms,    dt);
-
+    // Track per-band peak + floor, then emit compressed normalized levels (0..1).
     for (const k in smooth) {
+      trackPeak(k, smooth[k], dt);
+      trackFloor(k, smooth[k], dt);
       api.bands[k] = smooth[k];
-      api.levels[k] = Math.min(1, smooth[k] / peak[k]);
+      api.levels[k] = normLevel(k);
     }
+
+    const now = performance.now();
+
+    // Discrete per-band onsets (kick / snare / hat) on the normalized levels.
+    api.onsets.bass   = detectOnset('bass',   now);
+    api.onsets.mid    = detectOnset('mid',    now);
+    api.onsets.treble = detectOnset('treble', now);
 
     // Beat detection on raw bass against an adaptive baseline, with a
     // refractory window so a single kick fires once (not a burst).
     bassAvg += (bass - bassAvg) * alpha(BASS_AVG_TAU, dt);
-    const now = performance.now();
     const isBeat = bass > bassAvg * BEAT_THRESHOLD
                 && bass > 0.12
                 && (now - lastBeatTime) > BEAT_REFRACTORY_MS;
     if (isBeat) lastBeatTime = now;
     api.beat = isBeat;
+  }
+
+  // Log-frequency spectrum (numBars values 0..1) for the analyzer viz. Reads the
+  // latest FFT magnitudes captured by update(); octave-ish spacing matches musical
+  // perception so bass isn't crammed into a few pixels.
+  function getSpectrumLog(numBars, fMin, fMax) {
+    numBars = numBars || 96; fMin = fMin || 20; fMax = fMax || 20000;
+    const out = new Float32Array(numBars);
+    if (!ctx) return out;
+    const bins = api.freq.length;
+    const res = (ctx.sampleRate / 2) / bins;
+    const lMin = Math.log(fMin), lStep = (Math.log(fMax) - lMin) / numBars;
+    for (let i = 0; i < numBars; i++) {
+      let i0 = Math.floor(Math.exp(lMin + i * lStep) / res);
+      let i1 = Math.min(bins - 1, Math.floor(Math.exp(lMin + (i + 1) * lStep) / res));
+      if (i1 < i0) i1 = i0;
+      let sum = 0;
+      for (let j = i0; j <= i1; j++) sum += api.freq[j];
+      out[i] = (sum / (i1 - i0 + 1)) / 255;
+    }
+    return out;
   }
 
   window.enodeAudio = api;

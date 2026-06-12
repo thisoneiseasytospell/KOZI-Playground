@@ -78,11 +78,6 @@
 
         <!-- STRIPS ─────────────────────────────────────────── -->
         <div class="group strips-group" id="stripsGroup" style="display:none">
-          <button class="audio-strips-toggle" id="audioStripsToggle">
-            <span class="dot"></span>
-            <span>Drive from audio (EQ bars)</span>
-          </button>
-
           <div class="label">Strips presets</div>
           <div class="strips-presets" id="stripsPresets">
             <button data-preset="fluid">Fluid Waves</button>
@@ -92,35 +87,50 @@
           </div>
 
           <div class="label" style="margin-top:14px">Strips settings</div>
-          <button class="audio-strips-toggle" id="stripFlipAxis">
-            <span class="dot"></span>
-            <span>Flip axis (vertical)</span>
-          </button>
           <div class="slider-row">
-            <label data-tip="How many wave bands stack across the canvas.">Bands <span class="val" id="stripCountVal">9</span></label>
-            <input type="range" id="stripCount" min="1" max="30" step="1" value="9">
+            <label data-tip="How many vertical strips across the canvas.">Count <span class="val" id="stripCountVal">7</span></label>
+            <input type="range" id="stripCount" min="1" max="50" step="1" value="7">
           </div>
           <div class="slider-row">
-            <label data-tip="Skews the bands diagonally — 0 = straight, higher = more slanted flow.">Skew <span class="val" id="stripPhaseVal">0.45</span></label>
-            <input type="range" id="stripPhase" min="0" max="2" step="0.01" value="0.45">
+            <label data-tip="Per-strip phase offset — how far neighbouring strips run out of step.">Phase shift <span class="val" id="stripPhaseVal">0.11</span></label>
+            <input type="range" id="stripPhase" min="0" max="5" step="0.01" value="0.11">
           </div>
           <div class="slider-row">
-            <label>Wave shape</label>
+            <label data-tip="How far each strip's gradient scrolls per wave cycle.">Amplitude <span class="val" id="stripAmpVal">1.05</span></label>
+            <input type="range" id="stripAmp" min="0" max="2" step="0.01" value="1.05">
+          </div>
+          <div class="slider-row">
+            <label data-tip="How the per-strip phase is distributed: stepped, sinusoidal, or hashed.">Phase mode</label>
             <select id="stripMode" class="select select-inline">
-              <option value="sine">Sine</option>
-              <option value="triangle">Triangle</option>
-              <option value="square">Square</option>
-              <option value="sawtooth">Sawtooth</option>
+              <option value="Linear">Linear</option>
+              <option value="Sine" selected>Sine</option>
+              <option value="Random">Random</option>
             </select>
           </div>
           <div class="slider-row">
-            <label>Speed <span class="val" id="stripAnimVal">1.00</span></label>
-            <input type="range" id="stripAnim" min="0" max="5" step="0.05" value="1.0">
+            <label>Speed <span class="val" id="stripAnimVal">1.9</span></label>
+            <input type="range" id="stripAnim" min="0" max="5" step="0.1" value="1.9">
           </div>
           <div class="slider-row">
-            <label data-tip="Snaps cell brightness to N discrete levels (posterize). 1 = continuous, 2 = pure black/white, 4 = 4 grays. Ignored in Audio Strips mode.">Quantize <span class="val" id="stripQuantVal">1</span></label>
-            <input type="range" id="stripQuant" min="1" max="16" step="1" value="1">
+            <label data-tip="Where the gradient cuts off.">Threshold <span class="val" id="stripThreshVal">1.74</span></label>
+            <input type="range" id="stripThresh" min="0" max="2" step="0.01" value="1.74">
           </div>
+          <div class="slider-row">
+            <label data-tip="Width of the soft edge at the cutoff.">Softness <span class="val" id="stripSoftVal">0.46</span></label>
+            <input type="range" id="stripSoft" min="0" max="0.5" step="0.01" value="0.46">
+          </div>
+          <div class="slider-row">
+            <label>Contrast <span class="val" id="stripContrastVal">4.9</span></label>
+            <input type="range" id="stripContrast" min="0" max="5" step="0.1" value="4.9">
+          </div>
+          <div class="slider-row">
+            <label data-tip="Snaps values to N discrete levels (posterize). 0 = off.">Quantize <span class="val" id="stripQuantVal">3</span></label>
+            <input type="range" id="stripQuant" min="0" max="20" step="1" value="3">
+          </div>
+          <button class="audio-strips-toggle" id="stripInvertY">
+            <span class="dot"></span>
+            <span>Invert Y axis</span>
+          </button>
         </div>
 
         <!-- NOISE ──────────────────────────────────────────── -->
@@ -176,30 +186,13 @@
           </div>
           <div class="audio-drop" id="audioDrop">drop .mp3 here</div>
 
-          <div class="sub-label">Tempo</div>
-          <div class="bpm-row">
-            <input type="number" id="bpmInput" class="bpm-input" min="20" max="400" step="1" value="120" aria-label="BPM">
-            <span class="bpm-unit">BPM</span>
-          </div>
-          <div class="bpm-dots" id="bpmDots">
-            <span class="bpm-dot" data-bpm="1">1</span>
-            <span class="bpm-dot" data-bpm="2">2</span>
-            <span class="bpm-dot" data-bpm="4">4</span>
-            <span class="bpm-dot" data-bpm="8">8</span>
-            <span class="bpm-dot" data-bpm="16">16</span>
-          </div>
-
           <div class="sub-label">Reactivity <span class="sub-hint">source → parameter</span></div>
           <div class="mod-list" id="modList"></div>
           <div class="mod-actions">
             <button class="mod-add" id="modAddBtn">+ Add routing</button>
             <button class="mod-add" id="modRandomBtn" data-tip="Generate a fresh set of routings that still make musical sense.">⚄ Randomize</button>
           </div>
-          <button class="audio-strips-toggle" id="beatStrobeToggle" style="margin-top:10px">
-            <span class="dot"></span>
-            <span>Invert on beat</span>
-          </button>
-          <button class="audio-strips-toggle" id="audioColorToggle">
+          <button class="audio-strips-toggle" id="audioColorToggle" style="margin-top:10px">
             <span class="dot"></span>
             <span>Color mode (bands → hue)</span>
           </button>
@@ -221,16 +214,6 @@
               </svg>
               <span>Outline</span>
             </button>
-            <button class="chip" id="chipVoxel" data-tip="Render cells as gapped square voxels — a pixel / LED-grid look. Great on Strips.">
-              <svg class="chip-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                <rect x="4" y="4" width="5" height="5" rx="1" fill="currentColor"/>
-                <rect x="15" y="4" width="5" height="5" rx="1" fill="currentColor"/>
-                <rect x="9.5" y="9.5" width="5" height="5" rx="1" fill="currentColor"/>
-                <rect x="4" y="15" width="5" height="5" rx="1" fill="currentColor"/>
-                <rect x="15" y="15" width="5" height="5" rx="1" fill="currentColor"/>
-              </svg>
-              <span>Voxel</span>
-            </button>
             <button class="chip" id="chipGradient" data-tip="Random mode only. Fills each rectangle with a subtle linear gradient.">
               <svg class="chip-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                 <defs>
@@ -251,7 +234,7 @@
           <div class="label">Grid</div>
           <div class="slider-row">
             <label data-tip="How many cells across the grid. Higher = finer, more dots.">Density <span class="val" id="densityVal">60</span></label>
-            <input type="range" id="density" min="4" max="100" step="1" value="60">
+            <input type="range" id="density" min="4" max="120" step="1" value="60">
           </div>
           <div class="slider-row">
             <label data-tip="Maximum size of each cell relative to its grid slot. 1 fills the slot.">Cell size <span class="val" id="cellSizeVal">1.00</span></label>

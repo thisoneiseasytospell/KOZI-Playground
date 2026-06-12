@@ -3,7 +3,7 @@
 
 // ─── State ───────────────────────────────────────────────────────
 const state = {
-  mode: 'Video',          // Video | Image | Camera | Noise | Random
+  mode: 'Video',          // Video | Image | Camera | Noise | Strips | Random
   aspect: '1:1',
   exportW: 1080,
   exportH: 1080,
@@ -18,7 +18,6 @@ const state = {
   angle: 0,               // halftone angle 0..45
   invert: false,
   outline: false,
-  voxel: false,           // render cells as gapped square voxels (pixel/LED grid)
   stroke: 1,
   gradient: false,        // Random mode: linear gradients in rectangles
   editRects: false,       // Random mode: show drag/resize handles
@@ -28,34 +27,28 @@ const state = {
   randomSeed: Math.floor(Math.random() * 1e9),
   rects: [],              // current rectangle list (flat, editable)
   rectGradients: [],      // parallel array: per-rect gradient params {ang, vStart, vEnd}
-  strips: {               // Strips mode parameters (grid of outlined shapes)
-    count: 9,             // defaults mirror the "Fluid Waves" preset
-    phaseShift: 0.45,
-    amplitude: 0.5,
-    phaseMode: 'sine',    // sine | triangle | square | sawtooth
-    threshold: 1.50,
-    softness: 0.28,
-    contrast: 1.8,
-    quantize: 1,
+  strips: {               // Strips mode — defaults mirror the reference sketch
+    count: 7,             // vertical strips across the canvas
+    phaseShift: 0.11,     // per-strip phase offset
+    amplitude: 1.05,      // gradient scroll per wave cycle
+    phaseMode: 'Sine',    // Linear | Sine | Random
+    threshold: 1.74,      // gradient cutoff position
+    softness: 0.46,       // smoothstep edge width at the cutoff
+    contrast: 4.9,        // steepens the gradient around mid-grey
+    levels: 3,            // posterize steps (0 = off)
     invertY: false,
-    vertical: false,       // flip-axis: stream bands vertically instead of horizontally
-    animSpeed: 1.0,
-    noiseRatio: 7,
-    audioDriven: false,    // when on: row heights come from the FFT spectrum
+    speed: 1.9,           // time advance (reference: time += speed * 0.01 / frame)
   },
-  audioBeatInvert: false,  // flip invert on every detected beat (sustained)
   audioColorMode: false,   // override FG hue from bass/mid/treble balance
   randomAudioDriven: false,// Random mode: each rect's value = its band level
-  // Audio-reactivity rows: each maps a frequency band to a visual parameter
-  // through an attack/decay envelope (`env`, updated per frame). Bass drives
-  // both the size pulse and the speed surge so motion locks onto the kick.
   // Modulation matrix: each row routes a SOURCE (band level, per-band hit, beat,
   // BPM tick, or a generator) to a visual TARGET through an attack/release
-  // envelope. The three seeded rows reproduce the original hardcoded reactivity.
+  // envelope. The four seeded rows are the user's preferred default routing.
   audioMods: [
-    { source: 'bass', target: 'cellSize',  depth: 0.65, attack: 45, release: 220, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
-    { source: 'beat', target: 'ripple',    depth: 0.55, attack: 45, release: 220, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
-    { source: 'bass', target: 'timeSpeed', depth: 0.50, attack: 45, release: 220, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
+    { source: 'bass',    target: 'timeSpeed', depth: 0.73, attack: 45, release: 220, chance: 1,   invert: false, speed: 0.4,  bpmSync: false, env: 0, phase: 0 },
+    { source: 'hit.mid', target: 'morph',     depth: 0.74, attack: 45, release: 220, chance: 0.9, invert: false, speed: 0.4,  bpmSync: false, env: 0, phase: 0 },
+    { source: 'beat/8',  target: 'flicker',   depth: 0.48, attack: 45, release: 220, chance: 0.9, invert: true,  speed: 0.4,  bpmSync: false, env: 0, phase: 0 },
+    { source: 'lfo',     target: 'stripAnim', depth: 0.62, attack: 45, release: 220, chance: 1,   invert: false, speed: 0.25, bpmSync: true,  env: 0, phase: 0 },
   ],
 };
 
@@ -78,10 +71,10 @@ const MOD_TARGETS = {
   noiseScale:    { label: 'Noise scale',    apply: 'add', range: 24,  clamp: [1, 120] },
   noiseContrast: { label: 'Noise contrast', apply: 'add', range: 2.0, clamp: [0.2, 6] },
   hue:           { label: 'Hue rotate',     apply: 'add', range: 180 },
-  stripCount:    { label: 'Strips · count', apply: 'add', range: 12,  clamp: [1, 64] },
-  stripPhase:    { label: 'Strips · phase', apply: 'add', range: 1.0 },
-  stripAnim:     { label: 'Strips · speed', apply: 'add', range: 3.0 },
-  stripAmp:      { label: 'Strips · warp',  apply: 'add', range: 1.0, clamp: [0, 2] },
+  stripCount:    { label: 'Strips · count', apply: 'add', range: 12,  clamp: [1, 50] },
+  stripPhase:    { label: 'Strips · phase', apply: 'add', range: 1.0, clamp: [0, 5] },
+  stripAnim:     { label: 'Strips · speed', apply: 'add', range: 3.0, clamp: [0, 5] },
+  stripAmp:      { label: 'Strips · amp',   apply: 'add', range: 1.0, clamp: [0, 2] },
 };
 
 // SOURCES: what drives a row. kind 'level' = continuous 0..1; 'event' = momentary
@@ -255,7 +248,6 @@ let videoRateSmooth = 1;    // smoothed video playback rate (gentle audio tempo 
 let smoothed = [];
 let lastDensity = 0;
 let lastRows = 0;
-let audioInvertFlip = false; // flips on each detected beat when audioBeatInvert is on
 let randomSourceCanvas = null; // grayscale rectangles painted here; fed to grid sampler
 
 function createVideoEl() {
@@ -436,14 +428,9 @@ function paintRectsTo(c, rects, W, H, gradients) {
 }
 
 // ─── Strips field ───────────────────────────────────────────────
-// Continuous wave field sampled by the dot grid — smooth, flowing bands rather
-// than hard cell-blocks. `count` sets how many bands stack along the main axis,
-// `phaseShift` skews them diagonally, noise (amplitude × noiseRatio) warps them
-// organically, and `vertical` flips the axis. The Audio EQ path keeps its
-// discrete column-bars. Quantize posterizes for the stepped "Minimal" look.
-// FFT-band averaging for Audio Strips. Logarithmic frequency mapping matches
-// musical perception (each row covers an octave-ish range rather than a flat
-// slice). bandRowIdx 0 = lowest band, rows-1 = highest.
+// FFT-band averaging for the audio-driven Random rectangles. Logarithmic
+// frequency mapping matches musical perception (each band covers an octave-ish
+// range rather than a flat slice). bandRowIdx 0 = lowest band, rows-1 = highest.
 function bandLevelForRow(bandRowIdx, totalRows) {
   if (!window.enodeAudio || !enodeAudio.freq || !enodeAudio.loaded) return 0;
   const freq = enodeAudio.freq;
@@ -456,66 +443,43 @@ function bandLevelForRow(bandRowIdx, totalRows) {
   return Math.min(1, (sum / (hi - lo)) / 255 * 1.7);
 }
 
+// Vertical strips, each a scrolling vertical gradient offset by a per-strip
+// phase (Linear / Sine / Random), steepened by contrast, cut by a smoothstep
+// threshold/softness edge, and optionally posterized. Exact port of the
+// reference sketch ("Remix of Enode" on brik.space) so presets and sliders
+// behave identically.
 function stripsValue(x, y, t, p) {
-  const yEff = p.invertY ? 1 - y : y;
-  const TAU = Math.PI * 2;
+  const stripIndex = Math.floor(x * p.count);
 
-  // ── Audio EQ path: columns = frequency bands, rows light from the bottom up.
-  if (p.audioDriven) {
-    const rows = Math.max(1, Math.floor(p.count));
-    const cols = Math.max(1, Math.round(2 + p.phaseShift * 40));
-    const rowIdx = Math.min(rows - 1, Math.floor(yEff * rows));
-    const colIdx = Math.min(cols - 1, Math.floor(x * cols));
-    const level = bandLevelForRow(colIdx, cols);
-    const rowFrac = rows > 1 ? (rows - 1 - rowIdx) / (rows - 1) : 0;
-    const edge = Math.max(0.04, 1 / rows * 0.9);
-    let v = (level - rowFrac) / edge + 0.5;
-    return v < 0 ? 0 : v > 1 ? 1 : v;
+  let phase;
+  if (p.phaseMode === 'Linear') {
+    phase = stripIndex * p.phaseShift;
+  } else if (p.phaseMode === 'Random') {
+    phase = ((Math.sin(stripIndex * 12.9898) * 43758.5453) % 1) * p.phaseShift * 10.0;
+  } else { // Sine
+    phase = Math.sin(stripIndex * p.phaseShift) * Math.PI;
   }
 
-  // ── Continuous wave field (no cell snapping → fluid, not pixelated). ──
-  // Bands stack along `u`; the cross-axis `w` skews them into diagonal flow.
-  // Flip-axis swaps the two so the bands stream vertically instead.
-  let u = p.vertical ? x : yEff;
-  let w = p.vertical ? yEff : x;
+  const offset = Math.sin(t + phase) * p.amplitude;
+  const g = p.invertY ? 1 - y : y;
+  let wrapped = (g + offset) % 1;
+  if (wrapped < 0) wrapped += 1;
 
-  const bands = Math.max(1, p.count);
-  // Square mode (Voxel toggle): snap the sampling coords to a grid so the bands
-  // break into hard rectangular blocks instead of flowing — the warp + wave then
-  // read as steps. The Source preview and exports honour this too.
-  if (p.square) {
-    const gx = Math.max(2, Math.round(bands * 2));
-    u = (Math.floor(u * gx) + 0.5) / gx;
-    w = (Math.floor(w * gx) + 0.5) / gx;
-  }
-  // Smooth domain-warp so the waves bend organically (amplitude = how much,
-  // noiseRatio = how fine). Sampling continuous coords keeps it gradient-smooth.
-  const ns = Math.max(0.001, p.noiseRatio) * 0.05;
-  const warp = simplex.noise3D(u * bands * ns * 3 + 11, w * ns * 3, t * 0.3) * p.amplitude;
+  wrapped = (wrapped - 0.5) * p.contrast + 0.5;
 
-  const phase = u * bands * TAU
-              + w * p.phaseShift * TAU * 2.5
-              + warp * TAU
-              + t * p.animSpeed * TAU;
+  const edge0 = p.threshold + p.softness;
+  const edge1 = p.threshold - p.softness;
+  const tt = Math.max(0, Math.min(1, (wrapped - edge0) / (edge1 - edge0)));
+  const cut = tt * tt * (3 - 2 * tt);
 
-  let wave;
-  switch (p.phaseMode) {
-    case 'triangle': wave = 4 * Math.abs(((phase / TAU) % 1 + 1) % 1 - 0.5) - 1; break;
-    case 'square':   wave = Math.sin(phase) >= 0 ? 1 : -1; break;
-    case 'sawtooth': wave = 2 * (((phase / TAU) % 1 + 1) % 1) - 1; break;
-    case 'sine':
-    default:         wave = Math.sin(phase); break;
-  }
-
-  let v = (wave + 1) * 0.5;
-  v += (p.threshold - 1.5) * 0.5;          // brightness bias (1.5 ≈ neutral)
-  v = (v - 0.5) * p.contrast + 0.5;        // contrast steepens on/off
+  let v = wrapped * cut;
+  if (p.levels > 0.5) v = Math.floor(v * p.levels) / p.levels;
   v = v < 0 ? 0 : v > 1 ? 1 : v;
 
-  const q = Math.floor(p.quantize);        // posterize (1 = continuous)
-  if (q > 1) v = Math.round(v * (q - 1)) / (q - 1);
-
-  return v;
+  // The reference applies its global "Source Contrast" (default 100 → ×2) on
+  // top of every mode; baked in here so the strips look matches exactly.
+  v = (v - 0.5) * 2 + 0.5;
+  return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
 // ─── Color helpers ──────────────────────────────────────────────
@@ -585,10 +549,6 @@ function applyAspect(val) {
 window.addEventListener('resize', fitCanvasToStage);
 
 // ─── Renderer ───────────────────────────────────────────────────
-// Voxel render: each cell becomes a gapped square tile switched fully on/off by
-// a threshold, so a field reads as a discrete pixel/LED grid instead of dots.
-const VOXEL_GAP = 0.18;        // fraction of each cell left empty (the grid gap)
-const VOXEL_THRESHOLD = 0.5;   // value at/above which a tile is "on"
 // Deterministic per-cell hash (0..1) — drives the Flicker effect's addressing.
 function _hashCell(i, j, k) {
   const h = Math.sin(i * 127.1 + j * 311.7 + k * 74.7) * 43758.5453;
@@ -618,14 +578,9 @@ function drawScene(targetCtx, w, h, opts) {
   const angleDeg = opts.angle != null ? opts.angle
       : (liveMod ? applyMods(state.angle, 'angle') : state.angle);
   const angle = angleDeg * Math.PI / 180;
-  // Audio Strips keeps the buffer smoothing on — combined with soft-edge
-  // strip values it gives the fluid "animated chart" feel.
   const reactionLerp = state.reaction / 100;
-  // Invert on beat: each detected kick flips the global invert state until
-  // the next one — rhythmic color swap rather than a single-frame strobe.
-  const invert = (liveMod && audioInvertFlip) ? !state.invert : state.invert;
+  const invert = state.invert;
   const outline = state.outline;
-  const voxel = state.voxel;
   const stroke = state.stroke;
   // Color mode overrides FG with a band-weighted hue; otherwise a `hue` mod row
   // can rotate the FG hue. The user's BG slider still applies. Falls back to
@@ -638,17 +593,15 @@ function drawScene(targetCtx, w, h, opts) {
   const noiseScale = 1 / (noiseScaleBase * 2 + 0.1);
   const noiseContrast = liveMod ? applyMods(state.noiseContrast, 'noiseContrast') : state.noiseContrast;
   const mode = state.mode;
-  // Strips params: square mode (Voxel) folds in everywhere; live modulation only
-  // on the live render (exports/thumbnails keep static param values).
+  // Strips params: live modulation only on the live render (variation
+  // thumbnails keep static param values). Speed is applied in tick(), where
+  // the strips clock advances.
   let stripsParams = state.strips;
-  if (mode === 'Strips' && (voxel || liveMod)) {
-    stripsParams = { ...state.strips, square: voxel };
-    if (liveMod) {
-      stripsParams.count      = applyMods(state.strips.count,      'stripCount');
-      stripsParams.phaseShift = applyMods(state.strips.phaseShift, 'stripPhase');
-      stripsParams.animSpeed  = applyMods(state.strips.animSpeed,  'stripAnim');
-      stripsParams.amplitude  = applyMods(state.strips.amplitude,  'stripAmp');
-    }
+  if (mode === 'Strips' && liveMod) {
+    stripsParams = { ...state.strips };
+    stripsParams.count      = applyMods(state.strips.count,      'stripCount');
+    stripsParams.phaseShift = applyMods(state.strips.phaseShift, 'stripPhase');
+    stripsParams.amplitude  = applyMods(state.strips.amplitude,  'stripAmp');
   }
 
   // BG
@@ -723,9 +676,8 @@ function drawScene(targetCtx, w, h, opts) {
       if (mode === 'Noise') {
         target = sampleNoise(state.noiseType, i, j, time, noiseScale, noiseContrast);
       } else if (mode === 'Strips') {
-        const nx = density > 1 ? i / (density - 1) : 0;
-        const ny = rows > 1 ? j / (rows - 1) : 0;
-        target = stripsValue(nx, ny, time, stripsParams);
+        // i/density (not i/(density-1)) — matches the reference indexing.
+        target = stripsValue(i / density, j / rows, time, stripsParams);
       } else if (sampleData && inBounds) {
         const idx = (j * density + i) * 4;
         target = (0.299 * sampleData[idx] + 0.587 * sampleData[idx + 1] + 0.114 * sampleData[idx + 2]) / 255;
@@ -760,8 +712,7 @@ function drawScene(targetCtx, w, h, opts) {
 
       // Technical per-cell effects (replace sparkle): ripple radiates from the
       // centre (one integration → all devices), scan sweeps a column across, and
-      // flicker addresses cells like device telemetry. They add to the cell
-      // value, so they read in both dot and voxel rendering.
+      // flicker addresses cells like device telemetry. They add to the cell value.
       if (fxActive) {
         const ncx = (i + 0.5) / density, ncy = (j + 0.5) / rows;
         let boost = 0;
@@ -779,19 +730,6 @@ function drawScene(targetCtx, w, h, opts) {
         }
         val += boost;
         if (val < 0) val = 0; else if (val > 1) val = 1;
-      }
-
-      // Voxel: gapped square tile, on/off by threshold → pixel/LED-grid look.
-      // cellSizeMul (audio) shrinks tiles but is clamped so they never overlap.
-      if (voxel) {
-        if (val >= VOXEL_THRESHOLD) {
-          const s = cellSize * Math.min(1, cellSizeMul) * (1 - VOXEL_GAP);
-          if (s > (outline ? Math.max(2, stroke * 3) : 0.5)) {
-            if (outline) targetCtx.strokeRect(x - s / 2, y - s / 2, s, s);
-            else targetCtx.fillRect(x - s / 2, y - s / 2, s, s);
-          }
-        }
-        continue;
       }
 
       const size = cellSize * cellSizeMul * val;
@@ -837,19 +775,17 @@ function tick(now) {
   if (window.enodeAudio) {
     enodeAudio.update(dt);
     updateMods(dt);
-    // Toggle the invert flag on each detected beat; reset when feature is off.
-    if (state.audioBeatInvert) {
-      if (enodeAudio.beat) audioInvertFlip = !audioInvertFlip;
-    } else if (audioInvertFlip) {
-      audioInvertFlip = false;
-    }
   }
 
   // Bass-driven speed surge for the generative modes so Noise/Strips visibly
   // move with the kick. (Video uses a much gentler, smoothed lean below.)
   const speedBoost = applyMods(1, 'timeSpeed');
   if (state.playing && state.mode === 'Noise')  time += state.speed * (dt / 1000) * speedBoost;
-  if (state.playing && state.mode === 'Strips') time += (dt / 1000) * speedBoost;
+  // Strips: reference advances `time += speed * 0.01` per 60fps frame —
+  // normalized by dt so it runs the same on any refresh rate.
+  if (state.playing && state.mode === 'Strips') {
+    time += applyMods(state.strips.speed, 'stripAnim') * 0.01 * (dt / 16.667) * speedBoost;
+  }
   // Video: a gentle, heavily-smoothed tempo lean — never the old 0.5–4× lurch.
   if (state.mode === 'Video' && activeVideo && activeVideo.readyState >= 2) {
     const targetRate = 1 + modSum('timeSpeed') * 0.35;   // ~1.0–1.35
@@ -868,9 +804,9 @@ function tick(now) {
 
   drawScene(ctx, canvas.width, canvas.height);
   snapNextFrame = false;
+  if (recording) captureTick(now);
   if (typeof previewTick === 'function') previewTick(dt);
   if (typeof audioVizTick === 'function') audioVizTick();
-  if (typeof modRowsTick === 'function') modRowsTick();
 }
 
 // ─── Tabs ───────────────────────────────────────────────────────
@@ -916,6 +852,7 @@ wireSeg('modeSeg', (val, wasActive) => {
   } else if (cameraStream) {
     stopCamera();
   }
+  if (val === 'Strips') applyStripLook();
   if (val === 'Random') {
     if (state.rects.length === 0) regenerateRects();
     else rebuildRandomSource();
@@ -938,25 +875,7 @@ function wireSlider(id, key, valId, fmt) {
     state[key] = n;
     if (out) out.textContent = fmt ? fmt(n) : n;
     if (state.mode === 'Random' && (key === 'density')) rebuildRandomSource();
-    scheduleGlow();
   });
-}
-
-// "You've been tweaking sliders — try Variations" nudge after 5s of inactivity.
-const GLOW_DELAY_MS = 5000;
-let glowTimer = null;
-function scheduleGlow() {
-  clearTimeout(glowTimer);
-  const btn = document.getElementById('variationsBtn');
-  btn && btn.classList.remove('glow');
-  glowTimer = setTimeout(() => {
-    btn && btn.classList.add('glow');
-  }, GLOW_DELAY_MS);
-}
-function clearGlow() {
-  clearTimeout(glowTimer);
-  const btn = document.getElementById('variationsBtn');
-  btn && btn.classList.remove('glow');
 }
 
 wireSlider('density', 'density', 'densityVal', n => Math.round(n));
@@ -979,17 +898,17 @@ function wireStripSlider(id, key, valId, fmt) {
     state.strips[key] = n;
     if (out) out.textContent = fmt ? fmt(n) : n;
     clearActiveStripPreset();
-    scheduleGlow();
   });
 }
 
-// Only the 5 sliders exposed in the sidebar are wired. The other params
-// (amplitude, noiseRatio, threshold, softness, contrast, invertY) live in
-// state.strips and are driven entirely by the preset buttons.
-wireStripSlider('stripCount', 'count', 'stripCountVal', n => Math.round(n));
-wireStripSlider('stripPhase', 'phaseShift', 'stripPhaseVal', n => n.toFixed(2));
-wireStripSlider('stripAnim', 'animSpeed', 'stripAnimVal', n => n.toFixed(2));
-wireStripSlider('stripQuant', 'quantize', 'stripQuantVal', n => Math.round(n));
+wireStripSlider('stripCount',    'count',      'stripCountVal',    n => Math.round(n));
+wireStripSlider('stripPhase',    'phaseShift', 'stripPhaseVal',    n => n.toFixed(2));
+wireStripSlider('stripAmp',      'amplitude',  'stripAmpVal',      n => n.toFixed(2));
+wireStripSlider('stripAnim',     'speed',      'stripAnimVal',     n => n.toFixed(1));
+wireStripSlider('stripThresh',   'threshold',  'stripThreshVal',   n => n.toFixed(2));
+wireStripSlider('stripSoft',     'softness',   'stripSoftVal',     n => n.toFixed(2));
+wireStripSlider('stripContrast', 'contrast',   'stripContrastVal', n => n.toFixed(1));
+wireStripSlider('stripQuant',    'levels',     'stripQuantVal',    n => Math.round(n));
 
 const stripModeSel = document.getElementById('stripMode');
 stripModeSel.addEventListener('change', e => {
@@ -997,33 +916,40 @@ stripModeSel.addEventListener('change', e => {
   clearActiveStripPreset();
 });
 
-// Each preset = the strip *dynamics* plus a shared "Strips look": a grid of
-// outlined squircles in warm grey-on-grey. Dynamics differ per preset; the look
-// (morph / outline / stroke / colors) is shared so the four read as one family.
-const STRIP_BASE = { morph: 1.5, outline: true, stroke: 1, fg: '#919191', bg: '#DBD8D8' };
+const stripInvertYToggle = document.getElementById('stripInvertY');
+stripInvertYToggle.addEventListener('click', () => {
+  state.strips.invertY = !state.strips.invertY;
+  stripInvertYToggle.classList.toggle('active', state.strips.invertY);
+});
+
+// The reference sketch's four presets, value-for-value. Each sets only the
+// strip dynamics + grid density; the shared look comes from STRIP_LOOK below.
+// (The sketch's "direct render" — raw grayscale blocks bypassing the grid —
+// was dropped: strips always drive the brand dot pattern.)
 const STRIP_PRESETS = {
-  // Fluid Waves — smooth diagonal swell, continuous tones.
-  fluid:    { density: 100, strips: { count: 7,  phaseShift: 0.45, amplitude: 0.6,  phaseMode: 'sine',     threshold: 1.50, softness: 0.28, contrast: 1.6, quantize: 1, invertY: false, vertical: false, animSpeed: 1.0, noiseRatio: 6  } },
-  // Digital Glitch — dense, hard-edged, jittery, posterized.
-  glitch:   { density: 100, strips: { count: 14, phaseShift: 0.80, amplitude: 1.6,  phaseMode: 'square',   threshold: 1.30, softness: 0.02, contrast: 7.0, quantize: 4, invertY: false, vertical: false, animSpeed: 2.6, noiseRatio: 42 } },
-  // Minimal Steps — sparse, calm, strongly posterized tiers.
-  minimal:  { density: 80,  strips: { count: 5,  phaseShift: 0.20, amplitude: 0.25, phaseMode: 'triangle', threshold: 1.45, softness: 0.10, contrast: 3.5, quantize: 6, invertY: false, vertical: false, animSpeed: 0.6, noiseRatio: 5  } },
-  // Vertical Flow — tall streaming columns, soft and continuous.
-  vertical: { density: 100, strips: { count: 12, phaseShift: 0.50, amplitude: 0.4,  phaseMode: 'sine',     threshold: 1.50, softness: 0.06, contrast: 1.8, quantize: 1, invertY: false, vertical: true,  animSpeed: 1.0, noiseRatio: 8  } },
+  fluid:    { density: 100, strips: { count: 12, phaseShift: 0.8, amplitude: 0.5, phaseMode: 'Sine',   threshold: 1.0, softness: 0.10, contrast: 1.2, levels: 0, speed: 0.5 } },
+  glitch:   { density: 120, strips: { count: 32, phaseShift: 2.5, amplitude: 1.2, phaseMode: 'Random', threshold: 0.8, softness: 0.01, contrast: 2.0, levels: 4, speed: 1.2 } },
+  minimal:  { density: 80,  strips: { count: 5,  phaseShift: 0.2, amplitude: 0.1, phaseMode: 'Linear', threshold: 0.9, softness: 0.05, contrast: 1.0, levels: 8, speed: 0.3 } },
+  vertical: { density: 100, strips: { count: 20, phaseShift: 0.5, amplitude: 0.3, phaseMode: 'Sine',   threshold: 1.0, softness: 0.02, contrast: 0.8, levels: 0, speed: 0.4 } },
 };
+
+// The reference sketch's default look — applied once, the first time the user
+// enters Strips mode. reaction 8 (heavy smoothing) is essential to the fluid
+// feel; the rest is the grey-on-grey outlined-squircle aesthetic.
+const STRIP_LOOK = { density: 88, reaction: 8, cellSize: 0.6, morph: 1.0, outline: true, stroke: 1, fg: '#919191', bg: '#DBD8D8' };
+let stripLookApplied = false;
+function applyStripLook() {
+  if (stripLookApplied) return;
+  stripLookApplied = true;
+  Object.assign(state, STRIP_LOOK);
+  syncStripLookUI();
+}
 
 function applyStripPreset(name) {
   const p = STRIP_PRESETS[name];
   if (!p) return;
   Object.assign(state.strips, p.strips);
-  // Apply the shared look so any preset yields the full grey-on-grey outline
-  // aesthetic. These are global, so they also carry into other modes/exports.
   state.density = p.density;
-  state.morph   = STRIP_BASE.morph;
-  state.outline = STRIP_BASE.outline;
-  state.stroke  = STRIP_BASE.stroke;
-  state.fg      = STRIP_BASE.fg;
-  state.bg      = STRIP_BASE.bg;
   syncStripsUI();
   syncStripLookUI();
   document.querySelectorAll('#stripsPresets button').forEach(b => {
@@ -1031,8 +957,9 @@ function applyStripPreset(name) {
   });
 }
 
-// Sync the global controls a strip preset touches (density / morph / outline /
-// stroke / colors) so the sliders, chip and swatches reflect the applied look.
+// Sync the global controls the strips look/presets touch (density / cell size /
+// reaction / morph / outline / stroke / colors) so the sliders, chip and
+// swatches reflect the applied look.
 function syncStripLookUI() {
   const setSlider = (id, valId, value, fmt) => {
     const el = document.getElementById(id);
@@ -1040,9 +967,11 @@ function syncStripLookUI() {
     const out = document.getElementById(valId);
     if (out) out.textContent = fmt ? fmt(value) : value;
   };
-  setSlider('density', 'densityVal', state.density, n => Math.round(n));
-  setSlider('morph',   'morphVal',   state.morph,   n => n.toFixed(2));
-  setSlider('stroke',  'strokeVal',  state.stroke,  n => n.toFixed(1));
+  setSlider('density',  'densityVal',  state.density,  n => Math.round(n));
+  setSlider('cellSize', 'cellSizeVal', state.cellSize, n => n.toFixed(2));
+  setSlider('reaction', 'reactionVal', state.reaction, n => Math.round(n));
+  setSlider('morph',    'morphVal',    state.morph,    n => n.toFixed(2));
+  setSlider('stroke',   'strokeVal',   state.stroke,   n => n.toFixed(1));
   const outlineChip = document.getElementById('chipOutline');
   if (outlineChip) outlineChip.classList.toggle('active', state.outline);
   const strokeRow = document.getElementById('strokeRow');
@@ -1066,13 +995,16 @@ function syncStripsUI() {
     const out = valId && document.getElementById(valId);
     if (out) out.textContent = fmt ? fmt(value) : value;
   };
-  setS('stripCount', 'stripCountVal', s.count, n => Math.round(n));
-  setS('stripPhase', 'stripPhaseVal', s.phaseShift, n => n.toFixed(2));
-  setS('stripAnim', 'stripAnimVal', s.animSpeed, n => n.toFixed(2));
-  setS('stripQuant', 'stripQuantVal', s.quantize, n => Math.round(n));
+  setS('stripCount',    'stripCountVal',    s.count,      n => Math.round(n));
+  setS('stripPhase',    'stripPhaseVal',    s.phaseShift, n => n.toFixed(2));
+  setS('stripAmp',      'stripAmpVal',      s.amplitude,  n => n.toFixed(2));
+  setS('stripAnim',     'stripAnimVal',     s.speed,      n => n.toFixed(1));
+  setS('stripThresh',   'stripThreshVal',   s.threshold,  n => n.toFixed(2));
+  setS('stripSoft',     'stripSoftVal',     s.softness,   n => n.toFixed(2));
+  setS('stripContrast', 'stripContrastVal', s.contrast,   n => n.toFixed(1));
+  setS('stripQuant',    'stripQuantVal',    s.levels,     n => Math.round(n));
   if (stripModeSel) stripModeSel.value = s.phaseMode;
-  const flip = document.getElementById('stripFlipAxis');
-  if (flip) flip.classList.toggle('active', !!s.vertical);
+  stripInvertYToggle.classList.toggle('active', !!s.invertY);
 }
 
 document.getElementById('stripsPresets').addEventListener('click', e => {
@@ -1089,28 +1021,6 @@ function updateRandomVisibility() {
   const el = document.getElementById('randomGroup');
   if (el) el.style.display = state.mode === 'Random' ? '' : 'none';
 }
-
-// Audio Strips toggle: row heights driven by FFT bands
-const audioStripsToggle = document.getElementById('audioStripsToggle');
-audioStripsToggle.addEventListener('click', () => {
-  state.strips.audioDriven = !state.strips.audioDriven;
-  audioStripsToggle.classList.toggle('active', state.strips.audioDriven);
-});
-
-// Flip axis: stream the bands vertically instead of horizontally
-const stripFlipAxis = document.getElementById('stripFlipAxis');
-stripFlipAxis.addEventListener('click', () => {
-  state.strips.vertical = !state.strips.vertical;
-  stripFlipAxis.classList.toggle('active', state.strips.vertical);
-  clearActiveStripPreset();
-});
-
-// Invert on beat: sustained flip on each detected kick
-const beatStrobeToggle = document.getElementById('beatStrobeToggle');
-beatStrobeToggle.addEventListener('click', () => {
-  state.audioBeatInvert = !state.audioBeatInvert;
-  beatStrobeToggle.classList.toggle('active', state.audioBeatInvert);
-});
 
 // Color mode: FG hue follows band balance
 const audioColorToggle = document.getElementById('audioColorToggle');
@@ -1155,18 +1065,15 @@ function updateNoiseVisibility() {
 noiseScaleSlider.addEventListener('input', e => {
   state.noiseScale = parseFloat(e.target.value);
   noiseScaleVal.textContent = Math.round(state.noiseScale);
-  scheduleGlow();
 });
 noiseContrastEl.addEventListener('input', e => {
   state.noiseContrast = parseFloat(e.target.value);
   noiseContrastVal.textContent = state.noiseContrast.toFixed(2);
-  scheduleGlow();
 });
 
 // Big toggle chips replace the old <input type=checkbox> controls.
 const chipInvert = document.getElementById('chipInvert');
 const chipOutline = document.getElementById('chipOutline');
-const chipVoxel = document.getElementById('chipVoxel');
 const chipGradient = document.getElementById('chipGradient');
 
 chipInvert.addEventListener('click', () => {
@@ -1182,10 +1089,6 @@ chipGradient.addEventListener('click', () => {
   state.gradient = !state.gradient;
   chipGradient.classList.toggle('active', state.gradient);
   if (state.mode === 'Random') rebuildRandomSource();
-});
-if (chipVoxel) chipVoxel.addEventListener('click', () => {
-  state.voxel = !state.voxel;
-  chipVoxel.classList.toggle('active', state.voxel);
 });
 
 // Color combo presets — pair of (fg, bg) one-click
@@ -1538,7 +1441,7 @@ function buildRandomCanvas(seed, exportW, exportH, useGradient) {
   return cv;
 }
 
-variationsBtn.addEventListener('click', () => { clearGlow(); openVariations(); });
+variationsBtn.addEventListener('click', openVariations);
 modalClose.addEventListener('click', closeVariations);
 modalBackdrop.addEventListener('click', closeVariations);
 modalReroll.addEventListener('click', () => { makeVariations(); renderVariations(); });
@@ -1567,88 +1470,54 @@ document.getElementById('resSelect').addEventListener('change', e => {
   });
 });
 
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
 document.getElementById('exportPNG').addEventListener('click', () => {
-  const [w, h] = getExportSize();
-  const cv = document.createElement('canvas');
-  cv.width = w; cv.height = h;
-  const c2 = cv.getContext('2d');
-  const sourceOverride = state.mode === 'Random' ? buildRandomCanvas(state.randomSeed, w, h, state.gradient) : null;
-  drawScene(c2, w, h, { noSmoothing: true, sourceOverride });
-  cv.toBlob(blob => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `enode-${w}x${h}.png`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  // WYSIWYG: the live canvas bitmap is already at export resolution (the res
+  // select drives setExportSize), so a direct snapshot captures smoothing,
+  // modulation and FX exactly as on screen.
+  canvas.toBlob(blob => {
+    downloadBlob(blob, `enode-${canvas.width}x${canvas.height}.png`);
   }, 'image/png');
 });
 
 // ─── Export: SVG ───────────────────────────────────────────────
+// Vector freeze-frame of the live render: cells come straight from the current
+// smoothed buffer (post-invert, exactly what the canvas just drew), scaled
+// from the live grid onto the requested export size.
 function buildSVG(w, h) {
-  const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`];
-  parts.push(`<rect width="${w}" height="${h}" fill="${state.bg}"/>`);
-
-  // Grid mode: snapshot current smoothed buffer
-  const density = Math.floor(state.density);
+  const density = lastDensity || Math.floor(state.density);
+  const rows = lastRows || Math.ceil(h / (w / Math.max(1, density)));
   const cellSize = w / density;
-  const rows = Math.ceil(h / cellSize);
+  const cellMul = applyMods(state.cellSize, 'cellSize');
+  const morph = applyMods(state.morph, 'morph');
   const angle = state.angle;
   const cx = w / 2, cy = h / 2;
-  const g = angle !== 0 ? `<g transform="rotate(${angle} ${cx} ${cy})">` : '<g>';
-  parts.push(g);
 
-  // Per-cell brightness: sample the current source (or random canvas)
-  // with the same center-crop the renderer uses.
-  const cv = document.createElement('canvas');
-  cv.width = density;
-  cv.height = rows;
-  const c2 = cv.getContext('2d', { willReadFrequently: true });
-  const src = state.mode === 'Random'
-    ? buildRandomCanvas(state.randomSeed, w, h, state.gradient)
-    : currentSource();
-  let data = null;
-  if (state.mode === 'Noise' || state.mode === 'Strips') {
-    // Sampled per cell below
-  } else if (src) {
-    const sW = src.videoWidth || src.naturalWidth || src.width || 1;
-    const sH = src.videoHeight || src.naturalHeight || src.height || 1;
-    const sAr = sW / sH, dAr = density / rows;
-    let sx = 0, sy = 0, sw = sW, sh = sH;
-    if (sAr > dAr) { sw = sH * dAr; sx = (sW - sw) / 2; }
-    else if (sAr < dAr) { sh = sW / dAr; sy = (sH - sh) / 2; }
-    try {
-      c2.drawImage(src, sx, sy, sw, sh, 0, 0, density, rows);
-      data = c2.getImageData(0, 0, density, rows).data;
-    } catch (e) {}
-  }
+  const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`];
+  parts.push(`<rect width="${w}" height="${h}" fill="${state.bg}"/>`);
+  parts.push(angle !== 0 ? `<g transform="rotate(${angle} ${cx} ${cy})">` : '<g>');
 
-  const ns = 1 / (state.noiseScale * 2 + 0.1);
   const pad = angle !== 0 ? Math.ceil(density * 0.4) : 0;
   for (let i = -pad; i < density + pad; i++) {
     for (let j = -pad; j < rows + pad; j++) {
-      let v;
-      if (state.mode === 'Noise') {
-        v = (simplex.noise3D(i * ns, j * ns, time) + 1) / 2;
-      } else if (state.mode === 'Strips') {
-        const nx = density > 1 ? i / (density - 1) : 0;
-        const ny = rows > 1 ? j / (rows - 1) : 0;
-        v = stripsValue(nx, ny, time, state.strips);
-      } else if (data) {
-        const ii = Math.max(0, Math.min(density - 1, i));
-        const jj = Math.max(0, Math.min(rows - 1, j));
-        const idx = (jj * density + ii) * 4;
-        v = (0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]) / 255;
-      } else {
-        continue;
-      }
-      if (state.invert) v = 1 - v;
-      const size = cellSize * state.cellSize * v;
+      // Rotation pad ring clamp-samples the nearest buffer cell, like the live render.
+      const ii = Math.max(0, Math.min(density - 1, i));
+      const jj = Math.max(0, Math.min(rows - 1, j));
+      const v = smoothed[ii + jj * density] || 0;
+      const size = cellSize * cellMul * v;
       const minDrawSvg = state.outline ? Math.max(2, state.stroke * 3) : 0.5;
       if (size < minDrawSvg) continue;
       const x = i * cellSize + cellSize / 2 - size / 2;
       const y = j * cellSize + cellSize / 2 - size / 2;
-      const r = (size / 2) * Math.min(1, v * state.morph);
+      const r = (size / 2) * Math.min(1, v * morph);
       const fillOrStroke = state.outline
         ? `fill="none" stroke="${state.fg}" stroke-width="${state.stroke}"`
         : `fill="${state.fg}"`;
@@ -1662,17 +1531,55 @@ function buildSVG(w, h) {
 document.getElementById('exportSVG').addEventListener('click', () => {
   const [w, h] = getExportSize();
   const svg = buildSVG(w, h);
-  const blob = new Blob([svg], { type: 'image/svg+xml' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `enode-${w}x${h}.svg`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), `enode-${w}x${h}.svg`);
 });
 
-// ─── Export: MP4 (WebCodecs + mp4-muxer) ───────────────────────
+// ─── Export: MP4 / PNG sequence (real-time capture) ────────────
+// Records the live canvas while it renders, so smoothing, audio modulation and
+// FX land in the file exactly as seen — a 10 s export records for 10 s.
+// captureTick() (called from tick() after drawScene) copies the canvas into
+// the recorder at 25 fps slots; the recording object supplies captureFrame()
+// and finish() per format.
 const REC_FPS = 25;
+let recording = null;
+
+// For Video mode, match the source duration for a seamless loop.
+function exportDuration() {
+  let durationSec = parseFloat(durationSlider.value);
+  if (state.mode === 'Video' && activeVideo && isFinite(activeVideo.duration) && activeVideo.duration > 0) {
+    durationSec = activeVideo.duration;
+  }
+  return durationSec;
+}
+
+function captureTick(nowMs) {
+  const r = recording;
+  const elapsed = nowMs - r.startMs;
+  while (r.slot < r.totalFrames && r.slot * (1000 / REC_FPS) <= elapsed) {
+    r.ctx.drawImage(canvas, 0, 0);
+    r.captureFrame(r.slot);
+    r.slot++;
+  }
+  r.btn.textContent = `Recording ${Math.min(elapsed / 1000, r.durationSec).toFixed(1)}s / ${r.durationSec.toFixed(1)}s`;
+  if (r.slot >= r.totalFrames) {
+    recording = null;
+    r.finish();
+  }
+}
+
+function startRecording(opts) {
+  const recCanvas = document.createElement('canvas');
+  recCanvas.width = opts.fw;
+  recCanvas.height = opts.fh;
+  recording = {
+    startMs: performance.now(),
+    slot: 0,
+    canvas: recCanvas,
+    ctx: recCanvas.getContext('2d'),
+    ...opts,
+  };
+}
+
 let _mp4Mod = null;
 async function getMp4Muxer() {
   if (_mp4Mod) return _mp4Mod;
@@ -1688,28 +1595,19 @@ durationSlider.addEventListener('input', e => {
 
 document.getElementById('exportMP4').addEventListener('click', async () => {
   const btn = document.getElementById('exportMP4');
-  if (btn.classList.contains('recording')) return;
+  if (recording || btn.classList.contains('recording')) return;
   if (typeof VideoEncoder === 'undefined') {
     alert('MP4 export requires WebCodecs. Use Chrome or Edge.');
     return;
   }
 
-  const [rawW, rawH] = getExportSize();
-  const fw = rawW & ~1, fh = rawH & ~1; // H.264 needs even dims
-
-  // Decide duration: for Video mode, match source duration for seamless loop.
-  let durationSec = parseFloat(durationSlider.value);
-  if (state.mode === 'Video' && activeVideo && isFinite(activeVideo.duration) && activeVideo.duration > 0) {
-    durationSec = activeVideo.duration;
-  }
+  // Capture at the live canvas resolution (= the selected export resolution).
+  const fw = canvas.width & ~1, fh = canvas.height & ~1; // H.264 needs even dims
+  const durationSec = exportDuration();
   const totalFrames = Math.max(1, Math.round(durationSec * REC_FPS));
 
   btn.classList.add('recording');
   btn.textContent = 'Initializing…';
-
-  const recCanvas = document.createElement('canvas');
-  recCanvas.width = fw; recCanvas.height = fh;
-  const recCtx = recCanvas.getContext('2d');
 
   let muxer, encoder, muxerTarget;
   try {
@@ -1738,170 +1636,74 @@ document.getElementById('exportMP4').addEventListener('click', async () => {
     return;
   }
 
-  // For Video mode: drive the video by seeking each frame for deterministic capture.
-  // For Image/Random/Noise: render each frame with our own time progression.
-  let videoForRec = null;
-  if (state.mode === 'Video' && activeVideo) {
-    videoForRec = document.createElement('video');
-    videoForRec.src = activeVideo.currentSrc || activeVideo.src;
-    videoForRec.muted = true;
-    videoForRec.crossOrigin = 'anonymous';
-    videoForRec.playsInline = true;
-    await new Promise((res, rej) => {
-      videoForRec.addEventListener('loadedmetadata', res, { once: true });
-      videoForRec.addEventListener('error', rej, { once: true });
-    });
-  }
-
-  async function seekVideoTo(v, t) {
-    return new Promise((res) => {
-      const onSeeked = () => { v.removeEventListener('seeked', onSeeked); res(); };
-      v.addEventListener('seeked', onSeeked);
-      v.currentTime = t;
-    });
-  }
-
-  // Build a fixed Random source canvas (once) so all frames share the layout
-  const recRandomSrc = state.mode === 'Random' ? buildRandomCanvas(state.randomSeed, fw, fh, state.gradient) : null;
-
-  // Render frames sequentially
-  for (let f = 0; f < totalFrames; f++) {
-    if (f % 5 === 0) btn.textContent = `Recording ${(f / REC_FPS).toFixed(1)}s / ${durationSec.toFixed(1)}s`;
-
-    let sourceOverride = null;
-    if (videoForRec) {
-      const t = (f / REC_FPS) % videoForRec.duration;
-      await seekVideoTo(videoForRec, t);
-      sourceOverride = videoForRec;
-    } else if (state.mode === 'Noise') {
-      time = (f / REC_FPS) * state.speed;
-    } else if (state.mode === 'Strips') {
-      time = (f / REC_FPS);
-    } else if (state.mode === 'Random') {
-      sourceOverride = recRandomSrc;
-    }
-
-    drawScene(recCtx, fw, fh, { noSmoothing: true, sourceOverride });
-
-    const frame = new VideoFrame(recCanvas, { timestamp: f * (1_000_000 / REC_FPS) });
-    encoder.encode(frame, { keyFrame: f % REC_FPS === 0 });
-    frame.close();
-
-    // Yield to UI
-    if (f % 3 === 0) await new Promise(r => setTimeout(r, 0));
-  }
-
-  btn.textContent = 'Finalizing…';
-  try {
-    await encoder.flush();
-    muxer.finalize();
-    const blob = new Blob([muxerTarget.buffer], { type: 'video/mp4' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `enode-${fw}x${fh}.mp4`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-  } catch (e) {
-    console.error(e);
-    alert('Finalize failed: ' + e.message);
-  }
-  if (videoForRec) videoForRec.src = '';
-  btn.classList.remove('recording');
-  btn.textContent = 'Export MP4';
+  startRecording({
+    fw, fh, totalFrames, durationSec, btn,
+    captureFrame(slot) {
+      const frame = new VideoFrame(this.canvas, { timestamp: slot * (1_000_000 / REC_FPS) });
+      encoder.encode(frame, { keyFrame: slot % REC_FPS === 0 });
+      frame.close();
+    },
+    async finish() {
+      btn.textContent = 'Finalizing…';
+      try {
+        await encoder.flush();
+        muxer.finalize();
+        downloadBlob(new Blob([muxerTarget.buffer], { type: 'video/mp4' }), `enode-${fw}x${fh}.mp4`);
+      } catch (e) {
+        console.error(e);
+        alert('Finalize failed: ' + e.message);
+      }
+      btn.classList.remove('recording');
+      btn.textContent = 'Export MP4';
+    },
+  });
 });
 
-// ─── Export: PNG sequence (zip) ────────────────────────────────
-document.getElementById('exportPNGseq').addEventListener('click', async () => {
+// ─── Export: PNG sequence (zip, real-time capture) ─────────────
+document.getElementById('exportPNGseq').addEventListener('click', () => {
   const btn = document.getElementById('exportPNGseq');
-  if (btn.classList.contains('recording')) return;
+  if (recording || btn.classList.contains('recording')) return;
   if (typeof JSZip === 'undefined') {
     alert('JSZip not loaded — cannot package frame sequence.');
     return;
   }
 
-  const [rawW, rawH] = getExportSize();
-  const fw = rawW, fh = rawH;
-  let durationSec = parseFloat(durationSlider.value);
-  if (state.mode === 'Video' && activeVideo && isFinite(activeVideo.duration) && activeVideo.duration > 0) {
-    durationSec = activeVideo.duration;
-  }
+  const fw = canvas.width, fh = canvas.height;
+  const durationSec = exportDuration();
   const totalFrames = Math.max(1, Math.round(durationSec * REC_FPS));
+  const frames = new Array(totalFrames);
+  let pending = 0;
 
   btn.classList.add('recording');
-  btn.textContent = 'Preparing…';
 
-  const recCanvas = document.createElement('canvas');
-  recCanvas.width = fw; recCanvas.height = fh;
-  const recCtx = recCanvas.getContext('2d');
-
-  // Prepare a deterministic video source if needed (mirrors MP4 path)
-  let videoForRec = null;
-  if (state.mode === 'Video' && activeVideo) {
-    videoForRec = document.createElement('video');
-    videoForRec.src = activeVideo.currentSrc || activeVideo.src;
-    videoForRec.muted = true;
-    videoForRec.crossOrigin = 'anonymous';
-    videoForRec.playsInline = true;
-    await new Promise((res, rej) => {
-      videoForRec.addEventListener('loadedmetadata', res, { once: true });
-      videoForRec.addEventListener('error', rej, { once: true });
-    });
-  }
-  async function seekVideoTo(v, t) {
-    return new Promise((res) => {
-      const onSeeked = () => { v.removeEventListener('seeked', onSeeked); res(); };
-      v.addEventListener('seeked', onSeeked);
-      v.currentTime = t;
-    });
-  }
-
-  const recRandomSrc = state.mode === 'Random' ? buildRandomCanvas(state.randomSeed, fw, fh, state.gradient) : null;
-  const zip = new JSZip();
-  const folder = zip.folder(`enode-${fw}x${fh}-${totalFrames}fr`);
-  const pad = String(totalFrames).length;
-
-  for (let f = 0; f < totalFrames; f++) {
-    btn.textContent = `Rendering ${f + 1} / ${totalFrames}`;
-
-    let sourceOverride = null;
-    if (videoForRec) {
-      const t = (f / REC_FPS) % videoForRec.duration;
-      await seekVideoTo(videoForRec, t);
-      sourceOverride = videoForRec;
-    } else if (state.mode === 'Noise') {
-      time = (f / REC_FPS) * state.speed;
-    } else if (state.mode === 'Strips') {
-      time = (f / REC_FPS);
-    } else if (state.mode === 'Random') {
-      sourceOverride = recRandomSrc;
-    }
-
-    drawScene(recCtx, fw, fh, { noSmoothing: true, sourceOverride });
-
-    const blob = await new Promise(r => recCanvas.toBlob(r, 'image/png'));
-    const name = `frame_${String(f).padStart(pad, '0')}.png`;
-    folder.file(name, blob);
-
-    if (f % 2 === 0) await new Promise(r => setTimeout(r, 0));
-  }
-
-  btn.textContent = 'Zipping…';
-  try {
-    const blob = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `enode-${fw}x${fh}-${totalFrames}fr.zip`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-  } catch (e) {
-    console.error(e);
-    alert('Zip failed: ' + e.message);
-  }
-  if (videoForRec) videoForRec.src = '';
-  btn.classList.remove('recording');
-  btn.textContent = 'Export PNG sequence';
+  startRecording({
+    fw, fh, totalFrames, durationSec, btn,
+    captureFrame(slot) {
+      // toBlob copies the bitmap synchronously and encodes async — safe to
+      // reuse the recorder canvas for the next slot immediately.
+      pending++;
+      this.canvas.toBlob(b => { frames[slot] = b; pending--; }, 'image/png');
+    },
+    async finish() {
+      btn.textContent = 'Zipping…';
+      while (pending > 0) await new Promise(r => setTimeout(r, 50));
+      const zip = new JSZip();
+      const folder = zip.folder(`enode-${fw}x${fh}-${totalFrames}fr`);
+      const pad = String(totalFrames).length;
+      frames.forEach((b, f) => {
+        if (b) folder.file(`frame_${String(f).padStart(pad, '0')}.png`, b);
+      });
+      try {
+        const blob = await zip.generateAsync({ type: 'blob' });
+        downloadBlob(blob, `enode-${fw}x${fh}-${totalFrames}fr.zip`);
+      } catch (e) {
+        console.error(e);
+        alert('Zip failed: ' + e.message);
+      }
+      btn.classList.remove('recording');
+      btn.textContent = 'Export PNG sequence';
+    },
+  });
 });
 
 // ─── Source preview (sidebar thumbnail) ─────────────────────────
@@ -1929,7 +1731,7 @@ function updateSourcePreview() {
   if (state.mode === 'Strips') {
     sourcePreviewCtx.fillStyle = '#202020';
     sourcePreviewCtx.fillRect(0, 0, targetW, targetH);
-    const sp = state.voxel ? { ...state.strips, square: true } : state.strips;
+    const sp = state.strips;
     const step = 3;
     for (let i = 0; i < targetW; i += step) {
       for (let j = 0; j < targetH; j += step) {
@@ -2363,30 +2165,7 @@ function randomizeMods() {
 const modRandomBtn = document.getElementById('modRandomBtn');
 if (modRandomBtn) modRandomBtn.addEventListener('click', randomizeMods);
 
-// Light up a row while its value is pushing the visual, so the user sees which
-// routing is currently active.
-function modRowsTick() {
-  const rows = modListEl.children;
-  if (!rows.length) return;
-  for (let i = 0; i < state.audioMods.length; i++) {
-    const row = rows[i];
-    if (row) row.classList.toggle('live', (state.audioMods[i]._value || 0) > 0.04);
-  }
-}
-
 renderModList();
-
-// ─── BPM controls ──────────────────────────────────────────────
-const bpmInput  = document.getElementById('bpmInput');
-const bpmDotsEl = document.getElementById('bpmDots');
-if (bpmInput && window.enodeBpm) {
-  bpmInput.value = enodeBpm.bpm;
-  bpmInput.addEventListener('input', () => enodeBpm.setBpm(bpmInput.value));
-  enodeBpm.onTick(n => {
-    const dot = bpmDotsEl && bpmDotsEl.querySelector(`[data-bpm="${n}"]`);
-    if (dot) { dot.classList.add('on'); setTimeout(() => dot.classList.remove('on'), 90); }
-  });
-}
 
 // Per-frame: refresh transport readout and draw the mini FFT visualizer.
 function audioVizTick() {
@@ -2400,8 +2179,7 @@ function audioVizTick() {
   drawAudioViz();
 }
 
-// Sound Analysis: a log-frequency spectrum with the Low/Mid/High bands marked,
-// each flashing cyan on its onset.
+// Sound Analysis: a log-frequency spectrum with the Low/Mid/High bands marked.
 function drawAudioViz() {
   const css = getComputedStyle(document.documentElement);
   const col = (name, fb) => css.getPropertyValue(name).trim() || fb;
@@ -2419,7 +2197,7 @@ function drawAudioViz() {
   const lMin = Math.log(F_MIN), lSpan = Math.log(F_MAX) - lMin;
   const xForHz = hz => (Math.log(hz) - lMin) / lSpan * W;
 
-  // Band regions behind the bars, flashing cyan on their onset.
+  // Band regions behind the bars.
   const ranges = enodeAudio.bandRanges || { bass: [20, 180], mid: [180, 2000], treble: [2000, 9000] };
   const regions = [
     { key: 'bass',   label: 'Low'  },
@@ -2430,7 +2208,7 @@ function drawAudioViz() {
   c.textBaseline = 'top';
   for (const r of regions) {
     const x0 = xForHz(ranges[r.key][0]), x1 = xForHz(ranges[r.key][1]);
-    c.fillStyle = enodeAudio.onsets[r.key] ? 'rgba(0,212,255,0.22)' : 'rgba(255,255,255,0.05)';
+    c.fillStyle = 'rgba(255,255,255,0.05)';
     c.fillRect(x0, 0, x1 - x0, specH);
     c.strokeStyle = 'rgba(255,255,255,0.10)';
     c.strokeRect(x0 + 0.5, 0.5, x1 - x0 - 1, specH - 1);

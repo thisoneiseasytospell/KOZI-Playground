@@ -1045,28 +1045,6 @@ input[type=range]::-moz-range-thumb {
   transform: rotate(-12deg);
 }
 
-/* Idle glow — pulses cyan after 5s of slider inactivity */
-@keyframes varGlow {
-  0%   { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.0), inset 0 0 0 1px var(--line-2); border-color: var(--line-2); }
-  50%  { box-shadow: 0 0 22px 2px rgba(0, 212, 255, 0.55), inset 0 0 0 1px var(--cyan); border-color: var(--cyan); }
-  100% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.0), inset 0 0 0 1px var(--line-2); border-color: var(--line-2); }
-}
-@keyframes diceWiggle {
-  0%, 100% { transform: rotate(0deg); }
-  20% { transform: rotate(-14deg); }
-  40% { transform: rotate(10deg); }
-  60% { transform: rotate(-6deg); }
-  80% { transform: rotate(4deg); }
-}
-.btn-variations.glow {
-  animation: varGlow 2.2s ease-in-out infinite;
-  color: var(--cyan);
-}
-.btn-variations.glow .dice {
-  animation: diceWiggle 1.4s ease-in-out infinite;
-  transform-origin: center;
-}
-
 /* ─── Audio group ──────────────────────────────────────── */
 .audio-status {
   float: right;
@@ -1249,8 +1227,6 @@ input[type=range]::-moz-range-thumb {
   gap: 8px;
 }
 .mod-row .mod-depth { flex: 1; width: 100%; margin: 0; }
-.mod-row.live { box-shadow: inset 0 0 0 1px rgba(0, 212, 255, 0.5); }
-.mod-row.live .mod-src { color: var(--cyan); }
 
 /* ─── Modulation matrix controls ───────────────────────── */
 .mod-src, .mod-tgt {
@@ -1336,62 +1312,6 @@ input[type=range]::-moz-range-thumb {
 .mod-actions { display: flex; gap: 6px; margin-top: 8px; }
 .mod-actions .mod-add { flex: 1; margin-top: 0; }
 .sub-hint { color: var(--fg-mute); font-size: 10px; letter-spacing: 0; text-transform: none; }
-
-/* ─── BPM / tempo ───────────────────────────────────────── */
-.bpm-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-.bpm-input {
-  width: 56px;
-  background: var(--bg-3);
-  color: var(--fg);
-  border: none;
-  border-radius: var(--r);
-  padding: 5px 6px;
-  font: inherit;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
-.bpm-unit { color: var(--fg-mute); font-size: 10px; letter-spacing: 0.04em; margin-right: auto; }
-.bpm-btn {
-  background: var(--bg-3);
-  border: none;
-  color: var(--fg-dim);
-  padding: 5px 12px;
-  border-radius: var(--r);
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  transition: background 0.12s, color 0.12s;
-}
-.bpm-btn:hover { background: var(--bg-4); color: var(--fg); }
-.bpm-btn.flash { background: var(--cyan); color: #000; }
-.bpm-dots {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-.bpm-dot {
-  flex: 1;
-  text-align: center;
-  padding: 3px 0;
-  background: var(--bg-3);
-  color: var(--fg-mute);
-  border-radius: var(--r);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  transition: background 0.06s, color 0.06s, box-shadow 0.06s;
-}
-.bpm-dot.on {
-  background: var(--cyan);
-  color: #000;
-  box-shadow: 0 0 6px var(--cyan);
-}
 
 /* ─── Mobile fallback ──────────────────────────────────── */
 @media (max-width: 720px) {

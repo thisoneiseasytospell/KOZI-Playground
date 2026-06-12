@@ -190,11 +190,12 @@
           <button class="pill" data-some="9:16">9:16</button>
           <button class="pill" data-some="16:9">16:9</button>
           <button class="pill" data-some="print">Name Tags Print</button>
+          <button class="pill" data-some="tagsvideo">Name Tags Video</button>
           <button class="pill" data-some="student">Student Takeover</button>
         </div>
       </div>
       <div class="section" id="batchSection" style="display:none">
-        <div class="section-label">Batch · CSV → ZIP</div>
+        <div class="section-label" id="batchSectionLabel">Batch · CSV → ZIP</div>
         <div class="dropzone" id="csvDrop">
           <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/>
@@ -208,6 +209,7 @@
         <label class="matte-row"><input type="checkbox" id="matteToggle" checked> Matte — no glare (print)</label>
         <button class="btn-export" id="batchExportBtn" disabled>Export ZIP · A5 300dpi</button>
         <button class="btn-export" id="batchPdfBtn" style="margin-top:8px" disabled>Export PDF · A5 (multi-page)</button>
+        <button class="btn-export" id="batchVideoBtn" style="display:none" disabled>Export MP4 per row · 10s</button>
       </div>
       <div class="section">
         <div class="section-label">Size</div>
@@ -289,7 +291,7 @@ Can't Do</textarea>
           </div>
         </div>
       </div>
-      <div class="section">
+      <div class="section" id="clothSection">
         <div class="section-label">Cloth</div>
         <div class="pill-row" id="clothModeRow" style="gap:5px">
           <button class="pill active" data-cloth="full">Full</button>

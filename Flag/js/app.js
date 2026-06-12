@@ -2709,7 +2709,7 @@ function renderFlagToBlob(outW, outH, matte, transparent) {
 }
 
 // ─── SoMe Export ────────────────────────────────────────────
-const SOME_FORMATS = { '1:1': [1080,1080], '4:5': [1080,1350], '9:16': [1080,1920], '16:9': [1920,1080], 'print': [1748,2480] };
+const SOME_FORMATS = { '1:1': [1080,1080], '4:5': [1080,1350], '9:16': [1080,1920], '16:9': [1920,1080], 'print': [1748,2480], 'tagsvideo': [1920,1080] };
 let someFormat = '1:1', someActive = false, someRecording = false;
 let someAudio = 'none'; // 'none' | '1' | '2' | '3' | '4'
 const SOUND_VOLUME = 0.3;
@@ -2786,6 +2786,22 @@ function updateSomeFrame() {
   someLabel.textContent = w + '\u00d7' + h + ' \u00b7 ' + suffix;
 }
 
+function setDisplay(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = value;
+}
+
+// The batch section serves two presets: print (CSV → ZIP/PDF stills) and
+// tagsvideo (CSV → one 10s MP4 per row). Swap label + action buttons.
+function setBatchSectionMode(isVideo) {
+  const label = document.getElementById('batchSectionLabel');
+  if (label) label.textContent = isVideo ? 'Batch · CSV → MP4s' : 'Batch · CSV → ZIP';
+  setDisplay('batchExportBtn', isVideo ? 'none' : '');
+  setDisplay('batchPdfBtn', isVideo ? 'none' : '');
+  setDisplay('batchVideoBtn', isVideo ? '' : 'none');
+  updateBatchLoadedStatus();
+}
+
 document.getElementById('someRow').addEventListener('click', e => {
   const btn = e.target.closest('[data-some]');
   if (!btn) return;
@@ -2794,13 +2810,23 @@ document.getElementById('someRow').addEventListener('click', e => {
   const ffiSection = document.getElementById('ffiSection');
   const batchSection = document.getElementById('batchSection');
   const singlePdfBtn = document.getElementById('pdfBtn');
-  // Print + Student are both title-card presets sharing the Name Tag Text
-  // blocks; only print gets the CSV batch + PDF machinery.
-  if (someFormat === 'print' || someFormat === 'student') {
+  // Print + Tags Video + Student are all title-card presets sharing the Name
+  // Tag Text blocks; print gets the CSV→ZIP/PDF machinery, tagsvideo gets the
+  // CSV→MP4-per-row machinery, student gets neither.
+  if (someFormat === 'print' || someFormat === 'student' || someFormat === 'tagsvideo') {
+    const isPrint = someFormat === 'print', isVideo = someFormat === 'tagsvideo';
     ffiSection.style.display = '';
-    batchSection.style.display = someFormat === 'print' ? '' : 'none';
-    if (singlePdfBtn) singlePdfBtn.style.display = someFormat === 'print' ? '' : 'none';
-    if (someFormat === 'print') applyPrintPreset(); else applyStudentPreset();
+    batchSection.style.display = (isPrint || isVideo) ? '' : 'none';
+    setBatchSectionMode(isVideo);
+    if (singlePdfBtn) singlePdfBtn.style.display = isPrint ? '' : 'none';
+    // Video preset: 10s MP4 is the only deliverable — drop the stills buttons
+    // and the cloth pills (full motion is forced by the preset).
+    setDisplay('exportBtn', isVideo ? 'none' : '');
+    setDisplay('someSeqBtn', isVideo ? 'none' : '');
+    setDisplay('clothSection', isVideo ? 'none' : '');
+    if (isPrint) applyPrintPreset();
+    else if (isVideo) applyTagsVideoPreset();
+    else applyStudentPreset();
     someActive = true;
     initSomeCrop();
     someFrame.style.display = 'block';
@@ -2809,7 +2835,10 @@ document.getElementById('someRow').addEventListener('click', e => {
   ffiSection.style.display = 'none';
   batchSection.style.display = 'none';
   if (singlePdfBtn) singlePdfBtn.style.display = '';
-  // Leaving print/student — restore the studio surface + generic text rendering.
+  setDisplay('exportBtn', '');
+  setDisplay('someSeqBtn', '');
+  setDisplay('clothSection', '');
+  // Leaving print/tagsvideo/student — restore the studio surface + generic text rendering.
   matteMode = false;
   const mt = document.getElementById('matteToggle');
   if (mt) mt.checked = false;
@@ -3053,6 +3082,67 @@ function applyStudentPreset() {
   refreshTexture(); // repaint title card with the seeded text colour
 }
 
+// Name Tags Video — the name-tag flag as a 16:9 video, batched: the CSV that
+// feeds the print run feeds this too, but every row becomes its own 10s MP4
+// (1920×1080). Full cloth only — the preset forces it and the UI hides the
+// cloth pills; no PNG/PDF outputs here.
+function applyTagsVideoPreset() {
+  textLayout = 'titleCard';        // cloth text comes from titleBlocks
+  textLayoutUserSet = true;
+
+  // Same portrait flag as the name tags.
+  fullRebuild(2.4, 2.9);
+  customAW = 2.4; customAH = 2.9;
+  activeRatio = null;
+  document.querySelectorAll('#ratioRow [data-r]').forEach(b => b.classList.remove('active'));
+  if (typeof updateMiniPreview === 'function') updateMiniPreview();
+
+  // Full-edge attachment keeps the title card readable while the cloth waves.
+  ATTACH.mode = 'edge';
+  applyPinning();
+  document.querySelectorAll('#attachRow .pill').forEach(b => b.classList.toggle('active', b.dataset.attach === 'edge'));
+
+  // Video surface — keep the sheen; matte is a print thing (toggle stays live).
+  matteMode = false;
+  if (matteToggle) matteToggle.checked = false;
+
+  // Name-tag palette: dark green text on mint.
+  SIM.bgColor = hexToRgb('#D3FED1');
+  if (bgColorIn) bgColorIn.value = '#D3FED1';
+  if (bgColorHex) bgColorHex.value = '#D3FED1';
+  currentTextColor = '#00330A';
+  if (textColorIn) textColorIn.value = '#00330A';
+  if (textColorHex) textColorHex.value = '#00330A';
+
+  // Full wind — the whole point of the video tags is the untamed cloth.
+  setClothMode('full');
+
+  // 16:9 landscape video.
+  sizeWInput.value = 1920;
+  sizeHInput.value = 1080;
+  someFormat = 'tagsvideo';
+  document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b.dataset.some === 'tagsvideo'));
+
+  // Head-on, same target as the print framing. In a 16:9 crop the flag's
+  // 2.9-unit height is the binding constraint: d = flagH / (2·tan(20°)·0.86)
+  // ≈ 4.6 (0.86 = crop height fraction from initSomeCrop), plus margin so the
+  // cloth can billow without clipping. Mint bg = seamless surround.
+  cam.tgtTheta = 0; cam.tgtPhi = 0; cam.tgtRoll = 0;
+  cam.tgtTarget[0] = 1.191;
+  cam.tgtTarget[1] = 0.782;
+  cam.tgtTarget[2] = 0;
+  cam.tgtDist = 4.8;
+  cam.curTheta = cam.tgtTheta;
+  cam.curPhi = cam.tgtPhi;
+  cam.curDist = cam.tgtDist;
+  cam.curRoll = cam.roll = cam.tgtRoll;
+  cam.target[0] = cam.tgtTarget[0];
+  cam.target[1] = cam.tgtTarget[1];
+  cam.target[2] = cam.tgtTarget[2];
+
+  refreshTexture(); // repaint title card with the seeded text colour
+}
+
 // CSV → records. Tolerates quotes, embedded delimiters/newlines, CRLF and a BOM.
 function parseCSV(text, delim = ',') {
   if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
@@ -3198,8 +3288,19 @@ const batchExportBtn = document.getElementById('batchExportBtn');
 const matteToggle = document.getElementById('matteToggle');
 let batchRecords = [];
 let batchExporting = false, batchCancel = false;
+let batchVideoExporting = false, batchVideoCancel = false;
 
 if (matteToggle) matteToggle.addEventListener('change', () => { matteMode = matteToggle.checked; });
+
+// "N rows loaded → N PNGs/videos" — re-derived on preset switch so the noun
+// matches the active batch output. No-op while an export owns the status line.
+function updateBatchLoadedStatus() {
+  if (!batchStatus || batchExporting || batchVideoExporting) return;
+  const n = batchRecords.length;
+  if (!n) return; // keep "No CSV loaded" / parse-error text as-is
+  const noun = someFormat === 'tagsvideo' ? 'video' : 'PNG';
+  batchStatus.textContent = `${n} row${n === 1 ? '' : 's'} loaded → ${n} ${noun}${n === 1 ? '' : 's'}`;
+}
 
 function loadCSVFile(file) {
   if (!file) return;
@@ -3207,11 +3308,11 @@ function loadCSVFile(file) {
   reader.onload = () => {
     batchRecords = csvToRecords(String(reader.result || ''));
     const n = batchRecords.length;
-    if (batchStatus) batchStatus.textContent = n
-      ? `${n} row${n === 1 ? '' : 's'} loaded → ${n} PNG${n === 1 ? '' : 's'}`
-      : 'No valid rows found in that CSV.';
+    if (n) updateBatchLoadedStatus();
+    else if (batchStatus) batchStatus.textContent = 'No valid rows found in that CSV.';
     if (batchExportBtn) batchExportBtn.disabled = !n;
     const bp = document.getElementById('batchPdfBtn'); if (bp) bp.disabled = !n;
+    const bv = document.getElementById('batchVideoBtn'); if (bv) bv.disabled = !n;
     if (csvDrop) csvDrop.classList.toggle('has-file', !!n);
   };
   reader.readAsText(file);
@@ -3240,7 +3341,7 @@ if (csvDrop) {
 }
 
 async function runBatchExport(format = 'zip', btn = batchExportBtn) {
-  if (batchExporting || !batchRecords.length) return;
+  if (batchExporting || batchVideoExporting || !batchRecords.length) return;
   const isPdf = format === 'pdf';
   const doneLabel = isPdf ? 'Export PDF · A5 (multi-page)' : 'Export ZIP · A5 300dpi';
   // Ensure print framing (camera + A5 size + matte + crop) is in place.
@@ -3341,6 +3442,123 @@ if (batchPdfBtn) batchPdfBtn.addEventListener('click', () => {
   runBatchExport('pdf', batchPdfBtn);
 });
 
+// ─── Name Tags Video batch: one 10s MP4 per CSV row ─────────────
+// Sequential by design — only one ~20 MB MP4 buffer lives in memory at a time.
+// Files land in a user-picked folder (File System Access API); browsers
+// without the API fall back to one regular download per file.
+const batchVideoBtn = document.getElementById('batchVideoBtn');
+let batchVideoRowLabel = ''; // per-row prefix the recording loop appends time to
+
+async function runBatchVideoExport() {
+  if (batchVideoExporting || batchExporting || pngSeqExporting || someRecording) return;
+  if (!batchRecords.length) return;
+  if (typeof VideoEncoder === 'undefined') {
+    alert('WebCodecs not supported — use Chrome or Edge.');
+    return;
+  }
+  // Ensure video framing (camera + 16:9 size + full cloth + crop) is in place.
+  if (someFormat !== 'tagsvideo') {
+    applyTagsVideoPreset();
+    someActive = true; initSomeCrop(); someFrame.style.display = 'block';
+  }
+
+  // Pick the destination folder now, inside the click gesture — after a 10s
+  // recording the user activation is long gone. Dismissing the picker cancels
+  // the whole batch.
+  let dir = null;
+  if (window.showDirectoryPicker) {
+    try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); }
+    catch (e) { return; }
+  }
+
+  // Fonts must be ready or early rows render in a fallback face.
+  try { await document.fonts.ready; } catch (e) {}
+
+  // Decode the soundtrack once for the whole run (cached across runs too).
+  let audioDecoded = null;
+  if (someAudio !== 'none' && AUDIO_TRACKS[someAudio]
+      && typeof AudioEncoder !== 'undefined' && typeof AudioData !== 'undefined') {
+    if (batchStatus) batchStatus.textContent = 'Loading audio…';
+    try { audioDecoded = await getDecodedAudio(someAudio, REC_TOTAL_FRAMES / REC_FPS); }
+    catch (e) {
+      console.error('Audio load failed:', e);
+      if (batchStatus) batchStatus.textContent = 'Audio load failed — exporting without sound.';
+    }
+  }
+
+  batchVideoExporting = true; batchVideoCancel = false;
+  batchVideoBtn.classList.add('batch-cancel');
+
+  const usedNames = new Set();
+  let saved = 0, failed = false;
+  const STEP_FRAMES = 28; // ~0.5s of wind between rows → each video opens on a different pose
+
+  for (let i = 0; i < batchRecords.length; i++) {
+    if (batchVideoCancel) break;
+    const rec = batchRecords[i];
+    // `|` in a cell is an explicit line break.
+    titleBlocks[0].text = (rec.project || '').replace(/\|/g, '\n');
+    titleBlocks[1].text = (rec.name || '').replace(/\|/g, '\n');
+    titleBlocks[2].text = (rec.extra || '').replace(/\|/g, '\n');
+    titleBlocks[3].text = (rec.www || '').replace(/\|/g, '\n');
+    generateTextTexture(0);
+    for (let s = 0; s < STEP_FRAMES; s++) simulate(SIM_DT);
+
+    // These are name tags — name the file after the person on it.
+    const base = slugify(rec.name) || slugify(rec.project) || ('flag-' + (i + 1));
+    let name = base + '.mp4', n = 2;
+    while (usedNames.has(name)) name = base + '-' + (n++) + '.mp4';
+    usedNames.add(name);
+
+    batchVideoRowLabel = `Recording ${i + 1} / ${batchRecords.length} · ${name}`;
+    if (batchStatus) batchStatus.textContent = batchVideoRowLabel;
+    batchVideoBtn.textContent = `Cancel (${i + 1}/${batchRecords.length})`;
+
+    try { await initRecorder(audioDecoded); }
+    catch (e) {
+      console.error('Encoder init failed:', e);
+      failed = true;
+      break;
+    }
+    if (batchVideoCancel) { cleanupRecorder(); break; }
+    _recSink = async (blob) => {
+      if (dir) {
+        const fileHandle = await dir.getFileHandle(name, { create: true });
+        const w = await fileHandle.createWritable();
+        await w.write(blob);
+        await w.close();
+      } else {
+        downloadBlob(blob, name);
+      }
+    };
+    const ok = await new Promise(resolve => { _recDone = resolve; startRecording(); });
+    if (batchVideoCancel) break;       // abortRecording already cleaned up
+    if (!ok) { failed = true; break; } // encode/save error — stop, don't churn the rest
+    saved++;
+    if (batchStatus) batchStatus.textContent = `Saved ${saved} / ${batchRecords.length} · ${name}`;
+    // Let the browser breathe (free the MP4 buffer, repaint) between rows.
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  }
+
+  batchVideoExporting = false;
+  batchVideoBtn.classList.remove('batch-cancel');
+  batchVideoBtn.textContent = 'Export MP4 per row · 10s';
+  if (batchStatus) {
+    if (batchVideoCancel) batchStatus.textContent = `Cancelled — ${saved} video${saved === 1 ? '' : 's'} saved.`;
+    else if (failed) batchStatus.textContent = `Stopped after ${saved} saved — export failed (see console).`;
+    else batchStatus.textContent = `Done — ${saved} video${saved === 1 ? '' : 's'} saved${dir ? '' : ' to Downloads'}.`;
+  }
+}
+
+if (batchVideoBtn) batchVideoBtn.addEventListener('click', () => {
+  if (batchVideoExporting) {
+    batchVideoCancel = true;
+    if (someRecording) abortRecording();
+    return;
+  }
+  runBatchVideoExport();
+});
+
 // ── Cloth mode pills + single PDF + PNG-frame-sequence wiring ──
 const clothModeRow = document.getElementById('clothModeRow');
 const gentleStrengthRow = document.getElementById('gentleStrengthRow');
@@ -3372,7 +3590,7 @@ if (pdfBtn) pdfBtn.addEventListener('click', exportFlagPDF);
 
 let pngSeqExporting = false, pngSeqCancel = false;
 async function runPngSequenceExport() {
-  if (pngSeqExporting || batchExporting || someRecording) return;
+  if (pngSeqExporting || batchExporting || batchVideoExporting || someRecording) return;
   const btn = document.getElementById('someSeqBtn');
   const [outW, outH] = getExportSize();
   try { await document.fonts.ready; } catch (e) {}
@@ -3559,6 +3777,9 @@ let _ssCanvas = null, _ssCtx = null, _recSS = 1;
 let _encoder = null, _muxer = null, _muxerTarget = null, _frameIdx = 0;
 let _mp4Mod = null;
 let _audioEncoder = null;
+// Batch hooks: when set, the finished MP4 goes to _recSink(blob) instead of an
+// anchor download, and _recDone(ok) resolves the batch driver's per-row await.
+let _recSink = null, _recDone = null;
 let someLoop = 'cut'; // 'seamless' | 'cut'
 let _useSeamless = false; // snapshot of someLoop at recording start
 // Loop-morph buffer: stores mesh particle state (pos + prev) for the first
@@ -3597,6 +3818,16 @@ async function decodeAudioTrack(trackId, maxDurationSec) {
   return { pcm, numberOfChannels, sampleRate, totalFrames };
 }
 
+// Decode-once cache so a 50-row batch doesn't re-fetch/re-decode the same WAV
+// per video. Keyed by track id only — every caller asks for the same 10s.
+let _audioDecCache = { id: null, decoded: null };
+async function getDecodedAudio(trackId, maxDurationSec) {
+  if (_audioDecCache.id === trackId && _audioDecCache.decoded) return _audioDecCache.decoded;
+  const decoded = await decodeAudioTrack(trackId, maxDurationSec);
+  _audioDecCache = { id: trackId, decoded };
+  return decoded;
+}
+
 // Stream the decoded PCM into a fresh AudioEncoder that pushes AAC chunks
 // straight into the muxer. Returns the encoder (caller flushes it).
 function startAudioEncode(decoded, muxer) {
@@ -3629,41 +3860,69 @@ function startAudioEncode(decoded, muxer) {
   return enc;
 }
 
+// Drop every recorder resource (encoders closed, ~20 MB muxer buffer freed).
+// Shared by the success, failure and abort paths.
+function cleanupRecorder() {
+  if (_encoder) { try { _encoder.close(); } catch (_) {} _encoder = null; }
+  if (_audioEncoder) { try { _audioEncoder.close(); } catch (_) {} _audioEncoder = null; }
+  _muxer = null; _muxerTarget = null;
+  _recCanvas = null; _recCtx = null;
+  _ssCanvas = null; _ssCtx = null; _recSS = 1;
+  _loopHeadPos = null; _loopHeadPrev = null;
+  someFrame.classList.remove('recording');
+}
+
 async function finalizeExport() {
   const btn = document.getElementById('someExportBtn');
   btn.textContent = 'Finalizing...';
+  let ok = true;
   try {
     await _encoder.flush();
     if (_audioEncoder) await _audioEncoder.flush();
     _muxer.finalize();
     const blob = new Blob([_muxerTarget.buffer], { type: 'video/mp4' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'flag-' + _recCanvas.width + 'x' + _recCanvas.height + '-10s.mp4';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    if (_recSink) {
+      await _recSink(blob);
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'flag-' + _recCanvas.width + 'x' + _recCanvas.height + '-10s.mp4';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
   } catch (e) {
     console.error('MP4 finalize failed:', e);
+    ok = false;
+  }
+  const done = _recDone;
+  _recDone = null; _recSink = null;
+  cleanupRecorder();
+  if (ok) {
+    btn.textContent = 'Export 10s Video';
+  } else {
     btn.textContent = 'Export failed';
     setTimeout(() => { btn.textContent = 'Export 10s Video'; }, 3000);
-    return;
   }
-  _encoder = null; _muxer = null; _muxerTarget = null;
-  _recCanvas = null; _recCtx = null;
-  _ssCanvas = null; _ssCtx = null; _recSS = 1;
-  _loopHeadPos = null; _loopHeadPrev = null;
-  if (_audioEncoder) { try { _audioEncoder.close(); } catch (_) {} _audioEncoder = null; }
-  someFrame.classList.remove('recording');
-  btn.textContent = 'Export 10s Video';
+  if (done) done(ok);
 }
 
-document.getElementById('someExportBtn').addEventListener('click', async () => {
-  if (someRecording) return;
-  if (typeof VideoEncoder === 'undefined') {
-    alert('WebCodecs not supported — use Chrome or Edge.');
-    return;
-  }
+// Hard-stop a recording without saving (batch cancel mid-row).
+function abortRecording() {
+  someRecording = false;
+  lastTime = 0;
+  const done = _recDone;
+  _recDone = null; _recSink = null;
+  cleanupRecorder();
+  document.getElementById('someExportBtn').textContent = 'Export 10s Video';
+  if (done) done(false);
+}
+
+// Build the capture canvas + muxer + encoders for one 10s recording at the
+// current export size. Throws on encoder-init failure. Shared by the single
+// Export button and the CSV → MP4-per-row batch; caller starts the rAF
+// recording via startRecording().
+async function initRecorder(audioDecoded) {
   // H.264 requires even dimensions
   const [rawW, rawH] = getExportSize();
   const fw = rawW & ~1, fh = rawH & ~1;
@@ -3684,6 +3943,51 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
   _loopHeadPos = _useSeamless ? new Array(LOOP_FADE_FRAMES) : null;
   _loopHeadPrev = _useSeamless ? new Array(LOOP_FADE_FRAMES) : null;
 
+  const { Muxer, ArrayBufferTarget } = await getMp4Muxer();
+  _muxerTarget = new ArrayBufferTarget();
+  const muxerCfg = {
+    target: _muxerTarget,
+    video: { codec: 'avc', width: fw, height: fh },
+    fastStart: 'in-memory',
+  };
+  if (audioDecoded) {
+    muxerCfg.audio = {
+      codec: 'aac',
+      numberOfChannels: audioDecoded.numberOfChannels,
+      sampleRate: audioDecoded.sampleRate,
+    };
+  }
+  _muxer = new Muxer(muxerCfg);
+  _encoder = new VideoEncoder({
+    output: (chunk, meta) => _muxer.addVideoChunk(chunk, meta),
+    error: e => console.error('VideoEncoder error:', e),
+  });
+  _encoder.configure({
+    codec: 'avc1.640034',
+    width: fw, height: fh,
+    // ~0.3 bits/pixel for H.264 — visibly cleaner on textured content
+    // (flag fabric, text) than the previous flat 10 Mbit/s.
+    bitrate: Math.min(50_000_000, Math.max(8_000_000, Math.round(fw * fh * REC_FPS * 0.3))),
+    framerate: 25,
+  });
+  if (audioDecoded) {
+    _audioEncoder = startAudioEncode(audioDecoded, _muxer);
+  }
+  _frameIdx = 0;
+}
+
+function startRecording() {
+  lastTime = 0; // prevent stale dt on first recording frame
+  someRecording = true;
+  someFrame.classList.add('recording');
+}
+
+document.getElementById('someExportBtn').addEventListener('click', async () => {
+  if (someRecording || batchVideoExporting) return;
+  if (typeof VideoEncoder === 'undefined') {
+    alert('WebCodecs not supported — use Chrome or Edge.');
+    return;
+  }
   const btn = document.getElementById('someExportBtn');
 
   // Decode audio first (if selected) — we need its sampleRate/channels to
@@ -3695,7 +3999,7 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
     } else {
       btn.textContent = 'Loading audio...';
       try {
-        audioDecoded = await decodeAudioTrack(someAudio, REC_TOTAL_FRAMES / REC_FPS);
+        audioDecoded = await getDecodedAudio(someAudio, REC_TOTAL_FRAMES / REC_FPS);
       } catch (e) {
         console.error('Audio load failed:', e);
         alert('Audio load failed: ' + (e && e.message ? e.message : e));
@@ -3707,46 +4011,14 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
 
   btn.textContent = 'Initializing...';
   try {
-    const { Muxer, ArrayBufferTarget } = await getMp4Muxer();
-    _muxerTarget = new ArrayBufferTarget();
-    const muxerCfg = {
-      target: _muxerTarget,
-      video: { codec: 'avc', width: fw, height: fh },
-      fastStart: 'in-memory',
-    };
-    if (audioDecoded) {
-      muxerCfg.audio = {
-        codec: 'aac',
-        numberOfChannels: audioDecoded.numberOfChannels,
-        sampleRate: audioDecoded.sampleRate,
-      };
-    }
-    _muxer = new Muxer(muxerCfg);
-    _encoder = new VideoEncoder({
-      output: (chunk, meta) => _muxer.addVideoChunk(chunk, meta),
-      error: e => console.error('VideoEncoder error:', e),
-    });
-    _encoder.configure({
-      codec: 'avc1.640034',
-      width: fw, height: fh,
-      // ~0.3 bits/pixel for H.264 — visibly cleaner on textured content
-      // (flag fabric, text) than the previous flat 10 Mbit/s.
-      bitrate: Math.min(50_000_000, Math.max(8_000_000, Math.round(fw * fh * REC_FPS * 0.3))),
-      framerate: 25,
-    });
-    if (audioDecoded) {
-      _audioEncoder = startAudioEncode(audioDecoded, _muxer);
-    }
+    await initRecorder(audioDecoded);
   } catch (e) {
     console.error('Encoder init failed:', e);
     btn.textContent = 'Export failed';
     setTimeout(() => { btn.textContent = 'Export 10s Video'; }, 2000);
     return;
   }
-  _frameIdx = 0;
-  lastTime = 0; // prevent stale dt on first recording frame
-  someRecording = true;
-  someFrame.classList.add('recording');
+  startRecording();
   btn.textContent = 'Recording 0.0s / 10s';
 });
 
@@ -3938,6 +4210,8 @@ function loop(now) {
     const totalSec = totalFramesForRun / REC_FPS;
     document.getElementById('someExportBtn').textContent =
       'Recording ' + elapsed.toFixed(1) + 's / ' + totalSec.toFixed(0) + 's';
+    if (batchVideoExporting && batchStatus) batchStatus.textContent =
+      batchVideoRowLabel + ' — ' + elapsed.toFixed(1) + 's / ' + totalSec.toFixed(0) + 's';
     if (_frameIdx >= totalFramesForRun) {
       someRecording = false;
       lastTime = 0;

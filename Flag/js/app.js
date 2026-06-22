@@ -1593,10 +1593,26 @@ function generateTextTexture(scrollOffset) {
     for (let bi = 0; bi < titleBlocks.length; bi++) {
       const b = titleBlocks[bi];
       if (!b.text.trim()) continue;
-      const sz = b.size * sizeScale;
+      // Shrink-to-fit: CSV batches feed wildly varying lengths (long titles,
+      // full names, long URLs) into fixed-size blocks. Start at the chosen size
+      // and step down until every wrapped line fits the usable width, so text
+      // never overflows the flag. Only shrinks — short text keeps its set size.
+      let sz = b.size * sizeScale;
+      const minSz = sz * 0.4;
+      for (let guard = 0; guard < 40; guard++) {
+        setBlockFont(b.font, sz);
+        // Measure natural wrap (no force-break) so an over-wide token drives a
+        // shrink — keeps URLs/handles whole instead of chopping them.
+        const probe = wrapParagraph(textCtx, b.text, maxW, false);
+        let widest = 0;
+        for (const ln of probe) widest = Math.max(widest, textCtx.measureText(ln).width);
+        if (widest <= maxW || sz <= minSz) break;
+        sz *= 0.93;
+      }
       setBlockFont(b.font, sz);
-      const lineH = sz * (b.lineH || 1.0);
+      // Final wrap force-breaks anything still too wide at the size floor.
       const lines = wrapParagraph(textCtx, b.text, maxW);
+      const lineH = sz * (b.lineH || 1.0);
       const totalH = lines.length * lineH;
       const centerY = texH * b.y;
       const startY = centerY - totalH / 2 + lineH * 0.5;
@@ -1667,7 +1683,11 @@ function generateTextTexture(scrollOffset) {
 }
 
 // Word-wrap a paragraph to fit within maxWidth. Respects explicit line breaks.
-function wrapParagraph(ctx, text, maxWidth) {
+// hardBreak: split a single token too wide for the column (URLs, long handles,
+// compound words) so it can't run off the flag. Off during shrink-to-fit
+// measurement (so the caller sees the true overflow and shrinks instead), on
+// for the final render as a last-resort safety net.
+function wrapParagraph(ctx, text, maxWidth, hardBreak = true) {
   const paragraphs = text.split(/\r?\n/);
   const lines = [];
   for (const para of paragraphs) {
@@ -1675,6 +1695,13 @@ function wrapParagraph(ctx, text, maxWidth) {
     const words = para.split(/\s+/);
     let line = '';
     for (const word of words) {
+      if (hardBreak && ctx.measureText(word).width > maxWidth) {
+        if (line) { lines.push(line); line = ''; }
+        const pieces = breakLongWord(ctx, word, maxWidth);
+        for (let p = 0; p < pieces.length - 1; p++) lines.push(pieces[p]);
+        line = pieces[pieces.length - 1];
+        continue;
+      }
       const test = line ? line + ' ' + word : word;
       if (ctx.measureText(test).width > maxWidth && line) {
         lines.push(line);
@@ -1686,6 +1713,20 @@ function wrapParagraph(ctx, text, maxWidth) {
     if (line) lines.push(line);
   }
   return lines;
+}
+
+// Greedy character split for a token too wide for the column. Last-resort
+// safety net behind shrink-to-fit — keeps a runaway URL on the flag instead of
+// bleeding past both edges.
+function breakLongWord(ctx, word, maxWidth) {
+  const pieces = [];
+  let cur = '';
+  for (const ch of word) {
+    if (cur && ctx.measureText(cur + ch).width > maxWidth) { pieces.push(cur); cur = ch; }
+    else cur += ch;
+  }
+  if (cur) pieces.push(cur);
+  return pieces.length ? pieces : [word];
 }
 
 // ─── Image handling ──────────────────────────────────────────
@@ -3021,6 +3062,7 @@ function applyPrintPreset() {
   sizeHInput.value = 2480;
   someFormat = 'print';
   document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b.dataset.some === 'print'));
+  updateBatchButtonLabels();
 
   refreshTexture(); // repaint title card with the seeded text colour
 }
@@ -3292,6 +3334,31 @@ let batchVideoExporting = false, batchVideoCancel = false;
 
 if (matteToggle) matteToggle.addEventListener('change', () => { matteMode = matteToggle.checked; });
 
+// Friendly size descriptor for the batch buttons: the A-series paper name when
+// the pixels match that paper at 300 DPI (either orientation), else raw px.
+function batchSizeLabel(w, h) {
+  if (w == null) { const s = getExportSize(); w = s[0]; h = s[1]; }
+  const A = { A6: [1240, 1748], A5: [1748, 2480], A4: [2480, 3508], A3: [3508, 4961] };
+  const near = (x, y) => Math.abs(x - y) <= 2;
+  for (const name in A) {
+    const [aw, ah] = A[name];
+    if ((near(w, aw) && near(h, ah)) || (near(w, ah) && near(h, aw))) return name + ' 300dpi';
+  }
+  return w + '×' + h;
+}
+
+// Keep the ZIP/PDF batch buttons reflecting the live Export size — they used to
+// hard-say "A5" even at custom dimensions. Skipped mid-export (the button text
+// is then the Cancel counter).
+function updateBatchButtonLabels() {
+  if (batchExporting) return;
+  const label = batchSizeLabel();
+  const z = document.getElementById('batchExportBtn');
+  const p = document.getElementById('batchPdfBtn');
+  if (z) z.textContent = 'Export ZIP · ' + label;
+  if (p) p.textContent = 'Export PDF · ' + label + ' (multi-page)';
+}
+
 // "N rows loaded → N PNGs/videos" — re-derived on preset switch so the noun
 // matches the active batch output. No-op while an export owns the status line.
 function updateBatchLoadedStatus() {
@@ -3343,13 +3410,26 @@ if (csvDrop) {
 async function runBatchExport(format = 'zip', btn = batchExportBtn) {
   if (batchExporting || batchVideoExporting || !batchRecords.length) return;
   const isPdf = format === 'pdf';
-  const doneLabel = isPdf ? 'Export PDF · A5 (multi-page)' : 'Export ZIP · A5 300dpi';
   // Ensure print framing (camera + A5 size + matte + crop) is in place.
   if (someFormat !== 'print') {
     applyPrintPreset();
     someActive = true; initSomeCrop(); someFrame.style.display = 'block';
   }
-  const outW = 1748, outH = 2480; // A5 @ 300 DPI, no bleed.
+  // Honor the Export size field (WYSIWYG with the live crop frame) instead of
+  // forcing portrait A5 — so landscape/custom name-tag sizes export correctly.
+  const [outW, outH] = getExportSize();
+  const doneLabel = isPdf
+    ? `Export PDF · ${batchSizeLabel(outW, outH)} (multi-page)`
+    : `Export ZIP · ${batchSizeLabel(outW, outH)}`;
+  // PDF page = true print size of those pixels at 300 DPI. Orientation must
+  // match the dims or jsPDF reorders the custom format array and distorts the page.
+  const pageWmm = outW / 300 * 25.4, pageHmm = outH / 300 * 25.4;
+  const pdfOrient = pageWmm >= pageHmm ? 'landscape' : 'portrait';
+  // jsPDF serializes a whole document into one JS string; too many full-res
+  // pages overflow V8's max string length ("Invalid string length" in
+  // Array.join). Cap each file's image payload + page count and roll over to a
+  // new PDF when either is hit.
+  const PDF_BYTE_BUDGET = 64 * 1024 * 1024, PDF_MAX_PAGES = 80;
 
   // Fonts must be ready or early rows render in a fallback face.
   try { await document.fonts.ready; } catch (e) {}
@@ -3364,7 +3444,9 @@ async function runBatchExport(format = 'zip', btn = batchExportBtn) {
   btn.classList.add('batch-cancel');
 
   const files = [], usedNames = new Set();
-  let doc = null;
+  const pdfBlobs = [];
+  let doc = null, docPages = 0, docBytes = 0, totalPages = 0;
+  const finalizeDoc = () => { if (doc && docPages) pdfBlobs.push(doc.output('blob')); doc = null; docPages = 0; docBytes = 0; };
   const STEP_FRAMES = 28; // ~0.5s of wind between rows → every pose differs
 
   for (let i = 0; i < batchRecords.length; i++) {
@@ -3388,10 +3470,13 @@ async function runBatchExport(format = 'zip', btn = batchExportBtn) {
 
     if (isPdf) {
       const dataUrl = await blobToDataURL(blob);
-      if (!doc) doc = new JsPDF({ unit: 'mm', format: 'a5', orientation: 'portrait' });
-      else doc.addPage('a5', 'portrait');
+      // Roll over to a fresh PDF before this page would blow the budget.
+      if (doc && (docBytes + dataUrl.length > PDF_BYTE_BUDGET || docPages >= PDF_MAX_PAGES)) finalizeDoc();
+      if (!doc) doc = new JsPDF({ unit: 'mm', format: [pageWmm, pageHmm], orientation: pdfOrient });
+      else doc.addPage([pageWmm, pageHmm], pdfOrient);
       const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
       doc.addImage(dataUrl, 'PNG', 0, 0, pw, ph);
+      docPages++; docBytes += dataUrl.length; totalPages++;
     } else {
       const data = new Uint8Array(await blob.arrayBuffer());
       let base = slugify(rec.project) || ('flag-' + (i + 1));
@@ -3406,7 +3491,7 @@ async function runBatchExport(format = 'zip', btn = batchExportBtn) {
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
   }
 
-  const count = isPdf ? (doc ? doc.getNumberOfPages() : 0) : files.length;
+  const count = isPdf ? totalPages : files.length;
   batchExporting = false;
   btn.classList.remove('batch-cancel');
   btn.textContent = doneLabel;
@@ -3419,15 +3504,25 @@ async function runBatchExport(format = 'zip', btn = batchExportBtn) {
 
   const stamp = new Date().toISOString().slice(0, 10);
   if (isPdf) {
-    if (batchStatus) batchStatus.textContent = 'Saving PDF…';
+    finalizeDoc();
+    const parts = pdfBlobs.length;
+    if (batchStatus) batchStatus.textContent = parts > 1 ? `Saving ${parts} PDFs…` : 'Saving PDF…';
     await new Promise(r => requestAnimationFrame(r));
     // Same Safari-safe path as ZIP/PNG (see exportFlagPDF for why not doc.save).
-    downloadBlob(doc.output('blob'), `flags-a5-${stamp}.pdf`);
-    if (batchStatus) batchStatus.textContent = `Done — ${count}-page PDF.`;
+    for (let p = 0; p < parts; p++) {
+      const name = parts > 1
+        ? `flags-${outW}x${outH}-${stamp}-part${p + 1}.pdf`
+        : `flags-${outW}x${outH}-${stamp}.pdf`;
+      downloadBlob(pdfBlobs[p], name);
+      // Stagger multi-file downloads so the browser doesn't drop them.
+      if (parts > 1 && p < parts - 1) await new Promise(r => setTimeout(r, 500));
+    }
+    if (batchStatus) batchStatus.textContent = parts > 1
+      ? `Done — ${count} pages across ${parts} PDFs.` : `Done — ${count}-page PDF.`;
   } else {
     if (batchStatus) batchStatus.textContent = 'Packing ZIP…';
     await new Promise(r => requestAnimationFrame(r));
-    downloadBlob(makeZip(files), `flags-a5-300dpi-${stamp}.zip`);
+    downloadBlob(makeZip(files), `flags-${outW}x${outH}-${stamp}.zip`);
     if (batchStatus) batchStatus.textContent = `Done — ${count} PNGs zipped.`;
   }
 }
@@ -3646,6 +3741,7 @@ window.addEventListener('resize', () => { if (someActive) initSomeCrop(); });
   inp.addEventListener('input', () => {
     document.querySelectorAll('#someRow .pill').forEach(b => b.classList.remove('active'));
     if (someActive) initSomeCrop();
+    updateBatchButtonLabels();
   });
 });
 

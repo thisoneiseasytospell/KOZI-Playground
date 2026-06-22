@@ -2524,7 +2524,7 @@ async function exportFlagPDF() {
 // Render the current flag to a PNG Blob at outW×outH using the high-res
 // interpolated mesh (+2× supersample when the GPU allows). matte=true drops
 // all specular/sheen. Shared by the single-PNG button and the CSV batch.
-function renderFlagToBlob(outW, outH, matte, transparent) {
+function renderFlagToBlob(outW, outH, matte, transparent, mime = 'image/png', quality) {
   const meshScale = 3; // 3x denser mesh via bilinear interpolation
   // 2× supersample if the GPU can host the larger renderbuffer/texture.
   const maxRb = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
@@ -2746,7 +2746,7 @@ function renderFlagToBlob(outW, outH, matte, transparent) {
     ctx2.drawImage(ssCanvas, 0, 0);
   }
 
-  return new Promise(resolve => out.toBlob(blob => resolve(blob), 'image/png'));
+  return new Promise(resolve => out.toBlob(blob => resolve(blob), mime, quality));
 }
 
 // ─── SoMe Export ────────────────────────────────────────────
@@ -3425,11 +3425,12 @@ async function runBatchExport(format = 'zip', btn = batchExportBtn) {
   // match the dims or jsPDF reorders the custom format array and distorts the page.
   const pageWmm = outW / 300 * 25.4, pageHmm = outH / 300 * 25.4;
   const pdfOrient = pageWmm >= pageHmm ? 'landscape' : 'portrait';
-  // jsPDF serializes a whole document into one JS string; too many full-res
-  // pages overflow V8's max string length ("Invalid string length" in
-  // Array.join). Cap each file's image payload + page count and roll over to a
-  // new PDF when either is hit.
-  const PDF_BYTE_BUDGET = 64 * 1024 * 1024, PDF_MAX_PAGES = 80;
+  // Pages embed as JPEG q0.95: jsPDF stores them compressed (DCTDecode), unlike
+  // PNG which it expands toward raw pixels and overflows V8's max string length
+  // in doc.output → "Invalid string length". Budget still rolls into a new PDF
+  // as a safety net for very large batches (one file for normal-size classes).
+  const PDF_JPEG_QUALITY = 0.95;
+  const PDF_BYTE_BUDGET = 350 * 1024 * 1024, PDF_MAX_PAGES = 300;
 
   // Fonts must be ready or early rows render in a fallback face.
   try { await document.fonts.ready; } catch (e) {}
@@ -3466,7 +3467,9 @@ async function runBatchExport(format = 'zip', btn = batchExportBtn) {
     else if (clothMode === 'slight') gentleClothPose(i + 1);
     else for (let s = 0; s < STEP_FRAMES; s++) simulate(SIM_DT);
 
-    const blob = await renderFlagToBlob(outW, outH, matteMode);
+    // JPEG for PDF (compact, jsPDF-safe), lossless PNG for the ZIP masters.
+    const blob = await renderFlagToBlob(outW, outH, matteMode, false,
+      isPdf ? 'image/jpeg' : 'image/png', isPdf ? PDF_JPEG_QUALITY : undefined);
 
     if (isPdf) {
       const dataUrl = await blobToDataURL(blob);
@@ -3475,7 +3478,7 @@ async function runBatchExport(format = 'zip', btn = batchExportBtn) {
       if (!doc) doc = new JsPDF({ unit: 'mm', format: [pageWmm, pageHmm], orientation: pdfOrient });
       else doc.addPage([pageWmm, pageHmm], pdfOrient);
       const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
-      doc.addImage(dataUrl, 'PNG', 0, 0, pw, ph);
+      doc.addImage(dataUrl, 'JPEG', 0, 0, pw, ph);
       docPages++; docBytes += dataUrl.length; totalPages++;
     } else {
       const data = new Uint8Array(await blob.arrayBuffer());

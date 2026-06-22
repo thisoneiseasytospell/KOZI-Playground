@@ -822,7 +822,7 @@ varying vec3 vNrm, vPos;
 varying vec2 vUV;
 uniform vec3 uLight, uColor, uEye;
 uniform sampler2D uTex, uMask;
-uniform float uFace, uAlpha, uAmbient, uPartyTime, uMatte;
+uniform float uFace, uAlpha, uAmbient, uPartyTime, uMatte, uUnlit;
 uniform bool uHasTex, uIsGlass, uHasMask;
 vec3 hsv(float h, float s, float v) {
   vec3 r = clamp(abs(mod(h*6.0+vec3(0,4,2),6.0)-3.0)-1.0,0.0,1.0);
@@ -878,6 +878,14 @@ void main() {
     float strobe = step(0.0, sin(t * 12.0));
     vec3 lit = base * mix(0.02, 2.2, strobe);
     gl_FragColor = vec4(lit, alpha * m);
+    return;
+  }
+
+  // Flat panel — no cloth shading at all, so the print reproduces the texture
+  // colours 1:1 (true WYSIWYG poster). Without this the head-on diffuse term
+  // (~0.55) darkens every colour, e.g. #B52C3A reds turn maroon.
+  if (uUnlit > 0.5) {
+    gl_FragColor = vec4(base, alpha * m);
     return;
   }
 
@@ -938,7 +946,7 @@ gl.linkProgram(prog); gl.useProgram(prog);
 
 const loc = {};
 ['aPos', 'aNrm', 'aUV'].forEach(n => loc[n] = gl.getAttribLocation(prog, n));
-['uProj', 'uView', 'uLight', 'uColor', 'uEye', 'uTex', 'uFace', 'uAlpha', 'uAmbient', 'uHasTex', 'uIsGlass', 'uPartyTime', 'uMatte', 'uMask', 'uHasMask']
+['uProj', 'uView', 'uLight', 'uColor', 'uEye', 'uTex', 'uFace', 'uAlpha', 'uAmbient', 'uHasTex', 'uIsGlass', 'uPartyTime', 'uMatte', 'uUnlit', 'uMask', 'uHasMask']
   .forEach(n => loc[n] = gl.getUniformLocation(prog, n));
 
 // ─── Buffers ─────────────────────────────────────────────────
@@ -1427,6 +1435,11 @@ let partyMode = false, partyTime = 0;
 // Matte print mode — when true the cloth shader drops all specular/rim/sheen
 // (set live by the Matte toggle and forced on by the A5 print preset).
 let matteMode = false;
+// True-colour print mode — when true the cloth is drawn fully unlit, so the
+// texture reproduces 1:1 (e.g. #B52C3A stays #B52C3A instead of darkening to
+// maroon under the head-on diffuse term). Toggled by the "True color" control
+// and defaulted on whenever a picture is dropped in.
+let unlitMode = false;
 // Cloth mode — 'full' = wind sim · 'slight' = gentle deterministic ripple
 // (name-tag prints) · 'flat' = plain panel, no cloth effect at all.
 let clothMode = 'full';
@@ -1488,6 +1501,7 @@ function render(dt) {
   // Draw flag (double-sided)
   gl.uniform1i(loc.uIsGlass, 0);
   gl.uniform1f(loc.uMatte, matteMode ? 1.0 : 0.0);
+  gl.uniform1f(loc.uUnlit, unlitMode ? 1.0 : 0.0);
   gl.uniform3f(loc.uColor, SIM.flagColor[0], SIM.flagColor[1], SIM.flagColor[2]);
   gl.uniform1f(loc.uAlpha, SIM.opacity);
   if (hasTex && flagTex) {
@@ -2351,6 +2365,7 @@ function clearImage() {
   dropzone.style.display = 'block';
   fitToggle.style.display = 'none';
   fileInput.value = '';
+  setUnlitMode(false); // back to the lit cloth surface once the picture is gone
   refreshTexture();
 }
 
@@ -2360,7 +2375,14 @@ function handleImageFile(file) {
   if (activeObjUrl) URL.revokeObjectURL(activeObjUrl);
   activeObjUrl = url;
   const img = new Image();
-  img.onload = () => { loadedImage = img; showPreview(url); refreshTexture(); };
+  img.onload = () => {
+    loadedImage = img;
+    showPreview(url);
+    // A dropped picture is almost always finished artwork — default to the
+    // unlit/true-colour surface so it prints exactly as designed.
+    setUnlitMode(true);
+    refreshTexture();
+  };
   img.src = url;
 }
 
@@ -2657,6 +2679,7 @@ function renderFlagToBlob(outW, outH, matte, transparent, mime = 'image/png', qu
 
   gl.uniform1i(loc.uIsGlass, 0);
   gl.uniform1f(loc.uMatte, matte ? 1.0 : 0.0);
+  gl.uniform1f(loc.uUnlit, unlitMode ? 1.0 : 0.0);
   gl.uniform3f(loc.uColor, SIM.flagColor[0], SIM.flagColor[1], SIM.flagColor[2]);
   gl.uniform1f(loc.uAlpha, SIM.opacity);
   if (hasTex && flagTex) {
@@ -3334,6 +3357,13 @@ let batchVideoExporting = false, batchVideoCancel = false;
 
 if (matteToggle) matteToggle.addEventListener('change', () => { matteMode = matteToggle.checked; });
 
+const unlitToggle = document.getElementById('unlitToggle');
+function setUnlitMode(on) {
+  unlitMode = on;
+  if (unlitToggle) unlitToggle.checked = on;
+}
+if (unlitToggle) unlitToggle.addEventListener('change', () => { unlitMode = unlitToggle.checked; });
+
 // Friendly size descriptor for the batch buttons: the A-series paper name when
 // the pixels match that paper at 300 DPI (either orientation), else raw px.
 function batchSizeLabel(w, h) {
@@ -3810,6 +3840,7 @@ function renderToFBO(fw, fh) {
   // Flag only (no pole)
   gl.uniform1i(loc.uIsGlass, 0);
   gl.uniform1f(loc.uMatte, matteMode ? 1.0 : 0.0);
+  gl.uniform1f(loc.uUnlit, unlitMode ? 1.0 : 0.0);
   gl.uniform3f(loc.uColor, SIM.flagColor[0], SIM.flagColor[1], SIM.flagColor[2]);
   gl.uniform1f(loc.uAlpha, SIM.opacity);
   if (hasTex && flagTex) {

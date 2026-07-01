@@ -25,7 +25,7 @@
     <div class="tab-content active" id="tabStudio">
 
     <!-- Aspect Ratio -->
-    <div class="section">
+    <div class="section" id="sectionRatio">
       <div class="section-label">Aspect Ratio</div>
       <div class="pill-row" id="ratioRow" style="gap:5px">
         <button class="ratio-btn" data-r="4:7"><div class="shape" style="width:28px;height:16px"></div><span class="lbl">4:7</span></button>
@@ -54,7 +54,7 @@
     </div>
 
     <!-- Text -->
-    <div class="section">
+    <div class="section" id="sectionText">
       <div class="section-label">Text</div>
       <div class="text-input-wrap">
         <textarea id="textInput" rows="3" placeholder="Type a short paragraph…"></textarea>
@@ -95,6 +95,10 @@
         </div>
         <input type="range" id="scrollSpeed" min="0" max="200" value="0">
       </div>
+    </div>
+
+    <div class="section" id="sectionColors">
+      <div class="section-label">Colors</div>
       <div class="control-row">
         <div class="color-pair">
           <div class="color-item">
@@ -112,7 +116,7 @@
     </div>
 
     <!-- Graphic -->
-    <div class="section">
+    <div class="section" id="sectionImage">
       <div class="section-label">Graphic</div>
       <div class="dropzone" id="dropzone">
         <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -326,6 +330,41 @@ Can't Do</textarea>
 <button class="panel-toggle" id="panelToggle">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
 </button>
+
+<!-- Mobile quick controls -->
+<div class="mobile-toolbar" id="mobileToolbar" aria-label="Mobile quick controls">
+  <button type="button" class="mobile-tool" data-mobile-sheet="text" aria-label="Text controls">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h16M9 6v12M15 6v12M7 18h10"/></svg>
+    <span>Text</span>
+  </button>
+  <button type="button" class="mobile-tool" data-mobile-sheet="image" aria-label="Image controls">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 13l2.5-2.5L15 15l1.5-1.5L20 17"/><circle cx="9" cy="9" r="1.2"/></svg>
+    <span>Image</span>
+  </button>
+  <button type="button" class="mobile-tool" data-mobile-sheet="colors" aria-label="Color controls">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 100 18h1.2a1.8 1.8 0 001.2-3.15 1.6 1.6 0 011.1-2.75H17a4 4 0 004-4C21 6.6 17 3 12 3z"/><circle cx="7.5" cy="10" r="1"/><circle cx="10.5" cy="7.5" r="1"/><circle cx="14" cy="7.5" r="1"/></svg>
+    <span>Colors</span>
+  </button>
+  <button type="button" class="mobile-tool" data-mobile-sheet="ratio" aria-label="Ratio controls">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="7" width="14" height="10" rx="1.5"/><path d="M9 7v10M15 7v10"/></svg>
+    <span>Ratio</span>
+  </button>
+  <button type="button" class="mobile-tool" data-mobile-sheet="export" aria-label="Export controls">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>
+    <span>Export</span>
+  </button>
+</div>
+
+<div class="mobile-sheet-backdrop" id="mobileSheetBackdrop"></div>
+<div class="mobile-sheet" id="mobileSheet" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="mobileSheetTitle">
+  <div class="mobile-sheet-header">
+    <div class="mobile-sheet-title" id="mobileSheetTitle">Controls</div>
+    <button type="button" class="mobile-sheet-close" id="mobileSheetClose" aria-label="Close controls">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="mobile-sheet-body" id="mobileSheetBody"></div>
+</div>
 
 <!-- Global drop overlay -->
 <div class="global-drop-overlay" id="globalDrop">

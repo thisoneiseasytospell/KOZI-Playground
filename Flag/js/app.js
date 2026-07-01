@@ -3,6 +3,23 @@
 // ══════════════════════════════════════════════════════════════
 
 const DEFAULT_TEXTURE_PATH = 'demo%20flag.png';
+const MOBILE_QUERY = window.matchMedia('(max-width: 740px)');
+const isMobileViewport = () => MOBILE_QUERY.matches;
+const TEXTURE_MAX_DIM = 4096;
+const MOBILE_TEXTURE_MAX_DIM = 2048;
+let forceFullTexture = false;
+
+function liveTextureMaxDim() {
+  return forceFullTexture || !isMobileViewport() ? TEXTURE_MAX_DIM : MOBILE_TEXTURE_MAX_DIM;
+}
+
+function prepareFullTextureForExport() {
+  if (!isMobileViewport() || (!textTexActive && !imageTexActive)) return null;
+  forceFullTexture = true;
+  refreshTexture();
+  forceFullTexture = false;
+  return () => queueTextureRefresh();
+}
 
 // ─── Config ──────────────────────────────────────────────────
 const DENSITY = 28;
@@ -1450,7 +1467,8 @@ canvas.addEventListener('dblclick', () => {
 
 // ─── Renderer ────────────────────────────────────────────────
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
+  const rawDpr = window.devicePixelRatio || 1;
+  const dpr = isMobileViewport() ? Math.min(rawDpr, 1.75) : rawDpr;
   canvas.width = window.innerWidth * dpr;
   canvas.height = window.innerHeight * dpr;
   gl.viewport(0, 0, canvas.width, canvas.height);
@@ -1623,9 +1641,9 @@ function generateTextTexture(scrollOffset) {
     if (textTexActive && !imageTexActive) { removeTexture(); textTexActive = false; }
     return;
   }
-  // Cap longest side at 4096 — sharper for huge exports (e.g. 3200×300 OOH)
-  // without blowing up memory on tall/narrow flags.
-  const MAX_DIM = 4096;
+  // Cap live texture size on phones, but allow full texture detail during
+  // export via prepareFullTextureForExport().
+  const MAX_DIM = liveTextureMaxDim();
   let texW, texH;
   if (aspectW >= aspectH) { texW = MAX_DIM; texH = Math.round(texW * (aspectH / aspectW)); }
   else                    { texH = MAX_DIM; texW = Math.round(texH * (aspectW / aspectH)); }
@@ -1804,7 +1822,7 @@ function refreshTexture() {
     generateTextTexture(textScrollTime);
   } else if (loadedImage) {
     // No text — show image
-    const MAX_DIM = 4096;
+    const MAX_DIM = liveTextureMaxDim();
     let texW, texH;
     if (aspectW >= aspectH) { texW = MAX_DIM; texH = Math.round(texW * (aspectH / aspectW)); }
     else                    { texH = MAX_DIM; texW = Math.round(texH * (aspectW / aspectH)); }
@@ -1922,7 +1940,21 @@ function loadDefaultTexture() {
 // ─── UI ──────────────────────────────────────────────────────
 const panel = document.getElementById('panel');
 document.getElementById('panelClose').addEventListener('click', () => { panel.classList.add('collapsed'); if (someActive) initSomeCrop(); });
-document.getElementById('panelToggle').addEventListener('click', () => { panel.classList.remove('collapsed'); if (someActive) initSomeCrop(); });
+document.getElementById('panelToggle').addEventListener('click', () => {
+  closeMobileSheet();
+  panel.classList.remove('collapsed');
+  if (someActive) initSomeCrop();
+});
+
+function setActiveButton(group, selector, activeBtn) {
+  if (!group) return;
+  group.querySelectorAll(selector).forEach(b => b.classList.toggle('active', b === activeBtn));
+}
+
+function setActiveByData(group, selector, key, value) {
+  if (!group) return;
+  group.querySelectorAll(selector).forEach(b => b.classList.toggle('active', b.dataset[key] === value));
+}
 
 // Aspect ratio
 const ratioRow = document.getElementById('ratioRow');
@@ -1934,7 +1966,7 @@ ratioRow.addEventListener('click', e => {
   const btn = e.target.closest('[data-r]');
   if (!btn) return;
   const r = btn.dataset.r;
-  ratioRow.querySelectorAll('[data-r]').forEach(b => b.classList.toggle('active', b === btn));
+  setActiveButton(ratioRow, '[data-r]', btn);
   activeRatio = r;
   // data-r is H:W (flag convention) — height first, width second.
   const [h, w] = r.split(':').map(Number);
@@ -1959,7 +1991,7 @@ function updateMiniPreview() {
 function ensureCustomMode() {
   if (activeRatio === 'custom') return;
   activeRatio = 'custom';
-  ratioRow.querySelectorAll('[data-r]').forEach(b => b.classList.remove('active'));
+  setActiveByData(ratioRow, '[data-r]', 'r', '__custom__');
 }
 
 function setEditingAxis(axis) {
@@ -2216,8 +2248,7 @@ const fabricModeRow = document.getElementById('fabricModeRow');
 fabricModeRow.addEventListener('click', e => {
   const btn = e.target.closest('[data-mode]');
   if (!btn || btn.classList.contains('active')) return;
-  fabricModeRow.querySelectorAll('[data-mode]').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
+  setActiveButton(fabricModeRow, '[data-mode]', btn);
   setFabricMode(btn.dataset.mode);
 });
 
@@ -2247,8 +2278,7 @@ function setWeather(mode) {
 weatherRow.addEventListener('click', e => {
   const btn = e.target.closest('[data-weather]');
   if (!btn || btn.classList.contains('active')) return;
-  weatherRow.querySelectorAll('[data-weather]').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
+  setActiveButton(weatherRow, '[data-weather]', btn);
   setWeather(btn.dataset.weather);
 });
 
@@ -2257,8 +2287,7 @@ const attachRow = document.getElementById('attachRow');
 attachRow.addEventListener('click', e => {
   const btn = e.target.closest('[data-attach]');
   if (!btn || btn.classList.contains('active')) return;
-  attachRow.querySelectorAll('[data-attach]').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
+  setActiveButton(attachRow, '[data-attach]', btn);
   ATTACH.mode = btn.dataset.attach;
   applyPinning();
 });
@@ -2269,8 +2298,7 @@ const fontRow = document.getElementById('fontRow');
 fontRow.addEventListener('click', e => {
   const btn = e.target.closest('[data-font]');
   if (!btn || btn.classList.contains('active')) return;
-  fontRow.querySelectorAll('[data-font]').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
+  setActiveButton(fontRow, '[data-font]', btn);
   currentFont = btn.dataset.font;
   // Unless the user has explicitly picked a layout, flip to a sensible default:
   // Jubilee → Repeat, Diatype → Centered.
@@ -2284,8 +2312,7 @@ fontRow.addEventListener('click', e => {
 const layoutRow = document.getElementById('layoutRow');
 function setTextLayout(mode) {
   textLayout = mode;
-  layoutRow.querySelectorAll('[data-layout]').forEach(b =>
-    b.classList.toggle('active', b.dataset.layout === mode));
+  setActiveByData(layoutRow, '[data-layout]', 'layout', mode);
 }
 layoutRow.addEventListener('click', e => {
   const btn = e.target.closest('[data-layout]');
@@ -2441,7 +2468,7 @@ fitToggle.addEventListener('click', e => {
   const btn = e.target.closest('button');
   if (!btn) return;
   fitMode = btn.dataset.mode;
-  fitToggle.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+  setActiveButton(fitToggle, 'button', btn);
   refreshTexture();
 });
 
@@ -2481,7 +2508,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   fontSizeSlider.value = 120; fontSizeVal.textContent = '120'; currentFontSize = 120;
   lineHeightSlider.value = 85; lineHeightVal.textContent = '0.85'; currentLineHeight = 0.85;
   currentFont = 'jubilee';
-  fontRow.querySelectorAll('[data-font]').forEach(b => b.classList.toggle('active', b.dataset.font === 'jubilee'));
+  setActiveByData(fontRow, '[data-font]', 'font', 'jubilee');
   textLayoutUserSet = false;
   setTextLayout('repeat');
   textInput.value = ''; currentText = ''; _textWasEmpty = true;
@@ -2490,7 +2517,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   currentTextColor = '#016F17';
   textColorIn.value = '#00330A'; textColorHex.value = '#00330A';
   clearImage();
-  ratioRow.querySelectorAll('[data-r]').forEach(b => b.classList.toggle('active', b.dataset.r === '3:2'));
+  setActiveByData(ratioRow, '[data-r]', 'r', '3:2');
   customRatioDiv.classList.remove('visible');
   activeRatio = '3:2';
   fullRebuild(3, 2);
@@ -2591,6 +2618,7 @@ async function exportFlagPDF() {
 // interpolated mesh (+2× supersample when the GPU allows). matte=true drops
 // all specular/sheen. Shared by the single-PNG button and the CSV batch.
 function renderFlagToBlob(outW, outH, matte, transparent, mime = 'image/png', quality) {
+  const restorePreviewTexture = prepareFullTextureForExport();
   const meshScale = 3; // 3x denser mesh via bilinear interpolation
   // 2× supersample if the GPU can host the larger renderbuffer/texture.
   const maxRb = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
@@ -2813,7 +2841,10 @@ function renderFlagToBlob(outW, outH, matte, transparent, mime = 'image/png', qu
     ctx2.drawImage(ssCanvas, 0, 0);
   }
 
-  return new Promise(resolve => out.toBlob(blob => resolve(blob), mime, quality));
+  return new Promise(resolve => out.toBlob(blob => {
+    if (restorePreviewTexture) restorePreviewTexture();
+    resolve(blob);
+  }, mime, quality));
 }
 
 // ─── SoMe Export ────────────────────────────────────────────
@@ -2836,12 +2867,8 @@ const someCrop = { x: 0, y: 0, w: 0, h: 0 };
 const someFrame = document.getElementById('someFrame');
 const someLabel = document.getElementById('someLabel');
 
-// Tab switching — auto-show/hide crop frame
-document.querySelector('.panel-tabs').addEventListener('click', e => {
-  const tab = e.target.closest('.panel-tab');
-  if (!tab) return;
-  const which = tab.dataset.tab; // 'studio' | 'wind' | 'export'
-  document.querySelectorAll('.panel-tab').forEach(t => t.classList.toggle('active', t === tab));
+function setActiveTab(which) {
+  setActiveByData(document, '.panel-tab', 'tab', which);
   document.getElementById('tabStudio').classList.toggle('active', which === 'studio');
   document.getElementById('tabWind').classList.toggle('active', which === 'wind');
   document.getElementById('tabExport').classList.toggle('active', which === 'export');
@@ -2855,6 +2882,13 @@ document.querySelector('.panel-tabs').addEventListener('click', e => {
     someFrame.style.display = 'none';
     showPole = true;
   }
+}
+
+// Tab switching — auto-show/hide crop frame
+document.querySelector('.panel-tabs').addEventListener('click', e => {
+  const tab = e.target.closest('.panel-tab');
+  if (!tab) return;
+  setActiveTab(tab.dataset.tab);
 });
 
 const sizeWInput = document.getElementById('sizeW');
@@ -2869,6 +2903,21 @@ function getExportSize() {
 function initSomeCrop() {
   const [w, h] = getExportSize();
   const a = w / h;
+  if (isMobileViewport()) {
+    const sheet = document.getElementById('mobileSheet');
+    const sheetOpen = document.body.classList.contains('mobile-sheet-open') && sheet;
+    const bottomClear = sheetOpen ? sheet.getBoundingClientRect().height + 16 : 96;
+    const maxW = Math.max(240, window.innerWidth - 24);
+    const maxH = Math.max(180, window.innerHeight - bottomClear - 28);
+    let cropW, cropH;
+    if (maxW / maxH >= a) { cropH = maxH; cropW = cropH * a; }
+    else { cropW = maxW; cropH = cropW / a; }
+    someCrop.w = cropW; someCrop.h = cropH;
+    someCrop.x = (window.innerWidth - cropW) / 2;
+    someCrop.y = 14 + (maxH - cropH) / 2;
+    updateSomeFrame();
+    return;
+  }
   // Make the crop (= exact export bounds) as large as the layout allows so the
   // preview reads as WYSIWYG. The crop stays centred — the export FOV math
   // assumes a centred crop — so reserve room on both sides to clear the left
@@ -2915,7 +2964,7 @@ document.getElementById('someRow').addEventListener('click', e => {
   const btn = e.target.closest('[data-some]');
   if (!btn) return;
   someFormat = btn.dataset.some;
-  document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b === btn));
+  setActiveButton(document.getElementById('someRow'), '.pill', btn);
   const ffiSection = document.getElementById('ffiSection');
   const batchSection = document.getElementById('batchSection');
   const singlePdfBtn = document.getElementById('pdfBtn');
@@ -2971,7 +3020,7 @@ document.getElementById('audioRow').addEventListener('click', e => {
     return;
   }
   someAudio = btn.dataset.audio;
-  document.querySelectorAll('#audioRow .pill').forEach(b => b.classList.toggle('active', b === btn));
+  setActiveButton(document.getElementById('audioRow'), '.pill', btn);
   playAudioPreview(someAudio);
 });
 
@@ -2980,8 +3029,7 @@ if (loopModeRow) loopModeRow.addEventListener('click', e => {
   const btn = e.target.closest('[data-loop]');
   if (!btn || btn.classList.contains('active')) return;
   someLoop = btn.dataset.loop === 'cut' ? 'cut' : 'seamless';
-  loopModeRow.querySelectorAll('[data-loop]').forEach(b =>
-    b.classList.toggle('active', b.dataset.loop === someLoop));
+  setActiveByData(loopModeRow, '[data-loop]', 'loop', someLoop);
 });
 
 function stopAudioPreview() {
@@ -3041,8 +3089,9 @@ function updateFFILayoutBars() {
   // Approximate the rendered text extent in the preview by mirroring the
   // texture math (size * texW/800), expressed as a fraction of texH and
   // scaled to flagPxH. Multi-line text grows the bar to match.
-  const tallW = aspectW >= aspectH ? 4096 : 4096 * (aspectW / aspectH);
-  const tallH = aspectW >= aspectH ? 4096 * (aspectH / aspectW) : 4096;
+  const maxDim = liveTextureMaxDim();
+  const tallW = aspectW >= aspectH ? maxDim : maxDim * (aspectW / aspectH);
+  const tallH = aspectW >= aspectH ? maxDim * (aspectH / aspectW) : maxDim;
   for (let i = 0; i < ffiLayoutBars.length; i++) {
     const bar = ffiLayoutBars[i];
     const b = titleBlocks[i];
@@ -3087,31 +3136,155 @@ ffiLayoutBars.forEach((bar, i) => {
 // Initial paint.
 updateFFILayoutBars();
 
+// ─── Mobile quick toolbar / modal sheets ─────────────────────
+const mobileToolbar = document.getElementById('mobileToolbar');
+const mobileSheet = document.getElementById('mobileSheet');
+const mobileSheetTitle = document.getElementById('mobileSheetTitle');
+const mobileSheetBody = document.getElementById('mobileSheetBody');
+const mobileSheetClose = document.getElementById('mobileSheetClose');
+const mobileSheetBackdrop = document.getElementById('mobileSheetBackdrop');
+let mobileMovedNodes = [];
+let mobileModeInitialized = false;
+
+const mobileSheetConfig = {
+  text: {
+    title: 'Text',
+    tab: 'studio',
+    getNodes: () => [document.getElementById('sectionText')],
+  },
+  image: {
+    title: 'Image',
+    tab: 'studio',
+    getNodes: () => [document.getElementById('sectionImage')],
+  },
+  colors: {
+    title: 'Colors',
+    tab: 'studio',
+    getNodes: () => [document.getElementById('sectionColors')],
+  },
+  ratio: {
+    title: 'Ratio',
+    tab: 'studio',
+    getNodes: () => [document.getElementById('sectionRatio')],
+  },
+  export: {
+    title: 'Export',
+    tab: 'export',
+    getNodes: () => Array.from(document.getElementById('tabExport').children)
+      .filter(el => el.classList && el.classList.contains('section')),
+  },
+};
+
+function setMobileToolActive(key) {
+  if (!mobileToolbar) return;
+  mobileToolbar.querySelectorAll('[data-mobile-sheet]')
+    .forEach(btn => btn.classList.toggle('active', btn.dataset.mobileSheet === key));
+}
+
+function moveNodeToMobileSheet(node) {
+  if (!node || !node.parentNode || node.parentNode === mobileSheetBody) return;
+  const marker = document.createComment('mobile-sheet-placeholder');
+  node.parentNode.insertBefore(marker, node);
+  node.__mobileSheetMarker = marker;
+  mobileMovedNodes.push(node);
+  mobileSheetBody.appendChild(node);
+}
+
+function restoreMobileNodes() {
+  if (!mobileSheetBody) return;
+  for (const node of mobileMovedNodes) {
+    const marker = node.__mobileSheetMarker;
+    if (marker && marker.parentNode) {
+      marker.parentNode.insertBefore(node, marker);
+      marker.remove();
+    }
+    delete node.__mobileSheetMarker;
+  }
+  mobileMovedNodes = [];
+  mobileSheetBody.textContent = '';
+}
+
+function closeMobileSheet() {
+  if (!mobileSheet) return;
+  restoreMobileNodes();
+  mobileSheet.classList.remove('open');
+  mobileSheet.setAttribute('aria-hidden', 'true');
+  mobileSheetBackdrop?.classList.remove('active');
+  document.body.classList.remove('mobile-sheet-open');
+  setMobileToolActive(null);
+  if (someActive) requestAnimationFrame(initSomeCrop);
+}
+
+function openMobileSheet(key) {
+  const cfg = mobileSheetConfig[key];
+  if (!cfg) return;
+  if (!isMobileViewport()) {
+    setActiveTab(cfg.tab);
+    panel.classList.remove('collapsed');
+    return;
+  }
+  restoreMobileNodes();
+  setActiveTab(cfg.tab);
+  panel.classList.add('collapsed');
+  mobileSheetTitle.textContent = cfg.title;
+  for (const node of cfg.getNodes()) moveNodeToMobileSheet(node);
+  mobileSheet.classList.add('open');
+  mobileSheet.setAttribute('aria-hidden', 'false');
+  mobileSheetBackdrop?.classList.add('active');
+  document.body.classList.add('mobile-sheet-open');
+  setMobileToolActive(key);
+  if (someActive) requestAnimationFrame(initSomeCrop);
+}
+
+function syncMobileMode() {
+  if (isMobileViewport()) {
+    if (!mobileModeInitialized) {
+      panel.classList.add('collapsed');
+      mobileModeInitialized = true;
+    }
+  } else {
+    closeMobileSheet();
+    panel.classList.remove('collapsed');
+    mobileModeInitialized = false;
+  }
+  resize();
+  if (someActive) initSomeCrop();
+}
+
+if (mobileToolbar) {
+  mobileToolbar.addEventListener('click', e => {
+    const btn = e.target.closest('[data-mobile-sheet]');
+    if (!btn) return;
+    openMobileSheet(btn.dataset.mobileSheet);
+  });
+}
+mobileSheetClose?.addEventListener('click', closeMobileSheet);
+mobileSheetBackdrop?.addEventListener('click', closeMobileSheet);
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.body.classList.contains('mobile-sheet-open')) closeMobileSheet();
+});
+if (MOBILE_QUERY.addEventListener) MOBILE_QUERY.addEventListener('change', syncMobileMode);
+else MOBILE_QUERY.addListener(syncMobileMode);
+syncMobileMode();
+
 // ─── Name Tags print preset + CSV batch export ─────────────────────
-// Portrait A5 @ 300 DPI with matte on. It seeds the print palette but otherwise
-// leaves fonts/sizes driven entirely by the live UI controls.
-function applyPrintPreset() {
+function applyTitleCardPreset({ format, width, height, matte, cameraDist, cloth, updateBatch }) {
   textLayout = 'titleCard';        // cloth text comes from titleBlocks
   textLayoutUserSet = true;
 
-  // Portrait flag (same proportions as the FFI poster) sits well inside A5.
   fullRebuild(2.4, 2.9);
   customAW = 2.4; customAH = 2.9;
   activeRatio = null;
-  document.querySelectorAll('#ratioRow [data-r]').forEach(b => b.classList.remove('active'));
+  setActiveByData(ratioRow, '[data-r]', 'r', '__title-card__');
   if (typeof updateMiniPreview === 'function') updateMiniPreview();
 
-  // Full-edge attachment keeps the flag from billowing into itself.
   ATTACH.mode = 'edge';
   applyPinning();
-  document.querySelectorAll('#attachRow .pill').forEach(b => b.classList.toggle('active', b.dataset.attach === 'edge'));
+  setActiveByData(attachRow, '.pill', 'attach', 'edge');
 
-  // Matte on so the live preview already shows the glare-free print surface.
-  matteMode = true;
-  if (matteToggle) matteToggle.checked = true;
+  matteMode = !!matte;
+  if (matteToggle) matteToggle.checked = matteMode;
 
-  // Seed the print palette you specified (bg #D3FED1, text #00330A) — both
-  // stay fully editable via the Studio tab colour controls afterwards.
   SIM.bgColor = hexToRgb('#D3FED1');
   if (bgColorIn) bgColorIn.value = '#D3FED1';
   if (bgColorHex) bgColorHex.value = '#D3FED1';
@@ -3119,13 +3292,13 @@ function applyPrintPreset() {
   if (textColorIn) textColorIn.value = '#00330A';
   if (textColorHex) textColorHex.value = '#00330A';
 
-  // Head-on framing, tuned by hand (via the Copy-debug snapshot) for the
-  // 2.4×2.9 print flag.
+  if (cloth) setClothMode(cloth);
+
   cam.tgtTheta = 0; cam.tgtPhi = 0; cam.tgtRoll = 0;
   cam.tgtTarget[0] = 1.191;
   cam.tgtTarget[1] = 0.782;
   cam.tgtTarget[2] = 0;
-  cam.tgtDist = 4.233;
+  cam.tgtDist = cameraDist;
   cam.curTheta = cam.tgtTheta;
   cam.curPhi = cam.tgtPhi;
   cam.curDist = cam.tgtDist;
@@ -3134,71 +3307,39 @@ function applyPrintPreset() {
   cam.target[1] = cam.tgtTarget[1];
   cam.target[2] = cam.tgtTarget[2];
 
-  // A5 @ 300 DPI, portrait, no bleed.
-  sizeWInput.value = 1748;
-  sizeHInput.value = 2480;
-  someFormat = 'print';
-  document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b.dataset.some === 'print'));
-  updateBatchButtonLabels();
+  sizeWInput.value = width;
+  sizeHInput.value = height;
+  someFormat = format;
+  setActiveByData(document.getElementById('someRow'), '.pill', 'some', format);
+  if (updateBatch) updateBatchButtonLabels();
 
   refreshTexture(); // repaint title card with the seeded text colour
+}
+
+// Portrait A5 @ 300 DPI with matte on. It seeds the print palette but otherwise
+// leaves fonts/sizes driven entirely by the live UI controls.
+function applyPrintPreset() {
+  applyTitleCardPreset({
+    format: 'print',
+    width: 1748,
+    height: 2480,
+    matte: true,
+    cameraDist: 4.233,
+    updateBatch: true,
+  });
 }
 
 // Student Takeover — the name-tag flag as a 9:16 social video: same title-card
 // text blocks and print palette, 1080×1920, 10s MP4 export. None of the
 // print/batch machinery (no CSV, no PDF, no A5).
 function applyStudentPreset() {
-  textLayout = 'titleCard';        // cloth text comes from titleBlocks
-  textLayoutUserSet = true;
-
-  // Same portrait flag as the name tags.
-  fullRebuild(2.4, 2.9);
-  customAW = 2.4; customAH = 2.9;
-  activeRatio = null;
-  document.querySelectorAll('#ratioRow [data-r]').forEach(b => b.classList.remove('active'));
-  if (typeof updateMiniPreview === 'function') updateMiniPreview();
-
-  // Full-edge attachment keeps the title card readable while the cloth waves.
-  ATTACH.mode = 'edge';
-  applyPinning();
-  document.querySelectorAll('#attachRow .pill').forEach(b => b.classList.toggle('active', b.dataset.attach === 'edge'));
-
-  // Video surface — keep the sheen; matte is a print thing.
-  matteMode = false;
-  if (matteToggle) matteToggle.checked = false;
-
-  // Name-tag palette: dark green text on mint.
-  SIM.bgColor = hexToRgb('#D3FED1');
-  if (bgColorIn) bgColorIn.value = '#D3FED1';
-  if (bgColorHex) bgColorHex.value = '#D3FED1';
-  currentTextColor = '#00330A';
-  if (textColorIn) textColorIn.value = '#00330A';
-  if (textColorHex) textColorHex.value = '#00330A';
-
-  // 9:16 story video.
-  sizeWInput.value = 1080;
-  sizeHInput.value = 1920;
-  someFormat = 'student';
-  document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b.dataset.some === 'student'));
-
-  // Head-on, same target as the print framing, but pulled back so the full
-  // flag width fits the narrower 9:16 crop: d = flagW / (2·tan(20°)·0.86·9/16)
-  // ≈ 6.8 (0.86 = crop height fraction from initSomeCrop), plus a hair of
-  // margin. Background and flag share the mint, so the surround is seamless.
-  cam.tgtTheta = 0; cam.tgtPhi = 0; cam.tgtRoll = 0;
-  cam.tgtTarget[0] = 1.191;
-  cam.tgtTarget[1] = 0.782;
-  cam.tgtTarget[2] = 0;
-  cam.tgtDist = 6.9;
-  cam.curTheta = cam.tgtTheta;
-  cam.curPhi = cam.tgtPhi;
-  cam.curDist = cam.tgtDist;
-  cam.curRoll = cam.roll = cam.tgtRoll;
-  cam.target[0] = cam.tgtTarget[0];
-  cam.target[1] = cam.tgtTarget[1];
-  cam.target[2] = cam.tgtTarget[2];
-
-  refreshTexture(); // repaint title card with the seeded text colour
+  applyTitleCardPreset({
+    format: 'student',
+    width: 1080,
+    height: 1920,
+    matte: false,
+    cameraDist: 6.9,
+  });
 }
 
 // Name Tags Video — the name-tag flag as a 16:9 video, batched: the CSV that
@@ -3206,60 +3347,14 @@ function applyStudentPreset() {
 // (1920×1080). Full cloth only — the preset forces it and the UI hides the
 // cloth pills; no PNG/PDF outputs here.
 function applyTagsVideoPreset() {
-  textLayout = 'titleCard';        // cloth text comes from titleBlocks
-  textLayoutUserSet = true;
-
-  // Same portrait flag as the name tags.
-  fullRebuild(2.4, 2.9);
-  customAW = 2.4; customAH = 2.9;
-  activeRatio = null;
-  document.querySelectorAll('#ratioRow [data-r]').forEach(b => b.classList.remove('active'));
-  if (typeof updateMiniPreview === 'function') updateMiniPreview();
-
-  // Full-edge attachment keeps the title card readable while the cloth waves.
-  ATTACH.mode = 'edge';
-  applyPinning();
-  document.querySelectorAll('#attachRow .pill').forEach(b => b.classList.toggle('active', b.dataset.attach === 'edge'));
-
-  // Video surface — keep the sheen; matte is a print thing (toggle stays live).
-  matteMode = false;
-  if (matteToggle) matteToggle.checked = false;
-
-  // Name-tag palette: dark green text on mint.
-  SIM.bgColor = hexToRgb('#D3FED1');
-  if (bgColorIn) bgColorIn.value = '#D3FED1';
-  if (bgColorHex) bgColorHex.value = '#D3FED1';
-  currentTextColor = '#00330A';
-  if (textColorIn) textColorIn.value = '#00330A';
-  if (textColorHex) textColorHex.value = '#00330A';
-
-  // Full wind — the whole point of the video tags is the untamed cloth.
-  setClothMode('full');
-
-  // 16:9 landscape video.
-  sizeWInput.value = 1920;
-  sizeHInput.value = 1080;
-  someFormat = 'tagsvideo';
-  document.querySelectorAll('#someRow .pill').forEach(b => b.classList.toggle('active', b.dataset.some === 'tagsvideo'));
-
-  // Head-on, same target as the print framing. In a 16:9 crop the flag's
-  // 2.9-unit height is the binding constraint: d = flagH / (2·tan(20°)·0.86)
-  // ≈ 4.6 (0.86 = crop height fraction from initSomeCrop), plus margin so the
-  // cloth can billow without clipping. Mint bg = seamless surround.
-  cam.tgtTheta = 0; cam.tgtPhi = 0; cam.tgtRoll = 0;
-  cam.tgtTarget[0] = 1.191;
-  cam.tgtTarget[1] = 0.782;
-  cam.tgtTarget[2] = 0;
-  cam.tgtDist = 4.8;
-  cam.curTheta = cam.tgtTheta;
-  cam.curPhi = cam.tgtPhi;
-  cam.curDist = cam.tgtDist;
-  cam.curRoll = cam.roll = cam.tgtRoll;
-  cam.target[0] = cam.tgtTarget[0];
-  cam.target[1] = cam.tgtTarget[1];
-  cam.target[2] = cam.tgtTarget[2];
-
-  refreshTexture(); // repaint title card with the seeded text colour
+  applyTitleCardPreset({
+    format: 'tagsvideo',
+    width: 1920,
+    height: 1080,
+    matte: false,
+    cameraDist: 4.8,
+    cloth: 'full',
+  });
 }
 
 // CSV → records. Tolerates quotes, embedded delimiters/newlines, CRLF and a BOM.
@@ -3747,8 +3842,7 @@ const clothModeRow = document.getElementById('clothModeRow');
 const gentleStrengthRow = document.getElementById('gentleStrengthRow');
 function setClothMode(mode) {
   clothMode = mode;
-  if (clothModeRow) clothModeRow.querySelectorAll('[data-cloth]')
-    .forEach(b => b.classList.toggle('active', b.dataset.cloth === mode));
+  setActiveByData(clothModeRow, '[data-cloth]', 'cloth', mode);
   if (gentleStrengthRow) gentleStrengthRow.style.display = mode === 'slight' ? '' : 'none';
   if (mode === 'flat') flattenCloth();
   else if (mode === 'slight') gentleClothPose(0, gentleTime);
@@ -3822,7 +3916,7 @@ window.addEventListener('resize', () => { if (someActive) initSomeCrop(); });
 // Live-update crop frame when user edits W/H
 [sizeWInput, sizeHInput].forEach(inp => {
   inp.addEventListener('input', () => {
-    document.querySelectorAll('#someRow .pill').forEach(b => b.classList.remove('active'));
+    setActiveByData(document.getElementById('someRow'), '.pill', 'some', '__custom-size__');
     if (someActive) initSomeCrop();
     updateBatchButtonLabels();
   });

@@ -373,6 +373,10 @@ const NUM_GUSTS = 9;
 const gusts = [];
 const gustPulse = new Float32Array(NUM_GUSTS);
 const gustSwirl = new Float32Array(NUM_GUSTS);
+let _loopSimPhase = -1;
+let _loopGustBase = null;
+let _loopSimStep = 0;
+let _loopSimTotalSteps = 1;
 
 function initGusts() {
   gusts.length = 0;
@@ -421,6 +425,28 @@ function updateGusts(dt) {
   }
 }
 
+function updateLoopGusts(phase) {
+  if (!_loopGustBase) return;
+  const tau = Math.PI * 2;
+  for (let i = 0; i < gusts.length; i++) {
+    const g = gusts[i];
+    const b = _loopGustBase[i];
+    const a = tau * phase + i * 1.731;
+    const b2 = tau * phase * 2 + i * 0.917;
+    g.x = clamp(b.x + Math.cos(a) * 0.16 + Math.sin(b2) * 0.05, -0.5, 1.5);
+    g.y = clamp(b.y + Math.sin(a + 0.8) * 0.12 + Math.cos(b2 + 0.4) * 0.04, -0.5, 1.5);
+    g.vx = 0;
+    g.vy = 0;
+    g.r = b.r;
+    g.sx = clamp(b.sx + Math.sin(a + 1.4) * 0.65 + Math.sin(b2) * 0.20, -3.4, 3.4);
+    g.sz = clamp(b.sz + Math.cos(a + 0.3) * 0.65 + Math.cos(b2 + 1.1) * 0.20, -3.4, 3.4);
+    g.phase = b.phase + tau * phase * (1 + (i % 3));
+    g.phaseVel = b.phaseVel;
+    g.pulse = clamp(b.pulse + Math.sin(a - 0.6) * 0.28, 0.15, 1.8);
+    g.spin = b.spin;
+  }
+}
+
 // ─── Physics simulation (ported from original) ──────────────
 let simTime = 0;
 let windAngleDrift = 0, windAngleVel = 0, windStrengthDrift = 0;
@@ -433,23 +459,41 @@ function simulate(frameDt) {
   const dt = clamp(frameDt, 0.004, 0.02);
   const subDt = dt / SUBSTEPS;
 
-  // Update gusts once per frame
-  updateGusts(dt);
+  // Update gusts once per frame. Seamless export gets a phase-looped gust
+  // field so the correction pass is not fighting a random walk at the seam.
+  if (_loopSimPhase >= 0) updateLoopGusts(_loopSimPhase);
+  else updateGusts(dt);
   // Decay orbit angular velocity (smooth stop after user releases mouse)
   orbitAngularVel *= Math.exp(-dt * 1.2);
 
   // Ambient wind drift
   const driftMax = WEATHER.angleDriftMax;
-  windAngleVel += (Math.random() - 0.5) * dt * (90 * WEATHER.angleDriftForce + driftMax * 4.5);
-  windAngleVel += (-windAngleDrift * 0.55) * dt;
-  windAngleVel *= Math.exp(-dt * 0.55);
-  windAngleDrift += windAngleVel * dt;
-  windAngleDrift = clamp(windAngleDrift, -driftMax, driftMax);
-
   const turbNorm = SIM.turbulence / 100;
-  windStrengthDrift += (Math.random() - 0.5) * dt * (1.8 + turbNorm * 8.0);
-  windStrengthDrift *= Math.exp(-dt * 1.6);
-  windStrengthDrift = clamp(windStrengthDrift, -0.75, 0.75);
+  if (_loopSimPhase >= 0) {
+    const tau = Math.PI * 2;
+    const a = _loopSimPhase * tau;
+    windAngleDrift = clamp(
+      Math.sin(a) * driftMax * 0.36 + Math.sin(a * 2 + 0.7) * driftMax * 0.10,
+      -driftMax,
+      driftMax
+    );
+    windAngleVel = 0;
+    windStrengthDrift = clamp(
+      Math.sin(a + 1.2) * (0.10 + turbNorm * 0.18) + Math.sin(a * 2 - 0.4) * (0.04 + turbNorm * 0.08),
+      -0.75,
+      0.75
+    );
+  } else {
+    windAngleVel += (Math.random() - 0.5) * dt * (90 * WEATHER.angleDriftForce + driftMax * 4.5);
+    windAngleVel += (-windAngleDrift * 0.55) * dt;
+    windAngleVel *= Math.exp(-dt * 0.55);
+    windAngleDrift += windAngleVel * dt;
+    windAngleDrift = clamp(windAngleDrift, -driftMax, driftMax);
+
+    windStrengthDrift += (Math.random() - 0.5) * dt * (1.8 + turbNorm * 8.0);
+    windStrengthDrift *= Math.exp(-dt * 1.6);
+    windStrengthDrift = clamp(windStrengthDrift, -0.75, 0.75);
+  }
 
   for (let s = 0; s < SUBSTEPS; s++) {
     const dt2 = subDt * subDt;
@@ -2775,6 +2819,7 @@ function renderFlagToBlob(outW, outH, matte, transparent, mime = 'image/png', qu
 // ─── SoMe Export ────────────────────────────────────────────
 const SOME_FORMATS = { '1:1': [1080,1080], '4:5': [1080,1350], '9:16': [1080,1920], '16:9': [1920,1080], 'print': [1748,2480], 'tagsvideo': [1920,1080] };
 let someFormat = '1:1', someActive = false, someRecording = false;
+let someLoop = 'seamless'; // 'seamless' | 'cut'
 let someAudio = 'none'; // 'none' | '1' | '2' | '3' | '4'
 const SOUND_VOLUME = 0.3;
 const AUDIO_TRACKS = {
@@ -2928,6 +2973,15 @@ document.getElementById('audioRow').addEventListener('click', e => {
   someAudio = btn.dataset.audio;
   document.querySelectorAll('#audioRow .pill').forEach(b => b.classList.toggle('active', b === btn));
   playAudioPreview(someAudio);
+});
+
+const loopModeRow = document.getElementById('loopModeRow');
+if (loopModeRow) loopModeRow.addEventListener('click', e => {
+  const btn = e.target.closest('[data-loop]');
+  if (!btn || btn.classList.contains('active')) return;
+  someLoop = btn.dataset.loop === 'cut' ? 'cut' : 'seamless';
+  loopModeRow.querySelectorAll('[data-loop]').forEach(b =>
+    b.classList.toggle('active', b.dataset.loop === someLoop));
 });
 
 function stopAudioPreview() {
@@ -3578,7 +3632,7 @@ const batchVideoBtn = document.getElementById('batchVideoBtn');
 let batchVideoRowLabel = ''; // per-row prefix the recording loop appends time to
 
 async function runBatchVideoExport() {
-  if (batchVideoExporting || batchExporting || pngSeqExporting || someRecording) return;
+  if (batchVideoExporting || batchExporting || pngSeqExporting || someRecording || _precomputingLoop) return;
   if (!batchRecords.length) return;
   if (typeof VideoEncoder === 'undefined') {
     alert('WebCodecs not supported — use Chrome or Edge.');
@@ -3645,6 +3699,7 @@ async function runBatchVideoExport() {
     try { await initRecorder(audioDecoded); }
     catch (e) {
       console.error('Encoder init failed:', e);
+      cleanupRecorder();
       failed = true;
       break;
     }
@@ -3718,7 +3773,7 @@ if (pdfBtn) pdfBtn.addEventListener('click', exportFlagPDF);
 
 let pngSeqExporting = false, pngSeqCancel = false;
 async function runPngSequenceExport() {
-  if (pngSeqExporting || batchExporting || batchVideoExporting || someRecording) return;
+  if (pngSeqExporting || batchExporting || batchVideoExporting || someRecording || _precomputingLoop) return;
   const btn = document.getElementById('someSeqBtn');
   const [outW, outH] = getExportSize();
   try { await document.fonts.ready; } catch (e) {}
@@ -3727,36 +3782,31 @@ async function runPngSequenceExport() {
 
   const files = [];
   const total = REC_TOTAL_FRAMES; // 250 frames = 10s @ 25fps
-  for (let f = 0; f < total; f++) {
-    if (pngSeqCancel) break;
-    // Advance one video-frame's worth of motion (or hold flat / drift the
-    // gentle ripple), keeping text scroll in sync.
-    if (clothMode !== 'full') {
-      if (clothMode === 'flat') flattenCloth();
-      else { gentleTime += SIM_DT * REC_STEPS; gentleClothPose(0, gentleTime); }
-      if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
-        textScrollTime += SIM_DT * REC_STEPS * textScrollSpeed * 2.5;
-        generateTextTexture(textScrollTime);
-      }
-    } else {
-      for (let s = 0; s < REC_STEPS; s++) {
-        simulate(SIM_DT);
-        if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
-          textScrollTime += SIM_DT * textScrollSpeed * 2.5;
-          generateTextTexture(textScrollTime);
-        }
-      }
+  let loopPrep = null;
+  try {
+    if (someLoop === 'seamless') {
+      loopPrep = await buildSeamlessLoopFrames((done, count) => {
+        btn.textContent = `Preparing loop ${Math.round(done / count * 100)}%`;
+      });
     }
-    const blob = await renderFlagToBlob(outW, outH, matteMode, true); // transparent bg
-    files.push({ name: String(f + 1).padStart(4, '0') + '.png', data: new Uint8Array(await blob.arrayBuffer()) });
-    btn.textContent = `Cancel (${f + 1}/${total})`;
-    await new Promise(r => requestAnimationFrame(r));
-  }
 
-  pngSeqExporting = false;
-  btn.classList.remove('batch-cancel');
-  btn.textContent = 'Export PNG sequence';
-  lastTime = 0; // avoid a giant catch-up dt when the on-screen loop resumes
+    for (let f = 0; f < total; f++) {
+      if (pngSeqCancel) break;
+      if (loopPrep) applyLoopFrame(loopPrep.frames[f]);
+      else advanceRecordingMotionFrame(true);
+
+      const blob = await renderFlagToBlob(outW, outH, matteMode, true); // transparent bg
+      files.push({ name: String(f + 1).padStart(4, '0') + '.png', data: new Uint8Array(await blob.arrayBuffer()) });
+      btn.textContent = `Cancel (${f + 1}/${total})`;
+      await new Promise(r => requestAnimationFrame(r));
+    }
+  } finally {
+    if (loopPrep) restoreMotionState(loopPrep.restoreState);
+    pngSeqExporting = false;
+    btn.classList.remove('batch-cancel');
+    btn.textContent = 'Export PNG sequence';
+    lastTime = 0; // avoid a giant catch-up dt when the on-screen loop resumes
+  }
   if (pngSeqCancel || !files.length) return;
   const stamp = new Date().toISOString().slice(0, 10);
   downloadBlob(makeZip(files), `flag-${outW}x${outH}-seq-${stamp}.zip`);
@@ -3910,13 +3960,185 @@ let _audioEncoder = null;
 // Batch hooks: when set, the finished MP4 goes to _recSink(blob) instead of an
 // anchor download, and _recDone(ok) resolves the batch driver's per-row await.
 let _recSink = null, _recDone = null;
-let someLoop = 'cut'; // 'seamless' | 'cut'
 let _useSeamless = false; // snapshot of someLoop at recording start
-// Loop-morph buffer: stores mesh particle state (pos + prev) for the first
-// LOOP_FADE_FRAMES sim frames so the tail of the recording can morph the
-// geometry back into the start trajectory, producing a seamless loop without
-// the ghosting that a pixel crossfade would cause.
-let _loopHeadPos = null, _loopHeadPrev = null;
+let _loopFrames = null;
+let _recMotionRestore = null;
+let _precomputingLoop = false;
+
+function smootherstep01(t) {
+  t = clamp(t, 0, 1);
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+function cloneCameraState() {
+  return {
+    tgtTheta: cam.tgtTheta, tgtPhi: cam.tgtPhi, tgtDist: cam.tgtDist,
+    curTheta: cam.curTheta, curPhi: cam.curPhi, curDist: cam.curDist,
+    tgtRoll: cam.tgtRoll, roll: cam.roll,
+    tgtTarget: cam.tgtTarget.slice(),
+    target: cam.target.slice(),
+  };
+}
+
+function applyCameraState(state) {
+  cam.tgtTheta = state.tgtTheta; cam.tgtPhi = state.tgtPhi; cam.tgtDist = state.tgtDist;
+  cam.curTheta = state.curTheta; cam.curPhi = state.curPhi; cam.curDist = state.curDist;
+  cam.tgtRoll = state.tgtRoll; cam.roll = state.roll;
+  cam.tgtTarget[0] = state.tgtTarget[0]; cam.tgtTarget[1] = state.tgtTarget[1]; cam.tgtTarget[2] = state.tgtTarget[2];
+  cam.target[0] = state.target[0]; cam.target[1] = state.target[1]; cam.target[2] = state.target[2];
+}
+
+function cloneGustState() {
+  return gusts.map(g => ({
+    x: g.x, y: g.y, vx: g.vx, vy: g.vy, r: g.r,
+    sx: g.sx, sz: g.sz, phase: g.phase, phaseVel: g.phaseVel,
+    pulse: g.pulse, spin: g.spin,
+  }));
+}
+
+function restoreGustState(state) {
+  gusts.length = 0;
+  for (const g of state) gusts.push({ ...g });
+}
+
+function snapshotMotionState() {
+  return {
+    pos: new Float32Array(pos),
+    prev: new Float32Array(prev),
+    nrm: new Float32Array(nrm),
+    smoothNrm: new Float32Array(smoothNrm),
+    gusts: cloneGustState(),
+    simTime,
+    windAngleDrift,
+    windAngleVel,
+    windStrengthDrift,
+    orbitAngularVel,
+    gentleTime,
+    textScrollTime,
+    cam: cloneCameraState(),
+  };
+}
+
+function restoreMotionState(state) {
+  if (!state) return;
+  pos.set(state.pos);
+  prev.set(state.prev);
+  nrm.set(state.nrm);
+  smoothNrm.set(state.smoothNrm);
+  restoreGustState(state.gusts);
+  simTime = state.simTime;
+  windAngleDrift = state.windAngleDrift;
+  windAngleVel = state.windAngleVel;
+  windStrengthDrift = state.windStrengthDrift;
+  orbitAngularVel = state.orbitAngularVel;
+  gentleTime = state.gentleTime;
+  textScrollTime = state.textScrollTime;
+  applyCameraState(state.cam);
+  if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
+    generateTextTexture(textScrollTime);
+  }
+  updateOrbitBall();
+}
+
+function advanceRecordingMotionFrame(updateTexture) {
+  let scrollDirty = false;
+  for (let i = 0; i < REC_STEPS; i++) {
+    if (clothMode === 'full') {
+      if (_loopGustBase) {
+        _loopSimPhase = (_loopSimStep % _loopSimTotalSteps) / _loopSimTotalSteps;
+        _loopSimStep++;
+      }
+      simulate(SIM_DT);
+      if (_loopGustBase) _loopSimPhase = -1;
+    }
+    else if (clothMode === 'slight') gentleTime += SIM_DT;
+    updateCamera(SIM_DT);
+    if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
+      textScrollTime += SIM_DT * textScrollSpeed * 2.5;
+      scrollDirty = true;
+    }
+  }
+  if (updateTexture && scrollDirty) generateTextTexture(textScrollTime);
+  if (clothMode === 'flat') flattenCloth();
+  else if (clothMode === 'slight') gentleClothPose(0, gentleTime);
+  updateOrbitBall();
+  return scrollDirty;
+}
+
+async function buildSeamlessLoopFrames(onProgress) {
+  const restoreState = snapshotMotionState();
+  const frames = [];
+  _precomputingLoop = true;
+  _loopGustBase = cloneGustState();
+  _loopSimStep = 0;
+  _loopSimTotalSteps = REC_TOTAL_FRAMES * REC_STEPS;
+  try {
+    for (let f = 0; f <= REC_TOTAL_FRAMES; f++) {
+      advanceRecordingMotionFrame(false);
+      frames.push({
+        pos: new Float32Array(pos),
+        cam: cloneCameraState(),
+        gentleTime,
+        textScrollTime,
+      });
+      if (f % 20 === 0) {
+        if (onProgress) onProgress(f, REC_TOTAL_FRAMES);
+        await new Promise(r => requestAnimationFrame(r));
+      }
+    }
+
+    const startPos = frames[0].pos;
+    const endPos = frames[REC_TOTAL_FRAMES].pos;
+    for (let f = 0; f < REC_TOTAL_FRAMES; f++) {
+      const p = frames[f].pos;
+      const w = smootherstep01(f / (REC_TOTAL_FRAMES - 1));
+      for (let i = 0, n = p.length; i < n; i++) {
+        p[i] -= (endPos[i] - startPos[i]) * w;
+      }
+    }
+    frames.length = REC_TOTAL_FRAMES;
+  } finally {
+    _loopGustBase = null;
+    _loopSimPhase = -1;
+    restoreMotionState(restoreState);
+    _precomputingLoop = false;
+  }
+  return { frames, restoreState };
+}
+
+function applyLoopFrame(frame) {
+  pos.set(frame.pos);
+  prev.set(frame.pos);
+  gentleTime = frame.gentleTime;
+  textScrollTime = frame.textScrollTime;
+  applyCameraState(frame.cam);
+  computeMeshNormals();
+  if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
+    generateTextTexture(textScrollTime);
+  }
+  updateOrbitBall();
+}
+
+function renderAndEncodeRecordingFrame(outIdx) {
+  render(SIM_DT);
+  const fw = _recCanvas.width, fh = _recCanvas.height;
+  const ssW = fw * _recSS, ssH = fh * _recSS;
+  const pixels = renderToFBO(ssW, ssH);
+  if (_recSS === 1) {
+    pixelsToCanvas(pixels, fw, fh, _recCtx);
+  } else {
+    pixelsToCanvas(pixels, ssW, ssH, _ssCtx);
+    _recCtx.imageSmoothingEnabled = true;
+    _recCtx.imageSmoothingQuality = 'high';
+    _recCtx.drawImage(_ssCanvas, 0, 0, fw, fh);
+  }
+
+  const frame = new VideoFrame(_recCanvas, {
+    timestamp: outIdx * (1_000_000 / REC_FPS),
+  });
+  _encoder.encode(frame, { keyFrame: outIdx % REC_FPS === 0 });
+  frame.close();
+}
 
 async function getMp4Muxer() {
   if (_mp4Mod) return _mp4Mod;
@@ -3995,10 +4217,12 @@ function startAudioEncode(decoded, muxer) {
 function cleanupRecorder() {
   if (_encoder) { try { _encoder.close(); } catch (_) {} _encoder = null; }
   if (_audioEncoder) { try { _audioEncoder.close(); } catch (_) {} _audioEncoder = null; }
+  restoreMotionState(_recMotionRestore);
   _muxer = null; _muxerTarget = null;
   _recCanvas = null; _recCtx = null;
   _ssCanvas = null; _ssCtx = null; _recSS = 1;
-  _loopHeadPos = null; _loopHeadPrev = null;
+  _loopFrames = null;
+  _recMotionRestore = null;
   someFrame.classList.remove('recording');
 }
 
@@ -4070,8 +4294,21 @@ async function initRecorder(audioDecoded) {
     _ssCtx = _ssCanvas.getContext('2d');
   }
   _useSeamless = (someLoop === 'seamless');
-  _loopHeadPos = _useSeamless ? new Array(LOOP_FADE_FRAMES) : null;
-  _loopHeadPrev = _useSeamless ? new Array(LOOP_FADE_FRAMES) : null;
+  _loopFrames = null;
+  _recMotionRestore = null;
+  if (_useSeamless) {
+    const prep = await buildSeamlessLoopFrames((done, total) => {
+      const pct = Math.round(done / total * 100);
+      if (batchVideoExporting && batchStatus) {
+        batchStatus.textContent = `${batchVideoRowLabel} — preparing loop ${pct}%`;
+      } else {
+        const btn = document.getElementById('someExportBtn');
+        if (btn) btn.textContent = `Preparing loop ${pct}%`;
+      }
+    });
+    _loopFrames = prep.frames;
+    _recMotionRestore = prep.restoreState;
+  }
 
   const { Muxer, ArrayBufferTarget } = await getMp4Muxer();
   _muxerTarget = new ArrayBufferTarget();
@@ -4113,7 +4350,7 @@ function startRecording() {
 }
 
 document.getElementById('someExportBtn').addEventListener('click', async () => {
-  if (someRecording || batchVideoExporting) return;
+  if (someRecording || batchExporting || batchVideoExporting || pngSeqExporting || _precomputingLoop) return;
   if (typeof VideoEncoder === 'undefined') {
     alert('WebCodecs not supported — use Chrome or Edge.');
     return;
@@ -4144,6 +4381,7 @@ document.getElementById('someExportBtn').addEventListener('click', async () => {
     await initRecorder(audioDecoded);
   } catch (e) {
     console.error('Encoder init failed:', e);
+    cleanupRecorder();
     btn.textContent = 'Export failed';
     setTimeout(() => { btn.textContent = 'Export 10s Video'; }, 2000);
     return;
@@ -4252,97 +4490,26 @@ const SIM_DT = 1 / SIM_HZ;
 const REC_FPS = 25;
 const REC_STEPS = SIM_HZ / REC_FPS; // 2 physics steps per export frame
 const REC_TOTAL_FRAMES = 10 * REC_FPS;      // 250 — output loop length
-const LOOP_FADE_FRAMES = 25;                // 1s crossfade at the loop seam
-const REC_RAW_FRAMES = REC_TOTAL_FRAMES + LOOP_FADE_FRAMES;
 
 function loop(now) {
   requestAnimationFrame(loop);
 
   // During recording: 2 physics steps per frame, capture at 25fps.
-  // Seamless-loop strategy — geometric morph (no pixel ghosting):
-  //   sim [0, L)         → snapshot pos+prev into _loopHeadPos/_loopHeadPrev,
-  //                         do not encode
-  //   sim [L, N)         → render+encode directly as output[0 .. N-L-1]
-  //   sim [N, N+L)       → after physics, lerp pos+prev toward the stored
-  //                         head snapshot (alpha 0→1), recompute normals,
-  //                         then render+encode as output[N-L .. N-1]
-  // At alpha=1 the rendered geometry exactly matches sim frame L-1, so
-  // output[N-1] → output[0] is a one-sim-step jump (visually continuous).
+  // Seamless mode encodes precomputed motion-warped frames. Raw mode keeps the
+  // live sim path so the opt-out preserves the original export behavior.
   if (someRecording && _recCtx && _encoder) {
-    let recScrollDirty = false;
-    for (let i = 0; i < REC_STEPS; i++) {
-      if (clothMode === 'full') simulate(SIM_DT);
-      else if (clothMode === 'slight') gentleTime += SIM_DT;
-      updateCamera(SIM_DT);
-      if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
-        textScrollTime += SIM_DT * textScrollSpeed * 2.5;
-        recScrollDirty = true;
-      }
-    }
-    // Texture only needs to be current at capture time — once per frame.
-    if (recScrollDirty) generateTextTexture(textScrollTime);
-    if (clothMode === 'flat') flattenCloth();
-    else if (clothMode === 'slight') gentleClothPose(0, gentleTime);
-    updateOrbitBall();
+    if (_useSeamless && _loopFrames) applyLoopFrame(_loopFrames[_frameIdx]);
+    else advanceRecordingMotionFrame(true);
 
-    const totalFramesForRun = _useSeamless ? REC_RAW_FRAMES : REC_TOTAL_FRAMES;
-
-    if (_useSeamless && _frameIdx < LOOP_FADE_FRAMES) {
-      // Head phase — snapshot mesh state, do not render/encode.
-      _loopHeadPos[_frameIdx] = new Float32Array(pos);
-      _loopHeadPrev[_frameIdx] = new Float32Array(prev);
-    } else {
-      if (_useSeamless && _frameIdx >= REC_TOTAL_FRAMES) {
-        // Tail phase — morph mesh toward stored head trajectory.
-        // Smootherstep easing: zero velocity at both endpoints so the
-        // morph onset and termination are visually invisible.
-        const tailIdx = _frameIdx - REC_TOTAL_FRAMES;
-        const t = (tailIdx + 1) / LOOP_FADE_FRAMES;
-        const alpha = t * t * t * (t * (t * 6 - 15) + 10);
-        const headPos = _loopHeadPos[tailIdx];
-        const headPrev = _loopHeadPrev[tailIdx];
-        const inv = 1 - alpha;
-        for (let i = 0, n = pos.length; i < n; i++) {
-          pos[i] = pos[i] * inv + headPos[i] * alpha;
-          prev[i] = prev[i] * inv + headPrev[i] * alpha;
-        }
-        computeMeshNormals();
-      }
-      // On-screen preview so the user sees recording in progress.
-      render(SIM_DT);
-      // Capture at full export resolution via the dedicated FBO — bypassing
-      // the on-screen canvas avoids viewport/DPR-bound upscaling that would
-      // otherwise pixelate tall formats like 9:16 (1080×1920).
-      const fw = _recCanvas.width, fh = _recCanvas.height;
-      const ssW = fw * _recSS, ssH = fh * _recSS;
-      const pixels = renderToFBO(ssW, ssH);
-      if (_recSS === 1) {
-        pixelsToCanvas(pixels, fw, fh, _recCtx);
-      } else {
-        // Render at 2× and downscale with high-quality smoothing for an
-        // anti-aliased frame (WebGL1 has no MSAA renderbuffers).
-        pixelsToCanvas(pixels, ssW, ssH, _ssCtx);
-        _recCtx.imageSmoothingEnabled = true;
-        _recCtx.imageSmoothingQuality = 'high';
-        _recCtx.drawImage(_ssCanvas, 0, 0, fw, fh);
-      }
-
-      const outIdx = _useSeamless ? _frameIdx - LOOP_FADE_FRAMES : _frameIdx;
-      const frame = new VideoFrame(_recCanvas, {
-        timestamp: outIdx * (1_000_000 / REC_FPS),
-      });
-      _encoder.encode(frame, { keyFrame: outIdx % REC_FPS === 0 });
-      frame.close();
-    }
+    renderAndEncodeRecordingFrame(_frameIdx);
     _frameIdx++;
 
     const elapsed = _frameIdx / REC_FPS;
-    const totalSec = totalFramesForRun / REC_FPS;
     document.getElementById('someExportBtn').textContent =
-      'Recording ' + elapsed.toFixed(1) + 's / ' + totalSec.toFixed(0) + 's';
+      'Recording ' + elapsed.toFixed(1) + 's / 10s';
     if (batchVideoExporting && batchStatus) batchStatus.textContent =
-      batchVideoRowLabel + ' — ' + elapsed.toFixed(1) + 's / ' + totalSec.toFixed(0) + 's';
-    if (_frameIdx >= totalFramesForRun) {
+      batchVideoRowLabel + ' — ' + elapsed.toFixed(1) + 's / 10s';
+    if (_frameIdx >= REC_TOTAL_FRAMES) {
       someRecording = false;
       lastTime = 0;
       finalizeExport();
@@ -4352,7 +4519,7 @@ function loop(now) {
 
   // CSV batch / PNG-sequence drive the cloth + render to their own FBO — skip
   // the on-screen render loop while they run.
-  if (batchExporting || pngSeqExporting) { lastTime = 0; return; }
+  if (batchExporting || pngSeqExporting || _precomputingLoop) { lastTime = 0; return; }
 
   // Normal playback — 60hz physics via accumulator, render every frame
   if (!lastTime) { lastTime = now; return; }

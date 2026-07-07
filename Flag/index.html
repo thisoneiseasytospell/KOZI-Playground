@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Flag Studio</title>
+<title>WdKA Gradshow 2026</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -13,7 +13,7 @@
 <!-- Panel -->
 <div class="panel" id="panel">
   <div class="panel-header">
-    <div class="panel-title">Flag Studio</div>
+    <div class="panel-title">WdKA Gradshow 2026</div>
     <button class="panel-close" id="panelClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
   </div>
   <div class="panel-tabs">
@@ -23,6 +23,18 @@
   </div>
   <div class="panel-body">
     <div class="tab-content active" id="tabStudio">
+
+    <div class="section" id="sectionLooks">
+      <div class="section-label">Looks</div>
+      <div class="pill-row" id="lookRow" style="gap:5px">
+        <button class="pill active" data-look="gradshow">GradShow</button>
+        <button class="pill" data-look="bw-toggle">B&W</button>
+        <button class="pill" data-look="kinetic">Kinetic</button>
+        <button class="pill" data-look="storm-signal">Storm</button>
+        <button class="pill" data-look="moon">Moon</button>
+        <button class="pill" data-look="camera">Camera</button>
+      </div>
+    </div>
 
     <!-- Aspect Ratio -->
     <div class="section" id="sectionRatio">
@@ -60,10 +72,11 @@
         <textarea id="textInput" rows="3" placeholder="Type a short paragraph…"></textarea>
       </div>
       <div class="style-row">
-        <div class="pill-row" id="fontRow">
-          <button class="pill icon-pill active" data-font="jubilee" title="Jubilee"><span class="font-icon font-icon-serif">Aa</span></button>
-          <button class="pill icon-pill" data-font="diatype" title="Diatype"><span class="font-icon font-icon-sans">Aa</span></button>
-        </div>
+        <select id="fontSelect" class="font-select" aria-label="Text font">
+          <option value="jubilee">OT Jubilee Platinum</option>
+          <option value="diatype">ABC Diatype</option>
+        </select>
+        <button type="button" class="pill font-scan-btn" id="fontScanBtn">Local</button>
         <span class="style-divider"></span>
         <div class="pill-row" id="layoutRow">
           <button class="pill icon-pill active" data-layout="repeat" title="Repeat">
@@ -113,6 +126,17 @@
           </div>
         </div>
       </div>
+      <div class="bg-source-row">
+        <label for="bgModeSelect">BG source</label>
+        <select id="bgModeSelect" class="font-select">
+          <option value="color">Color</option>
+          <option value="picture">Picture</option>
+          <option value="video">Video</option>
+        </select>
+        <button type="button" class="pill bg-pick-btn" id="bgPickBtn">Choose</button>
+        <button type="button" class="pill bg-clear-btn" id="bgClearBtn">Clear</button>
+        <input type="file" id="bgMediaInput" accept="image/*,video/*" hidden>
+      </div>
     </div>
 
     <!-- Graphic -->
@@ -126,8 +150,13 @@
         <div class="dropzone-hint">PNG, JPG, WebP</div>
         <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp">
       </div>
+      <div class="image-action-row">
+        <button type="button" class="pill image-action-btn" id="cameraBtn">Live Camera</button>
+        <input type="file" id="cameraInput" accept="image/*" capture="environment" hidden>
+      </div>
       <div class="texture-preview" id="texPreview">
         <img id="previewImg">
+        <video id="previewVideo" autoplay playsinline muted></video>
         <button class="texture-remove" id="removeTexture">&times;</button>
       </div>
       <div class="fit-toggle" id="fitToggle" style="display:none">
@@ -175,13 +204,6 @@
             <span class="control-value" id="gravityVal">-1.0</span>
           </div>
           <input type="range" id="gravity" min="-100" max="100" value="-10" step="1">
-        </div>
-      </div>
-      <div class="section">
-        <div class="section-label">Fabric model</div>
-        <div class="pill-row" id="fabricModeRow" style="gap:5px">
-          <button class="pill" data-mode="classic">Classic</button>
-          <button class="pill active" data-mode="realistic">Realistic</button>
         </div>
       </div>
     </div>

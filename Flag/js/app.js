@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════
-//  FLAG STUDIO — WebGL cloth simulation
+//  WdKA Gradshow 2026 — WebGL cloth simulation
 // ══════════════════════════════════════════════════════════════
 
 const DEFAULT_TEXTURE_PATH = 'demo%20flag.png';
@@ -7,6 +7,7 @@ const MOBILE_QUERY = window.matchMedia('(max-width: 740px)');
 const isMobileViewport = () => MOBILE_QUERY.matches;
 const TEXTURE_MAX_DIM = 4096;
 const MOBILE_TEXTURE_MAX_DIM = 2048;
+const LIVE_VIDEO_TEXTURE_MAX_DIM = 1024;
 let forceFullTexture = false;
 
 function liveTextureMaxDim() {
@@ -517,8 +518,9 @@ function simulate(frameDt) {
     simTime += subDt;
 
     const damp = Math.pow(SIM.damping / 100, subDt * 85);
+    const stormBlend = WEATHER.mode === 'storm' ? 1 : 0;
     const baseWind = clamp((SIM.windStrength / 100) * (1.0 + windStrengthDrift), 0, 3.5);
-    const windBase = baseWind * baseWind * 24.0 + baseWind * 2.5;
+    const windBase = baseWind * baseWind * (stormBlend ? 19.0 : 24.0) + baseWind * (stormBlend ? 3.2 : 2.5);
     const turbAmt = SIM.turbulence / 100;
     const aRad = (SIM.windAngle + windAngleDrift) * Math.PI / 180;
     const wdx = Math.sin(aRad), wdz = Math.cos(aRad);
@@ -527,16 +529,17 @@ function simulate(frameDt) {
     // Keep iteration count modest even under storm — extra iterations are O(numC)
     // and destroy perf. Rely on air resistance (tames motion) + the hard stretch
     // clamp below for anti-stretch insurance instead.
-    const iterations = Math.floor(SIM.stiffness / 100 * 2) + 3 + Math.floor(baseWind * 0.8);
-    const solveStrength = clamp(0.55 + (SIM.stiffness / 100) * 0.3 + baseWind * 0.1, 0.2, 1.2);
-    const dragK = 0.06 + (1.0 - SIM.damping / 100) * 0.85 + baseWind * 0.02;
+    const iterations = Math.floor(SIM.stiffness / 100 * 2) + 3 + Math.floor(baseWind * 0.8) + stormBlend;
+    const solveStrength = clamp(0.55 + (SIM.stiffness / 100) * 0.3 + baseWind * 0.1 + stormBlend * 0.14, 0.2, 1.3);
+    const dragK = 0.06 + (1.0 - SIM.damping / 100) * 0.85 + baseWind * 0.02 + stormBlend * 0.045;
     const gravity = SIM.gravity * REALISM.gravityMul;
-    const maxStep = Math.max(restDx, restDy) * (1.3 + baseWind * 0.9);
+    const maxStep = Math.max(restDx, restDy) * (stormBlend ? (1.12 + baseWind * 0.42) : (1.3 + baseWind * 0.9));
     const turbResponse = Math.pow(turbAmt, 0.82);
     const turbField = turbResponse * (0.45 + baseWind * 0.85);
 
     // Gust phase (once per substep, not per particle)
-    for (let g = 0; g < NUM_GUSTS; g++) {
+    const activeGusts = stormBlend ? 6 : NUM_GUSTS;
+    for (let g = 0; g < activeGusts; g++) {
       const gust = gusts[g];
       gustPulse[g] = (0.72 + Math.sin(gust.phase) * 0.28) * (0.42 + gust.pulse * 0.58);
       gustSwirl[g] = gust.spin * (0.22 + 0.34 * Math.cos(gust.phase * 0.75));
@@ -557,7 +560,7 @@ function simulate(frameDt) {
 
       // Gust blob turbulence
       let gustX = 0, gustZ = 0, gustLift = 0;
-      for (let g = 0; g < NUM_GUSTS; g++) {
+      for (let g = 0; g < activeGusts; g++) {
         const gust = gusts[g];
         const gdx = u - gust.x, gdy = v - gust.y;
         const d2 = gdx * gdx + gdy * gdy;
@@ -584,20 +587,20 @@ function simulate(frameDt) {
       if (REALISM.noiseFlutter) {
         // FBM noise — fractal, incoherent. Wrinkles travel hoist→fly.
         const travel = t * 1.8;
-        const stormness = clamp((baseWind - 1.2) / 1.8, 0, 1);
-        const waveScale = 1.0 - stormness * 0.22; // keep finer detail under storm
+        const stormness = stormBlend ? clamp((baseWind - 0.7) / 1.6, 0, 1) : clamp((baseWind - 1.2) / 1.8, 0, 1);
+        const waveScale = 1.0 - stormness * (stormBlend ? 0.12 : 0.22); // keep finer detail under storm
         const fluFocus = 1.0 + Math.min(baseWind * 0.3, 0.7);
         const fluBase = 0.22;
-        // Big amplitude boost under storm — real storm flags have dramatic folds.
-        const ampU = (fluBase + Math.pow(u, fluFocus) * 1.35) * (1.0 + stormness * 0.55);
-        // Edge whip GROWS with wind + storm — the fly end cracking is the signature motion.
-        const edgeWhip = u * u * u * (0.35 + baseWind * 0.45) * (1.0 + stormness * 0.45);
+        // Storm uses tighter, heavier folds instead of elastic over-extension.
+        const ampU = (fluBase + Math.pow(u, fluFocus) * (stormBlend ? 0.95 : 1.35)) * (1.0 + stormness * (stormBlend ? 0.18 : 0.55));
+        // Keep fly-end cracking, but cap it in storm so the silhouette does not stretch.
+        const edgeWhip = u * u * u * (stormBlend ? (0.22 + baseWind * 0.24) : (0.35 + baseWind * 0.45)) * (1.0 + stormness * (stormBlend ? 0.12 : 0.45));
         flutterX = fbm2(u * 5.0 * waveScale - travel,        v * 4.0 * waveScale + t * 0.4)        * ampU * 1.25
                  + fbm2(u * 9.5 - travel * 1.7,              v * 7.0 + t * 0.9 + 51.3)             * edgeWhip;
         flutterZ = fbm2(u * 5.3 * waveScale - travel + 17.3, v * 4.2 * waveScale + t * 0.5 + 29.1) * ampU * 1.25
                  + fbm2(u * 10.1 - travel * 1.9,             v * 7.3 + t * 1.1 + 73.9)             * edgeWhip;
         // 4th octave — ultra-fine crinkle. Only amps up with wind, concentrated on fly half.
-        const crinkleAmp = (0.06 + baseWind * 0.22) * Math.pow(u, 0.55) * (1.0 + stormness * 0.7);
+        const crinkleAmp = (0.06 + baseWind * (stormBlend ? 0.12 : 0.22)) * Math.pow(u, 0.55) * (1.0 + stormness * (stormBlend ? 0.32 : 0.7));
         flutterX += _noise2(u * 22.0 - travel * 2.3,         v * 17.0 + t * 1.6)                    * crinkleAmp;
         flutterZ += _noise2(u * 24.0 - travel * 2.1 + 37.1,  v * 19.0 + t * 1.4 + 11.3)             * crinkleAmp;
       } else {
@@ -622,8 +625,8 @@ function simulate(frameDt) {
       // parts of the flag get pushed at different angles → turbulent eddies form.
       // Weighted strongly toward the fly end: the hoist stays mostly aligned with
       // the mean wind, but downstream the flow becomes chaotic with multi-scale eddies.
-      const flySwirl = 0.35 + u * u * 1.8;
-      const swirlAmp = (0.3 + baseWind * 0.55) * flySwirl;
+      const flySwirl = 0.35 + u * u * (stormBlend ? 1.25 : 1.8);
+      const swirlAmp = (0.3 + baseWind * (stormBlend ? 0.34 : 0.55)) * flySwirl;
       // Two scales of swirl — large eddies + fine vector noise.
       const swirlU = fbm2(u * 1.8 + t * 0.6,        v * 1.5 - t * 0.4 + 101.0) * swirlAmp
                    + _noise2(u * 5.5 + t * 1.3,     v * 4.8 - t * 0.9 + 41.0)  * swirlAmp * 0.45;
@@ -642,7 +645,11 @@ function simulate(frameDt) {
       const vortexPhase = simTime * vortexFreq * 6.2831853;
       // sin(vortexPhase - u*k) → pattern travels hoist→fly. sin(v*π*1.2) → lazy S along height.
       const vortexSpatial = Math.sin(v * Math.PI * 1.2 + 0.4) * Math.sin(vortexPhase - u * 3.2);
-      const vortexAmp = (baseWind * baseWind * 0.9 + baseWind * 0.35) * (u * u) * (0.55 + turbResponse * 0.9);
+      const vortexAmp = (
+        stormBlend
+          ? baseWind * baseWind * 0.38 + baseWind * 0.55
+          : baseWind * baseWind * 0.9 + baseWind * 0.35
+      ) * (u * u) * (0.55 + turbResponse * 0.9);
       const vortexX = -wdz * vortexSpatial * vortexAmp;
       const vortexZ =  wdx * vortexSpatial * vortexAmp;
 
@@ -687,7 +694,7 @@ function simulate(frameDt) {
       // sudden snaps and keeps the vortex/whip forces from over-stretching.
       if (nLen2 > 1e-4) {
         const velDotN = velX * npx + velY * npy + velZ * npz;
-        const airR = velDotN * Math.abs(velDotN) * 1.6 + velDotN * 0.9;
+        const airR = velDotN * Math.abs(velDotN) * (1.6 + stormBlend * 0.65) + velDotN * (0.9 + stormBlend * 0.35);
         fx -= npx * airR;
         fy -= npy * airR;
         fz -= npz * airR;
@@ -744,10 +751,11 @@ function simulate(frameDt) {
       }
     }
 
-    // Hard stretch clamp — any constraint exceeding 1.06× rest is pulled back
-    // to exactly 1.06×. Two passes so neighboring overshoots propagate correctly.
-    const maxStretch = 1.06;
-    for (let pass = 0; pass < 2; pass++) {
+    // Hard stretch clamp. Storm gets a tighter limit and one extra pass so it
+    // reads as soaked, heavy fabric instead of rubber.
+    const maxStretch = stormBlend ? 1.045 : 1.06;
+    const clampPasses = 2;
+    for (let pass = 0; pass < clampPasses; pass++) {
       for (let c = 0; c < numC; c++) {
         const a = conA[c], b = conB[c];
         const a3 = a * 3, b3 = b * 3;
@@ -861,30 +869,93 @@ void main() { vUV = aP * 0.5 + 0.5; gl_Position = vec4(aP, 0.999, 1.0); }`;
 const bgFsrc = `
 precision highp float;
 uniform vec3 uBg;
+uniform sampler2D uBgTex;
+uniform bool uHasBgTex;
+uniform vec4 uBgTexCrop;
+uniform float uLightning;
+uniform int uSkyMode;
+varying vec2 vUV;
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+float noise21(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash21(i);
+  float b = hash21(i + vec2(1.0, 0.0));
+  float c = hash21(i + vec2(0.0, 1.0));
+  float d = hash21(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
 void main() {
-  gl_FragColor = vec4(uBg, 1.0);
+  vec3 bg = uBg;
+  if (uHasBgTex) {
+    vec2 tc = vUV * uBgTexCrop.xy + uBgTexCrop.zw;
+    bg = texture2D(uBgTex, tc).rgb;
+  } else if (uSkyMode == 2) {
+    float horizon = smoothstep(0.02, 0.86, vUV.y);
+    vec3 skyBase = max(uBg, vec3(0.018, 0.020, 0.030));
+    bg = mix(skyBase * 0.74, skyBase * 1.48 + vec3(0.008, 0.010, 0.018), horizon);
+    vec2 cell = floor(vUV * vec2(210.0, 118.0));
+    vec2 local = fract(vUV * vec2(210.0, 118.0)) - 0.5;
+    float seed = hash21(cell);
+    float size = mix(0.030, 0.090, hash21(cell + 17.7));
+    float star = smoothstep(size, 0.0, length(local));
+    star *= step(0.982, seed) * smoothstep(0.08, 0.42, vUV.y);
+    bg += vec3(0.68, 0.76, 1.0) * star * mix(0.45, 1.25, hash21(cell + 91.3));
+  } else if (uSkyMode == 1) {
+    float cloud = noise21(vUV * vec2(4.2, 2.3)) * 0.62
+      + noise21(vUV * vec2(12.5, 7.0) + 18.4) * 0.28
+      + noise21(vUV * vec2(32.0, 18.0) - 7.1) * 0.10;
+    float bank = smoothstep(0.1, 1.0, vUV.y);
+    bg = mix(bg * 0.55, vec3(0.018, 0.024, 0.034), bank);
+    bg += vec3(0.018, 0.023, 0.032) * cloud * (0.35 + bank * 0.65);
+  }
+  float flash = clamp(uLightning, 0.0, 1.0);
+  bg = mix(bg, vec3(0.86, 0.91, 1.0), flash * 0.78);
+  gl_FragColor = vec4(bg, 1.0);
 }`;
 
 // Main scene shaders
 const vsrc = `
 attribute vec3 aPos, aNrm;
 attribute vec2 aUV;
-uniform mat4 uProj, uView;
-varying vec3 vNrm, vPos;
+uniform mat4 uProj, uView, uModel;
+varying vec3 vNrm, vPos, vLocalPos;
 varying vec2 vUV;
 void main() {
-  vNrm = aNrm; vPos = aPos; vUV = aUV;
-  gl_Position = uProj * uView * vec4(aPos, 1.0);
+  vec4 wp = uModel * vec4(aPos, 1.0);
+  vNrm = normalize(mat3(uModel) * aNrm);
+  vPos = wp.xyz;
+  vLocalPos = aPos;
+  vUV = aUV;
+  gl_Position = uProj * uView * wp;
 }`;
 
 const fsrc = `
 precision highp float;
-varying vec3 vNrm, vPos;
+varying vec3 vNrm, vPos, vLocalPos;
 varying vec2 vUV;
 uniform vec3 uLight, uColor, uEye;
 uniform sampler2D uTex, uMask;
-uniform float uFace, uAlpha, uAmbient, uPartyTime, uMatte, uUnlit;
+uniform float uFace, uAlpha, uAmbient, uPartyTime, uMatte, uUnlit, uLightning, uMoonSurface;
 uniform bool uHasTex, uIsGlass, uHasMask;
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+float noise21(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash21(i);
+  float b = hash21(i + vec2(1.0, 0.0));
+  float c = hash21(i + vec2(0.0, 1.0));
+  float d = hash21(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
 vec3 hsv(float h, float s, float v) {
   vec3 r = clamp(abs(mod(h*6.0+vec3(0,4,2),6.0)-3.0)-1.0,0.0,1.0);
   return v * mix(vec3(1), r, s);
@@ -894,6 +965,7 @@ void main() {
   vec3 vd = normalize(uEye - vPos);
   vec3 ld = normalize(uLight);
   vec3 hd = normalize(ld + vd);
+  float flash = clamp(uLightning, 0.0, 1.0);
 
   if (uIsGlass) {
     float pndl = dot(n, ld);
@@ -901,8 +973,8 @@ void main() {
     float pfill = max(dot(n, normalize(vec3(-0.45, 0.35, -0.65))), 0.0) * 0.15;
     float pback = max(-pndl, 0.0) * 0.10;
     float pspec = pow(max(dot(n, hd), 0.0), 6.0) * 0.05;
-    float plight = 0.42 + pdiff + pfill + pback + pspec;
-    vec3 pc = uColor;
+    float plight = 0.42 + pdiff + pfill + pback + pspec + flash * 1.45;
+    vec3 pc = mix(uColor, vec3(1.0), flash * 0.28);
     if (uPartyTime > 0.0) {
       float t = uPartyTime;
       float strobe = step(0.0, sin(t * 12.0));
@@ -931,6 +1003,18 @@ void main() {
     vec4 t = texture2D(uTex, tc);
     base = mix(base, t.rgb, t.a);
     alpha = t.a + uAlpha * (1.0 - t.a);
+  }
+  if (uMoonSurface > 0.5) {
+    float dust = noise21(vLocalPos.xz * 12.0) * 0.55 + noise21(vLocalPos.xz * 46.0 + 31.7) * 0.45;
+    vec2 craterCell = floor(vLocalPos.xz * 0.95);
+    vec2 craterLocal = fract(vLocalPos.xz * 0.95) - 0.5;
+    float craterSeed = hash21(craterCell);
+    float craterR = mix(0.10, 0.26, hash21(craterCell + 8.2));
+    float craterRing = 1.0 - smoothstep(0.012, 0.055, abs(length(craterLocal) - craterR));
+    craterRing *= step(0.83, craterSeed);
+    float craterShade = smoothstep(craterR, 0.0, length(craterLocal)) * step(0.83, craterSeed);
+    base *= 0.78 + dust * 0.28 + craterRing * 0.14 - craterShade * 0.16;
+    base = clamp(base, vec3(0.0), vec3(1.0));
   }
 
   // Party mode: black/white strobe flash
@@ -966,6 +1050,7 @@ void main() {
   float sheen = pow(1.0 - max(dot(n, vd), 0.0), 4.0) * 0.07 * em;
   vec3 sheenTint = mix(vec3(0.84, 0.90, 0.98), vec3(0.98, 0.90, 0.84), vUV.y);
   vec3 lit = base * light + sheenTint * sheen;
+  lit = mix(lit, base * 2.45 + vec3(0.18, 0.22, 0.32), flash * 0.68);
   gl_FragColor = vec4(lit, alpha * m);
 }`;
 
@@ -994,10 +1079,35 @@ gl.linkProgram(bgProg);
 const bgLoc = {
   aP: gl.getAttribLocation(bgProg, 'aP'),
   uBg: gl.getUniformLocation(bgProg, 'uBg'),
+  uBgTex: gl.getUniformLocation(bgProg, 'uBgTex'),
+  uHasBgTex: gl.getUniformLocation(bgProg, 'uHasBgTex'),
+  uBgTexCrop: gl.getUniformLocation(bgProg, 'uBgTexCrop'),
+  uLightning: gl.getUniformLocation(bgProg, 'uLightning'),
+  uSkyMode: gl.getUniformLocation(bgProg, 'uSkyMode'),
 };
 const quadBuf = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, 1,1, -1,-1, 1,1, -1,1]), gl.STATIC_DRAW);
+
+// Screen-space lightning bolt program
+const boltVsrc = `
+attribute vec2 aP;
+void main() { gl_Position = vec4(aP, 0.998, 1.0); }`;
+
+const boltFsrc = `
+precision mediump float;
+uniform vec4 uColor;
+void main() { gl_FragColor = uColor; }`;
+
+const boltProg = gl.createProgram();
+gl.attachShader(boltProg, compileShader(boltVsrc, gl.VERTEX_SHADER));
+gl.attachShader(boltProg, compileShader(boltFsrc, gl.FRAGMENT_SHADER));
+gl.linkProgram(boltProg);
+const boltLoc = {
+  aP: gl.getAttribLocation(boltProg, 'aP'),
+  uColor: gl.getUniformLocation(boltProg, 'uColor'),
+};
+const boltBuf = gl.createBuffer();
 
 // Main scene program
 const prog = gl.createProgram();
@@ -1007,7 +1117,7 @@ gl.linkProgram(prog); gl.useProgram(prog);
 
 const loc = {};
 ['aPos', 'aNrm', 'aUV'].forEach(n => loc[n] = gl.getAttribLocation(prog, n));
-['uProj', 'uView', 'uLight', 'uColor', 'uEye', 'uTex', 'uFace', 'uAlpha', 'uAmbient', 'uHasTex', 'uIsGlass', 'uPartyTime', 'uMatte', 'uUnlit', 'uMask', 'uHasMask']
+['uProj', 'uView', 'uModel', 'uLight', 'uColor', 'uEye', 'uTex', 'uFace', 'uAlpha', 'uAmbient', 'uHasTex', 'uIsGlass', 'uPartyTime', 'uMatte', 'uUnlit', 'uMask', 'uHasMask', 'uLightning', 'uMoonSurface']
   .forEach(n => loc[n] = gl.getUniformLocation(prog, n));
 
 // ─── Buffers ─────────────────────────────────────────────────
@@ -1016,6 +1126,20 @@ const uvBuf = gl.createBuffer(), idxBuf = gl.createBuffer();
 let polePosBuf = gl.createBuffer(), poleNrmBuf = gl.createBuffer();
 let poleUVBuf = gl.createBuffer(), poleIdxBuf = gl.createBuffer();
 let poleIdxCount = 0;
+let moonPosBuf = gl.createBuffer(), moonNrmBuf = gl.createBuffer();
+let moonUVBuf = gl.createBuffer(), moonIdxBuf = gl.createBuffer();
+let moonIdxCount = 0;
+const MOON = {
+  active: false,
+  center: [0, -9.35, 0],
+  radius: 9.0,
+  color: [0.58, 0.58, 0.55],
+  yaw: 0,
+  yawTarget: 0,
+  autoSpin: 0.075,
+  flagScale: 0.54,
+  flagYOffset: 0.92,
+};
 
 function uploadStaticBuffers() {
   gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
@@ -1107,10 +1231,51 @@ function buildPole() {
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, poleIdxBuf);
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(indices), gl.STATIC_DRAW);
 }
+
+function buildMoonSphere() {
+  const latBands = 96;
+  const lonBands = 144;
+  const positions = [], normals = [], uvs = [], indices = [];
+  const c = MOON.center;
+  const r = MOON.radius;
+  for (let lat = 0; lat <= latBands; lat++) {
+    const theta = (lat / latBands) * Math.PI;
+    const sinT = Math.sin(theta), cosT = Math.cos(theta);
+    for (let lon = 0; lon <= lonBands; lon++) {
+      const phi = (lon / lonBands) * Math.PI * 2;
+      const nx = sinT * Math.cos(phi);
+      const ny = cosT;
+      const nz = sinT * Math.sin(phi);
+      const relief = 1 + fbm2(lon * 0.22, lat * 0.31) * 0.010
+        + fbm2(lon * 0.71 + 11.7, lat * 0.67 - 4.3) * 0.005;
+      positions.push(c[0] + nx * r * relief, c[1] + ny * r * relief, c[2] + nz * r * relief);
+      normals.push(nx, ny, nz);
+      uvs.push(lon / lonBands, lat / latBands);
+    }
+  }
+  for (let lat = 0; lat < latBands; lat++) {
+    for (let lon = 0; lon < lonBands; lon++) {
+      const a = lat * (lonBands + 1) + lon;
+      const b = a + lonBands + 1;
+      indices.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+  moonIdxCount = indices.length;
+  gl.bindBuffer(gl.ARRAY_BUFFER, moonPosBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, moonNrmBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, moonUVBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, moonIdxBuf);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(indices), gl.STATIC_DRAW);
+}
 buildPole();
+buildMoonSphere();
 
 // ─── Texture ─────────────────────────────────────────────────
 let flagTex = null, hasTex = false;
+let flagTexW = 0, flagTexH = 0;
 
 function loadTexture(source) {
   if (flagTex) gl.deleteTexture(flagTex);
@@ -1124,12 +1289,124 @@ function loadTexture(source) {
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+  flagTexW = source.width || source.videoWidth || 0;
+  flagTexH = source.height || source.videoHeight || 0;
   hasTex = true;
 }
 
 function removeTexture() {
   if (flagTex) { gl.deleteTexture(flagTex); flagTex = null; }
+  flagTexW = 0;
+  flagTexH = 0;
   hasTex = false;
+}
+
+function updateTexturePixels(source) {
+  const w = source.width || source.videoWidth || 0;
+  const h = source.height || source.videoHeight || 0;
+  if (!w || !h) return;
+  if (!flagTex || !hasTex || flagTexW !== w || flagTexH !== h) {
+    loadTexture(source);
+    return;
+  }
+  gl.bindTexture(gl.TEXTURE_2D, flagTex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source);
+}
+
+const BG_MEDIA_TEXTURE_MAX_DIM = 1920;
+let bgMode = 'color';
+let bgTex = null, bgTexW = 0, bgTexH = 0;
+let bgImage = null, bgObjUrl = null;
+let bgImageDirty = false;
+const bgVideo = document.createElement('video');
+bgVideo.muted = true;
+bgVideo.loop = true;
+bgVideo.playsInline = true;
+const bgCanvas = document.createElement('canvas');
+const bgCtx = bgCanvas.getContext('2d');
+
+function clearBgTexture() {
+  if (bgTex) { gl.deleteTexture(bgTex); bgTex = null; }
+  bgTexW = 0;
+  bgTexH = 0;
+}
+
+function setBgTextureFromSource(source) {
+  const sourceW = source.videoWidth || source.naturalWidth || source.width || 0;
+  const sourceH = source.videoHeight || source.naturalHeight || source.height || 0;
+  if (!sourceW || !sourceH) return false;
+  const scale = Math.min(1, BG_MEDIA_TEXTURE_MAX_DIM / Math.max(sourceW, sourceH));
+  const w = Math.max(2, Math.round(sourceW * scale));
+  const h = Math.max(2, Math.round(sourceH * scale));
+  if (bgCanvas.width !== w || bgCanvas.height !== h) {
+    bgCanvas.width = w;
+    bgCanvas.height = h;
+  }
+  bgCtx.drawImage(source, 0, 0, w, h);
+  if (!bgTex) {
+    bgTex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, bgTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  } else {
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, bgTex);
+  }
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  if (bgTexW !== w || bgTexH !== h) {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bgCanvas);
+    bgTexW = w;
+    bgTexH = h;
+  } else {
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, bgCanvas);
+  }
+  gl.activeTexture(gl.TEXTURE0);
+  return true;
+}
+
+function updateBackgroundMediaTexture() {
+  if (bgMode === 'picture' && bgImage && bgImageDirty) {
+    bgImageDirty = false;
+    setBgTextureFromSource(bgImage);
+  }
+  else if (bgMode === 'video' && bgVideo.readyState >= 2) setBgTextureFromSource(bgVideo);
+}
+
+function drawBackgroundQuad(drawW, drawH) {
+  updateBackgroundMediaTexture();
+  gl.useProgram(bgProg);
+  gl.uniform3f(bgLoc.uBg, SIM.bgColor[0], SIM.bgColor[1], SIM.bgColor[2]);
+  gl.uniform1f(bgLoc.uLightning, lightningValue());
+  gl.uniform1i(bgLoc.uSkyMode, MOON.active ? 2 : LIGHTNING.active ? 1 : 0);
+  if (bgMode !== 'color' && bgTex && bgTexW > 0 && bgTexH > 0) {
+    const sourceAsp = bgTexW / bgTexH;
+    const drawAsp = Math.max(1, drawW) / Math.max(1, drawH);
+    let cropX = 1, cropY = 1;
+    if (sourceAsp > drawAsp) cropX = drawAsp / sourceAsp;
+    else cropY = sourceAsp / drawAsp;
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, bgTex);
+    gl.uniform1i(bgLoc.uBgTex, 2);
+    gl.uniform1i(bgLoc.uHasBgTex, 1);
+    gl.uniform4f(bgLoc.uBgTexCrop, cropX, cropY, (1 - cropX) * 0.5, (1 - cropY) * 0.5);
+    gl.activeTexture(gl.TEXTURE0);
+  } else {
+    gl.uniform1i(bgLoc.uHasBgTex, 0);
+    gl.uniform4f(bgLoc.uBgTexCrop, 1, 1, 0, 0);
+  }
+  gl.disableVertexAttribArray(loc.aNrm); // avoid leftover state
+  gl.disableVertexAttribArray(loc.aUV);
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+  gl.enableVertexAttribArray(bgLoc.aP);
+  gl.vertexAttribPointer(bgLoc.aP, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  gl.disableVertexAttribArray(bgLoc.aP);
 }
 
 // ─── Shape mask texture (custom silhouette) ──────────────────
@@ -1294,8 +1571,38 @@ function lookAt(e, t, u) {
   ]);
 }
 
+const MODEL_IDENTITY = new Float32Array([
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+]);
+const MODEL_SCRATCH = new Float32Array(16);
+
+function yRotationScaleModel(yaw, scale = 1, yOffset = 0) {
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  MODEL_SCRATCH[0] = c * scale;  MODEL_SCRATCH[1] = 0;      MODEL_SCRATCH[2] = -s * scale; MODEL_SCRATCH[3] = 0;
+  MODEL_SCRATCH[4] = 0;          MODEL_SCRATCH[5] = scale;  MODEL_SCRATCH[6] = 0;          MODEL_SCRATCH[7] = 0;
+  MODEL_SCRATCH[8] = s * scale;  MODEL_SCRATCH[9] = 0;      MODEL_SCRATCH[10] = c * scale; MODEL_SCRATCH[11] = 0;
+  MODEL_SCRATCH[12] = 0;         MODEL_SCRATCH[13] = yOffset; MODEL_SCRATCH[14] = 0;       MODEL_SCRATCH[15] = 1;
+  return MODEL_SCRATCH;
+}
+
+function moonSceneModel(scale = 1, yOffset = 0) {
+  return MOON.active ? yRotationScaleModel(MOON.yaw, scale, yOffset) : MODEL_IDENTITY;
+}
+
+function moonFlagModel() {
+  return moonSceneModel(MOON.flagScale, MOON.flagYOffset);
+}
+
+function setModelMatrix(mat) {
+  gl.uniformMatrix4fv(loc.uModel, false, mat || MODEL_IDENTITY);
+}
+
 // ─── Camera (orbit + pan + zoom + roll) ──────────────────────
 let showPole = true; // hidden in Export tab + all recordings
+let poleColorOverride = null;
 const cam = {
   tgtTheta: 0.0, tgtPhi: 0.12, tgtDist: 5,
   curTheta: 0.0, curPhi: 0.12, curDist: 5,
@@ -1303,6 +1610,118 @@ const cam = {
   tgtTarget: [0, 0, 0],
   target: [0, 0, 0],
 };
+let sceneViewMode = 'default';
+
+const LIGHTNING = {
+  active: false,
+  intensity: 0,
+  next: 0,
+  burst: 0,
+  bolts: [],
+};
+
+function setLightningActive(active) {
+  LIGHTNING.active = active;
+  LIGHTNING.intensity = active ? 0.12 : 0;
+  LIGHTNING.next = active ? 0.12 : 0;
+  LIGHTNING.burst = 0;
+  LIGHTNING.bolts = [];
+}
+
+function updateLightning(dt) {
+  if (!LIGHTNING.active) {
+    LIGHTNING.intensity = 0;
+    LIGHTNING.bolts = [];
+    return;
+  }
+  for (const bolt of LIGHTNING.bolts) bolt.age += dt;
+  LIGHTNING.bolts = LIGHTNING.bolts.filter(bolt => bolt.age < bolt.life);
+  LIGHTNING.next -= dt;
+  if (LIGHTNING.next <= 0) {
+    LIGHTNING.intensity = Math.max(LIGHTNING.intensity, 0.72 + Math.random() * 0.38);
+    LIGHTNING.bolts.push(createLightningBolt());
+    if (Math.random() < 0.34) LIGHTNING.bolts.push(createLightningBolt());
+    if (LIGHTNING.bolts.length > 6) LIGHTNING.bolts.splice(0, LIGHTNING.bolts.length - 6);
+    if (LIGHTNING.burst > 0) {
+      LIGHTNING.burst--;
+      LIGHTNING.next = 0.05 + Math.random() * 0.11;
+    } else {
+      LIGHTNING.burst = Math.random() < 0.58 ? 1 + Math.floor(Math.random() * 2) : 0;
+      LIGHTNING.next = 0.45 + Math.random() * 1.35;
+    }
+  }
+  LIGHTNING.intensity *= Math.exp(-dt * 11.5);
+}
+
+function lightningValue() {
+  return clamp(LIGHTNING.intensity, 0, 1);
+}
+
+function midpointBoltPath(a, b, depth, displacement) {
+  if (depth <= 0) return [a, b];
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const bend = (Math.random() - 0.5) * displacement;
+  const drift = (Math.random() - 0.5) * displacement * 0.35;
+  const mid = {
+    x: (a.x + b.x) * 0.5 + (-dy / len) * bend + dx * drift,
+    y: (a.y + b.y) * 0.5 + ( dx / len) * bend + dy * drift,
+  };
+  const left = midpointBoltPath(a, mid, depth - 1, displacement * 0.58);
+  const right = midpointBoltPath(mid, b, depth - 1, displacement * 0.58);
+  return left.slice(0, -1).concat(right);
+}
+
+function createLightningBolt() {
+  const start = { x: -0.82 + Math.random() * 1.64, y: 1.08 };
+  const end = {
+    x: clamp(start.x + (Math.random() - 0.5) * 0.92, -0.92, 0.92),
+    y: -0.22 - Math.random() * 0.58,
+  };
+  const points = midpointBoltPath(start, end, 6, 0.42);
+  const branches = [];
+  for (let i = 4; i < points.length - 4; i += 3 + Math.floor(Math.random() * 4)) {
+    if (Math.random() > 0.38) continue;
+    const p = points[i];
+    const q = points[Math.min(points.length - 1, i + 1)];
+    const dir = { x: q.x - p.x, y: q.y - p.y };
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const len = 0.16 + Math.random() * 0.34;
+    const tip = {
+      x: clamp(p.x + (-dir.y * 1.8 + dir.x * 0.25) * side + (Math.random() - 0.5) * len, -1.06, 1.06),
+      y: clamp(p.y + ( dir.x * 1.8 + dir.y * 0.25) * side - Math.random() * len * 0.55, -1.0, 1.05),
+    };
+    branches.push(midpointBoltPath(p, tip, 4, 0.16));
+  }
+  return {
+    points,
+    branches,
+    age: 0,
+    life: 0.26 + Math.random() * 0.14,
+  };
+}
+
+function rotateMoonScene(delta) {
+  if (!MOON.active) return;
+  MOON.yawTarget += delta;
+}
+
+function updateMoonScene(dt) {
+  if (!MOON.active) return;
+  const activeDrag = orbiting || (typeof orbitDragging !== 'undefined' && orbitDragging);
+  if (!activeDrag) MOON.yawTarget += MOON.autoSpin * dt;
+  const lf = 1 - Math.pow(0.0008, dt);
+  MOON.yaw += (MOON.yawTarget - MOON.yaw) * lf;
+}
+
+function applySceneFrameDistance() {
+  if (sceneViewMode === 'storm') {
+    cam.tgtDist = clamp(Math.max(cam.tgtDist * 1.28, 5.8), 1.5, 20.0);
+  } else if (sceneViewMode === 'moon') {
+    cam.tgtDist = clamp(Math.max(cam.tgtDist * 1.85, 9.4), 1.5, 20.0);
+  }
+}
 
 // Up vector rolled around the view axis (Rodrigues; world-up = [0,1,0])
 function rolledUp(eye, target, roll) {
@@ -1336,6 +1755,7 @@ function autoFrame() {
   const totalH = flagH * 1.5;
   const fitHalf = Math.max(totalH * 0.55, (flagW * 0.65) / aspect);
   cam.tgtDist = clamp((fitHalf / halfTan) * 1.15, 1.5, 20.0);
+  applySceneFrameDistance();
 }
 
 function updateCamera(dt) {
@@ -1344,7 +1764,7 @@ function updateCamera(dt) {
   // Skip while actively dragging (canvas orbit or orbit ball) since those
   // paths drive tgtTheta directly; otherwise we'd double-integrate.
   const actDrag = orbiting || (typeof orbitDragging !== 'undefined' && orbitDragging);
-  if (!actDrag && Math.abs(orbitAngularVel) > 0.05) {
+  if (!MOON.active && !actDrag && Math.abs(orbitAngularVel) > 0.05) {
     cam.tgtTheta += orbitAngularVel * dt;
   }
   cam.curTheta += (cam.tgtTheta - cam.curTheta) * lf;
@@ -1374,7 +1794,12 @@ let touchMode = 'none', touchCenter = [0, 0], touchDist = 0;
 
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('mousedown', e => {
-  if (e.button === 0) { panning = true; lastM = [e.clientX, e.clientY]; e.preventDefault(); }
+  if (e.button === 0) {
+    if (MOON.active) orbiting = true;
+    else panning = true;
+    lastM = [e.clientX, e.clientY];
+    e.preventDefault();
+  }
   else if (e.button === 2) { orbiting = true; lastM = [e.clientX, e.clientY]; e.preventDefault(); }
 });
 window.addEventListener('mouseup', () => { orbiting = false; panning = false; });
@@ -1383,9 +1808,15 @@ window.addEventListener('mousemove', e => {
   if (panning) {
     panCamera(dx, dy);
   } else if (orbiting) {
-    cam.tgtTheta -= dx * 0.006;
-    cam.tgtPhi = clamp(cam.tgtPhi + dy * 0.005, -1.45, 1.45);
-    orbitAngularVel = -dx * 0.006 / 0.016;
+    const thetaDelta = -dx * 0.006;
+    if (MOON.active) {
+      rotateMoonScene(-thetaDelta);
+      orbitAngularVel = thetaDelta / 0.016;
+    } else {
+      cam.tgtTheta += thetaDelta;
+      cam.tgtPhi = clamp(cam.tgtPhi + dy * 0.005, -1.45, 1.45);
+      orbitAngularVel = thetaDelta / 0.016;
+    }
   } else { return; }
   lastM = [e.clientX, e.clientY];
 });
@@ -1433,9 +1864,15 @@ canvas.addEventListener('touchstart', e => {
 canvas.addEventListener('touchmove', e => {
   if (touchMode === 'orbit' && e.touches.length === 1) {
     const dx = e.touches[0].clientX - lastM[0], dy = e.touches[0].clientY - lastM[1];
-    cam.tgtTheta -= dx * 0.006;
-    cam.tgtPhi = clamp(cam.tgtPhi + dy * 0.005, -1.45, 1.45);
-    orbitAngularVel = -dx * 0.006 / 0.016;
+    const thetaDelta = -dx * 0.006;
+    if (MOON.active) {
+      rotateMoonScene(-thetaDelta);
+      orbitAngularVel = thetaDelta / 0.016;
+    } else {
+      cam.tgtTheta += thetaDelta;
+      cam.tgtPhi = clamp(cam.tgtPhi + dy * 0.005, -1.45, 1.45);
+      orbitAngularVel = thetaDelta / 0.016;
+    }
     lastM = [e.touches[0].clientX, e.touches[0].clientY];
     e.preventDefault();
   } else if (touchMode === 'zoom' && e.touches.length >= 2) {
@@ -1464,6 +1901,49 @@ canvas.addEventListener('dblclick', () => {
   cam.tgtTarget[0] = 0; cam.tgtTarget[1] = 0; cam.tgtTarget[2] = 0;
   autoFrame();
 });
+
+function clearLookSceneEffects() {
+  MOON.active = false;
+  MOON.yaw = 0;
+  MOON.yawTarget = 0;
+  setLightningActive(false);
+  sceneViewMode = 'default';
+}
+
+function restoreDefaultSceneCamera() {
+  sceneViewMode = 'default';
+  cam.tgtTheta = 0.0;
+  cam.tgtPhi = 0.12;
+  cam.tgtRoll = 0.0;
+  cam.tgtTarget[0] = 0;
+  cam.tgtTarget[1] = 0;
+  cam.tgtTarget[2] = 0;
+  autoFrame();
+}
+
+function applyStormCamera() {
+  sceneViewMode = 'storm';
+  cam.tgtTheta = -0.16;
+  cam.tgtPhi = 0.07;
+  cam.tgtRoll = -0.018;
+  cam.tgtTarget[0] = 0.28;
+  cam.tgtTarget[1] = 0.08;
+  cam.tgtTarget[2] = 0.0;
+  autoFrame();
+}
+
+function applyMoonCamera() {
+  sceneViewMode = 'moon';
+  MOON.yaw = -0.18;
+  MOON.yawTarget = -0.18;
+  cam.tgtTheta = -0.06;
+  cam.tgtPhi = 0.035;
+  cam.tgtRoll = 0.0;
+  cam.tgtTarget[0] = 0.74;
+  cam.tgtTarget[1] = 0.36;
+  cam.tgtTarget[2] = 0.0;
+  autoFrame();
+}
 
 // ─── Renderer ────────────────────────────────────────────────
 function resize() {
@@ -1507,27 +1987,135 @@ let unlitMode = false;
 let clothMode = 'full';
 let gentleTime = 0; // drives the slow drift of the slight-wave live preview
 
+function strokePathTriangles(path, widthPx, drawW, drawH) {
+  if (!path || path.length < 2) return null;
+  const sx = drawW * 0.5;
+  const sy = drawH * 0.5;
+  const verts = [];
+  for (let i = 0; i < path.length - 1; i++) {
+    const a = path[i];
+    const b = path[i + 1];
+    const dx = (b.x - a.x) * sx;
+    const dy = (b.y - a.y) * sy;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.001) continue;
+    const ox = (-dy / len) * widthPx / sx;
+    const oy = ( dx / len) * widthPx / sy;
+    verts.push(
+      a.x - ox, a.y - oy,
+      a.x + ox, a.y + oy,
+      b.x - ox, b.y - oy,
+      b.x - ox, b.y - oy,
+      a.x + ox, a.y + oy,
+      b.x + ox, b.y + oy,
+    );
+  }
+  return verts.length ? new Float32Array(verts) : null;
+}
+
+function drawLightningPath(path, widthPx, r, g, b, a, drawW, drawH) {
+  const verts = strokePathTriangles(path, widthPx, drawW, drawH);
+  if (!verts) return;
+  gl.uniform4f(boltLoc.uColor, r, g, b, a);
+  gl.bindBuffer(gl.ARRAY_BUFFER, boltBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STREAM_DRAW);
+  gl.vertexAttribPointer(boltLoc.aP, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, verts.length / 2);
+}
+
+function drawLightningBolts(drawW, drawH) {
+  if (!LIGHTNING.active || !LIGHTNING.bolts.length) return;
+  gl.useProgram(boltProg);
+  gl.enableVertexAttribArray(boltLoc.aP);
+  gl.bindBuffer(gl.ARRAY_BUFFER, boltBuf);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+  gl.depthMask(false);
+  for (const bolt of LIGHTNING.bolts) {
+    const t = clamp(bolt.age / bolt.life, 0, 1);
+    const fade = Math.pow(1 - t, 1.35) * (0.82 + Math.sin(t * Math.PI * 8.0) * 0.18);
+    for (const branch of bolt.branches) {
+      drawLightningPath(branch, 17, 0.20, 0.36, 1.00, 0.12 * fade, drawW, drawH);
+      drawLightningPath(branch, 5, 0.72, 0.86, 1.00, 0.34 * fade, drawW, drawH);
+      drawLightningPath(branch, 1.6, 1.00, 1.00, 1.00, 0.80 * fade, drawW, drawH);
+    }
+    drawLightningPath(bolt.points, 46, 0.12, 0.28, 1.00, 0.11 * fade, drawW, drawH);
+    drawLightningPath(bolt.points, 17, 0.32, 0.55, 1.00, 0.24 * fade, drawW, drawH);
+    drawLightningPath(bolt.points, 5.2, 0.78, 0.90, 1.00, 0.62 * fade, drawW, drawH);
+    drawLightningPath(bolt.points, 1.7, 1.00, 1.00, 1.00, 0.96 * fade, drawW, drawH);
+  }
+  gl.depthMask(true);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.disableVertexAttribArray(boltLoc.aP);
+}
+
+function drawMoonSurface() {
+  if (!MOON.active) return;
+  setModelMatrix(moonSceneModel(1));
+  gl.uniform1i(loc.uIsGlass, 0);
+  gl.uniform1f(loc.uMatte, 1.0);
+  gl.uniform1f(loc.uUnlit, 0.0);
+  gl.uniform1f(loc.uMoonSurface, 1.0);
+  gl.uniform1f(loc.uAmbient, 0.46);
+  gl.uniform3f(loc.uColor, MOON.color[0], MOON.color[1], MOON.color[2]);
+  gl.uniform1f(loc.uAlpha, 1.0);
+  gl.uniform1i(loc.uHasTex, 0);
+  setMaskUniforms(false);
+  gl.bindBuffer(gl.ARRAY_BUFFER, moonPosBuf);
+  gl.enableVertexAttribArray(loc.aPos);
+  gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, moonNrmBuf);
+  gl.enableVertexAttribArray(loc.aNrm);
+  gl.vertexAttribPointer(loc.aNrm, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, moonUVBuf);
+  gl.enableVertexAttribArray(loc.aUV);
+  gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, moonIdxBuf);
+  gl.uniform1f(loc.uFace, 1.0);
+  gl.disable(gl.CULL_FACE);
+  gl.drawElements(gl.TRIANGLES, moonIdxCount, gl.UNSIGNED_INT, 0);
+}
+
+function drawPoleMesh() {
+  setModelMatrix(MOON.active ? moonFlagModel() : MODEL_IDENTITY);
+  gl.uniform1i(loc.uIsGlass, 1);
+  gl.uniform1f(loc.uMoonSurface, 0.0);
+  gl.uniform1f(loc.uAmbient, MOON.active ? 1.05 : 0.38);
+  const pd = 0.88;
+  if (poleColorOverride) gl.uniform3f(loc.uColor, poleColorOverride[0], poleColorOverride[1], poleColorOverride[2]);
+  else gl.uniform3f(loc.uColor, SIM.bgColor[0] * pd, SIM.bgColor[1] * pd, SIM.bgColor[2] * pd);
+  gl.uniform1f(loc.uAlpha, 1.0);
+  gl.uniform1i(loc.uHasTex, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, polePosBuf);
+  gl.enableVertexAttribArray(loc.aPos);
+  gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, poleNrmBuf);
+  gl.enableVertexAttribArray(loc.aNrm);
+  gl.vertexAttribPointer(loc.aNrm, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, poleUVBuf);
+  gl.enableVertexAttribArray(loc.aUV);
+  gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, poleIdxBuf);
+  gl.uniform1f(loc.uFace, 1.0);
+  gl.drawElements(gl.TRIANGLES, poleIdxCount, gl.UNSIGNED_INT, 0);
+}
+
 function render(dt) {
+  updateLightning(dt);
+  updateLiveVideoTexture();
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
   // ── HDRI background ──
   gl.disable(gl.DEPTH_TEST);
-  gl.useProgram(bgProg);
-  gl.uniform3f(bgLoc.uBg, SIM.bgColor[0], SIM.bgColor[1], SIM.bgColor[2]);
-  gl.disableVertexAttribArray(loc.aNrm); // avoid leftover state
-  gl.disableVertexAttribArray(loc.aUV);
-  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-  gl.enableVertexAttribArray(bgLoc.aP);
-  gl.vertexAttribPointer(bgLoc.aP, 2, gl.FLOAT, false, 0, 0);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-  gl.disableVertexAttribArray(bgLoc.aP);
+  drawBackgroundQuad(canvas.width, canvas.height);
+  drawLightningBolts(canvas.width, canvas.height);
   gl.enable(gl.DEPTH_TEST);
 
   // ── Scene ──
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-  const ld = [0.5, 0.8, 0.35];
+  const ld = MOON.active ? [-0.32, 1.0, 0.58] : [0.5, 0.8, 0.35];
   const ll = Math.sqrt(ld[0] ** 2 + ld[1] ** 2 + ld[2] ** 2);
   const e = eyePos();
 
@@ -1538,30 +2126,20 @@ function render(dt) {
   gl.uniform3f(loc.uLight, ld[0] / ll, ld[1] / ll, ld[2] / ll);
   gl.uniform3f(loc.uEye, e[0], e[1], e[2]);
   gl.uniform1f(loc.uAmbient, 0.38);
+  gl.uniform1f(loc.uLightning, lightningValue());
+
+  drawMoonSurface();
 
   // Draw pole — only in Studio/Wind tabs (hidden in Export preview and any recording).
   if (showPole && !someRecording) {
-    gl.uniform1i(loc.uIsGlass, 1);
-    const pd = 0.88;
-    gl.uniform3f(loc.uColor, SIM.bgColor[0] * pd, SIM.bgColor[1] * pd, SIM.bgColor[2] * pd);
-    gl.uniform1f(loc.uAlpha, 1.0);
-    gl.uniform1i(loc.uHasTex, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, polePosBuf);
-    gl.enableVertexAttribArray(loc.aPos);
-    gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, poleNrmBuf);
-    gl.enableVertexAttribArray(loc.aNrm);
-    gl.vertexAttribPointer(loc.aNrm, 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, poleUVBuf);
-    gl.enableVertexAttribArray(loc.aUV);
-    gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, poleIdxBuf);
-    gl.uniform1f(loc.uFace, 1.0);
-    gl.drawElements(gl.TRIANGLES, poleIdxCount, gl.UNSIGNED_INT, 0);
+    drawPoleMesh();
   }
 
   // Draw flag (double-sided)
+  setModelMatrix(MOON.active ? moonFlagModel() : MODEL_IDENTITY);
   gl.uniform1i(loc.uIsGlass, 0);
+  gl.uniform1f(loc.uMoonSurface, 0.0);
+  gl.uniform1f(loc.uAmbient, MOON.active ? 1.05 : 0.38);
   gl.uniform1f(loc.uMatte, matteMode ? 1.0 : 0.0);
   gl.uniform1f(loc.uUnlit, unlitMode ? 1.0 : 0.0);
   gl.uniform3f(loc.uColor, SIM.flagColor[0], SIM.flagColor[1], SIM.flagColor[2]);
@@ -1606,12 +2184,58 @@ const textCanvas = document.createElement('canvas');
 const textCtx = textCanvas.getContext('2d');
 let currentText = '', currentFontSize = 120, currentLineHeight = 0.85;
 let currentTextColor = '#016F17';
-let currentFont = 'jubilee'; // 'jubilee' or 'diatype'
+let currentFont = 'jubilee'; // bundled key or local:<postscript/name>
 let textLayout = 'repeat'; // 'repeat' | 'centered' | 'titleCard'
 let textLayoutUserSet = false; // true once the user explicitly picks a layout
 let textTexActive = false;
 let textScrollSpeed = 0; // 0 = static, >0 = pixels/sec scroll
 let textScrollTime = 0;
+
+const FONT_DEFS = new Map([
+  ['jubilee', {
+    label: 'OT Jubilee Platinum',
+    family: 'OT Jubilee Platinum',
+    style: 'italic',
+    weight: 200,
+    fallback: '"Instrument Serif", serif',
+    defaultLayout: 'repeat',
+  }],
+  ['diatype', {
+    label: 'ABC Diatype',
+    family: 'ABC Diatype',
+    style: 'normal',
+    weight: 700,
+    fallback: 'sans-serif',
+    defaultLayout: 'centered',
+  }],
+]);
+const LOCAL_FONT_PREFIX = 'local:';
+
+function quoteFontFamily(name) {
+  return '"' + String(name).replace(/["\\]/g, '\\$&') + '"';
+}
+
+function fontCSS(fontKey, size) {
+  const def = FONT_DEFS.get(fontKey) || FONT_DEFS.get('diatype');
+  const family = quoteFontFamily(def.family);
+  const fallback = def.fallback ? ', ' + def.fallback : '';
+  return `${def.style || 'normal'} ${def.weight || 400} ${size}px ${family}${fallback}`;
+}
+
+function defaultLayoutForFont(fontKey) {
+  return FONT_DEFS.get(fontKey)?.defaultLayout || 'centered';
+}
+
+function inferLocalFontWeight(style) {
+  const s = String(style || '').toLowerCase();
+  if (s.includes('black') || s.includes('heavy')) return 900;
+  if (s.includes('extra bold') || s.includes('extrabold')) return 800;
+  if (s.includes('bold')) return 700;
+  if (s.includes('medium')) return 500;
+  if (s.includes('light')) return 300;
+  if (s.includes('thin')) return 200;
+  return 400;
+}
 
 // Name-tag blocks — four centered blocks (Jubilee, Diatype, Diatype, Diatype).
 // y is the vertical center as a fraction of flag height (0 = top, 1 = bottom).
@@ -1662,8 +2286,7 @@ function generateTextTexture(scrollOffset) {
     const sizeScale = texW / 800;
 
     const setBlockFont = (font, size) => {
-      if (font === 'diatype') textCtx.font = `bold ${size}px "ABC Diatype", sans-serif`;
-      else                    textCtx.font = `italic 200 ${size}px "OT Jubilee Platinum", "Instrument Serif", serif`;
+      textCtx.font = fontCSS(font, size);
     };
 
     for (let bi = 0; bi < titleBlocks.length; bi++) {
@@ -1704,11 +2327,7 @@ function generateTextTexture(scrollOffset) {
   }
 
   const fontSize = currentFontSize * (texW / 800);
-  if (currentFont === 'diatype') {
-    textCtx.font = `bold ${fontSize}px "ABC Diatype", sans-serif`;
-  } else {
-    textCtx.font = `italic 200 ${fontSize}px "OT Jubilee Platinum", "Instrument Serif", serif`;
-  }
+  textCtx.font = fontCSS(currentFont, fontSize);
   textCtx.fillStyle = currentTextColor;
   textCtx.textBaseline = 'middle';
 
@@ -1807,8 +2426,38 @@ function breakLongWord(ctx, word, maxWidth) {
 
 // ─── Image handling ──────────────────────────────────────────
 let imageTexActive = false, loadedImage = null, fitMode = 'fit';
+let liveVideoActive = false;
 const imgCanvas = document.createElement('canvas');
 const imgCtx = imgCanvas.getContext('2d');
+
+function drawMediaToTexture(source, maxDim = liveTextureMaxDim()) {
+  let texW, texH;
+  if (aspectW >= aspectH) { texW = maxDim; texH = Math.round(texW * (aspectH / aspectW)); }
+  else                    { texH = maxDim; texW = Math.round(texH * (aspectW / aspectH)); }
+  imgCanvas.width = texW; imgCanvas.height = texH;
+  imgCtx.clearRect(0, 0, texW, texH);
+  if (fitMode === 'stretch') {
+    imgCtx.drawImage(source, 0, 0, texW, texH);
+  } else {
+    const sourceW = source.videoWidth || source.naturalWidth || source.width;
+    const sourceH = source.videoHeight || source.naturalHeight || source.height;
+    const sourceAsp = sourceW / sourceH;
+    const canAsp = texW / texH;
+    let dw, dh;
+    if (sourceAsp > canAsp) { dh = texH; dw = texH * sourceAsp; }
+    else { dw = texW; dh = texW / sourceAsp; }
+    imgCtx.drawImage(source, (texW - dw) / 2, (texH - dh) / 2, dw, dh);
+  }
+  updateTexturePixels(imgCanvas);
+  imageTexActive = true;
+  textTexActive = false;
+}
+
+function updateLiveVideoTexture() {
+  if (!liveVideoActive || !previewVideo || previewVideo.readyState < 2) return;
+  if (textLayout === 'titleCard' || currentText.trim()) return;
+  drawMediaToTexture(previewVideo, Math.min(LIVE_VIDEO_TEXTURE_MAX_DIM, liveTextureMaxDim()));
+}
 
 function refreshTexture() {
   const text = currentText.trim();
@@ -1820,27 +2469,11 @@ function refreshTexture() {
   } else if (text) {
     // Text only (even if image is loaded, we disable it while text is active)
     generateTextTexture(textScrollTime);
+  } else if (liveVideoActive) {
+    updateLiveVideoTexture();
   } else if (loadedImage) {
     // No text — show image
-    const MAX_DIM = liveTextureMaxDim();
-    let texW, texH;
-    if (aspectW >= aspectH) { texW = MAX_DIM; texH = Math.round(texW * (aspectH / aspectW)); }
-    else                    { texH = MAX_DIM; texW = Math.round(texH * (aspectW / aspectH)); }
-    imgCanvas.width = texW; imgCanvas.height = texH;
-    imgCtx.clearRect(0, 0, texW, texH);
-    if (fitMode === 'stretch') {
-      imgCtx.drawImage(loadedImage, 0, 0, texW, texH);
-    } else {
-      // Cover: fill entire flag, crop excess (no letterbox)
-      const imgAsp = loadedImage.width / loadedImage.height;
-      const canAsp = texW / texH;
-      let dw, dh;
-      if (imgAsp > canAsp) { dh = texH; dw = texH * imgAsp; }
-      else { dw = texW; dh = texW / imgAsp; }
-      imgCtx.drawImage(loadedImage, (texW - dw) / 2, (texH - dh) / 2, dw, dh);
-    }
-    loadTexture(imgCanvas);
-    imageTexActive = true; textTexActive = false;
+    drawMediaToTexture(loadedImage);
   } else {
     if (hasTex) { removeTexture(); textTexActive = false; imageTexActive = false; }
   }
@@ -1890,8 +2523,41 @@ function softRatioUpdate(aw, ah) {
   autoFrame();
 }
 
+let ratioTransitionRaf = null;
+function stopRatioTransition() {
+  if (ratioTransitionRaf) {
+    cancelAnimationFrame(ratioTransitionRaf);
+    ratioTransitionRaf = null;
+  }
+}
+
+function smoothRatioUpdate(aw, ah, duration = 420) {
+  stopRatioTransition();
+  const fromW = aspectW;
+  const fromH = aspectH;
+  if (Math.abs(fromW - aw) < 0.001 && Math.abs(fromH - ah) < 0.001) {
+    softRatioUpdate(aw, ah);
+    return;
+  }
+  const start = performance.now();
+  const ease = t => t * t * (3 - 2 * t);
+  const step = now => {
+    const t = clamp((now - start) / duration, 0, 1);
+    const e = ease(t);
+    softRatioUpdate(fromW + (aw - fromW) * e, fromH + (ah - fromH) * e);
+    if (t < 1) {
+      ratioTransitionRaf = requestAnimationFrame(step);
+    } else {
+      ratioTransitionRaf = null;
+      softRatioUpdate(aw, ah);
+    }
+  };
+  ratioTransitionRaf = requestAnimationFrame(step);
+}
+
 // ─── Full rebuild ────────────────────────────────────────────
 function fullRebuild(aw, ah, smooth) {
+  stopRatioTransition();
   // Ratio presets / Reset All / print presets start from a clean rectangle —
   // the grid is rebuilt from scratch below, so only mask + UI need clearing.
   clearShapeState();
@@ -1972,7 +2638,13 @@ ratioRow.addEventListener('click', e => {
   const [h, w] = r.split(':').map(Number);
   customAW = w; customAH = h;
   updateMiniPreview();
-  fullRebuild(w, h);
+  const hadShape = isCustomShape();
+  clearShapeState();
+  if (hadShape) {
+    buildMesh();
+    uploadStaticBuffers();
+  }
+  smoothRatioUpdate(w, h);
 });
 const miniFlagRect = document.getElementById('miniFlagRect');
 const miniFlagStage = document.getElementById('miniFlagStage');
@@ -2243,14 +2915,16 @@ slider('windStrength', 'windVal', v => { SIM.windStrength = +v; return v; });
 slider('turbulence', 'turbVal', v => { SIM.turbulence = +v; return v; });
 slider('gravity', 'gravityVal', v => { SIM.gravity = +v / 10; return (+v / 10).toFixed(1); });
 
-// Fabric model — Classic / Realistic segmented control
+// Fabric model stays realistic by default; the old Classic/Realistic UI was removed.
 const fabricModeRow = document.getElementById('fabricModeRow');
-fabricModeRow.addEventListener('click', e => {
-  const btn = e.target.closest('[data-mode]');
-  if (!btn || btn.classList.contains('active')) return;
-  setActiveButton(fabricModeRow, '[data-mode]', btn);
-  setFabricMode(btn.dataset.mode);
-});
+if (fabricModeRow) {
+  fabricModeRow.addEventListener('click', e => {
+    const btn = e.target.closest('[data-mode]');
+    if (!btn || btn.classList.contains('active')) return;
+    setActiveButton(fabricModeRow, '[data-mode]', btn);
+    setFabricMode(btn.dataset.mode);
+  });
+}
 
 // Weather preset — Normal / Storm segmented control
 const weatherRow = document.getElementById('weatherRow');
@@ -2258,16 +2932,32 @@ let _savedWeather = null;
 function setWeather(mode) {
   const windIn = document.getElementById('windStrength');
   const turbIn = document.getElementById('turbulence');
+  const gravIn = document.getElementById('gravity');
   if (mode === 'storm' && WEATHER.mode !== 'storm') {
-    _savedWeather = { wind: windIn.value, turb: turbIn.value };
-    windIn.value = 280; windIn.dispatchEvent(new Event('input'));
-    turbIn.value = 40;  turbIn.dispatchEvent(new Event('input'));
-    WEATHER.angleDriftMax = 48;
-    WEATHER.angleDriftForce = 2.2;
+    _savedWeather = {
+      wind: windIn.value,
+      turb: turbIn.value,
+      gravity: gravIn.value,
+      stiffness: SIM.stiffness,
+      damping: SIM.damping,
+      substeps: SUBSTEPS,
+    };
+    windIn.value = 205; windIn.dispatchEvent(new Event('input'));
+    turbIn.value = 64;  turbIn.dispatchEvent(new Event('input'));
+    gravIn.value = -8;  gravIn.dispatchEvent(new Event('input'));
+    SIM.stiffness = 66;
+    SIM.damping = 94;
+    SUBSTEPS = 2;
+    WEATHER.angleDriftMax = 34;
+    WEATHER.angleDriftForce = 1.45;
   } else if (mode === 'normal' && WEATHER.mode === 'storm') {
     if (_savedWeather) {
       windIn.value = _savedWeather.wind; windIn.dispatchEvent(new Event('input'));
       turbIn.value = _savedWeather.turb; turbIn.dispatchEvent(new Event('input'));
+      gravIn.value = _savedWeather.gravity; gravIn.dispatchEvent(new Event('input'));
+      SIM.stiffness = _savedWeather.stiffness;
+      SIM.damping = _savedWeather.damping;
+      SUBSTEPS = _savedWeather.substeps;
       _savedWeather = null;
     }
     WEATHER.angleDriftMax = 24;
@@ -2292,21 +2982,77 @@ attachRow.addEventListener('click', e => {
   applyPinning();
 });
 
-// Font picker — preload Diatype so it's ready when user switches
-document.fonts.load('bold 48px "ABC Diatype"').catch(() => {});
-const fontRow = document.getElementById('fontRow');
-fontRow.addEventListener('click', e => {
-  const btn = e.target.closest('[data-font]');
-  if (!btn || btn.classList.contains('active')) return;
-  setActiveButton(fontRow, '[data-font]', btn);
-  currentFont = btn.dataset.font;
-  // Unless the user has explicitly picked a layout, flip to a sensible default:
-  // Jubilee → Repeat, Diatype → Centered.
-  if (!textLayoutUserSet) {
-    setTextLayout(currentFont === 'diatype' ? 'centered' : 'repeat');
+// Font picker — bundled fonts first, optional local fonts via browser permission.
+document.fonts.load(fontCSS('diatype', 48)).catch(() => {});
+document.fonts.load(fontCSS('jubilee', 48)).catch(() => {});
+const fontSelect = document.getElementById('fontSelect');
+const fontScanBtn = document.getElementById('fontScanBtn');
+
+function syncFontSelectOptions() {
+  if (!fontSelect) return;
+  const previous = fontSelect.value || currentFont;
+  fontSelect.textContent = '';
+  for (const [key, def] of FONT_DEFS) {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = def.label;
+    fontSelect.appendChild(option);
   }
+  fontSelect.value = FONT_DEFS.has(previous) ? previous : currentFont;
+}
+
+function setTextFont(fontKey) {
+  if (!FONT_DEFS.has(fontKey)) fontKey = 'diatype';
+  currentFont = fontKey;
+  if (fontSelect) fontSelect.value = fontKey;
+  if (!textLayoutUserSet) setTextLayout(defaultLayoutForFont(fontKey));
+  document.fonts.load(fontCSS(fontKey, 48)).catch(() => {});
   refreshTexture();
-});
+}
+
+async function loadLocalFonts() {
+  if (!fontScanBtn) return;
+  if (!('queryLocalFonts' in window)) {
+    fontScanBtn.textContent = 'No local';
+    setTimeout(() => { fontScanBtn.textContent = 'Local'; }, 1200);
+    return;
+  }
+  const oldLabel = fontScanBtn.textContent;
+  fontScanBtn.textContent = 'Loading';
+  fontScanBtn.disabled = true;
+  try {
+    const fonts = await window.queryLocalFonts();
+    const seen = new Set();
+    for (const font of fonts) {
+      const family = font.family || font.fullName || font.postscriptName;
+      if (!family) continue;
+      const style = font.style || '';
+      const identity = (font.postscriptName || font.fullName || family) + ':' + style;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      const key = LOCAL_FONT_PREFIX + identity;
+      FONT_DEFS.set(key, {
+        label: font.fullName || [family, style].filter(Boolean).join(' '),
+        family,
+        style: /italic|oblique/i.test(style) ? 'italic' : 'normal',
+        weight: inferLocalFontWeight(style),
+        fallback: 'sans-serif',
+        defaultLayout: 'centered',
+      });
+    }
+    syncFontSelectOptions();
+    fontSelect.value = currentFont;
+  } catch (err) {
+    console.warn('Local font access failed:', err);
+  } finally {
+    fontScanBtn.disabled = false;
+    fontScanBtn.textContent = oldLabel;
+  }
+}
+
+syncFontSelectOptions();
+fontSelect?.addEventListener('change', () => setTextFont(fontSelect.value));
+fontScanBtn?.addEventListener('click', loadLocalFonts);
 
 // Layout pill-row (Repeat / Centered)
 const layoutRow = document.getElementById('layoutRow');
@@ -2354,7 +3100,7 @@ function setSquareRatio() {
   customAW = 5; customAH = 5;
   ensureCustomMode();
   updateMiniPreview();
-  softRatioUpdate(5, 5);
+  smoothRatioUpdate(5, 5);
 }
 
 // Text input
@@ -2379,38 +3125,357 @@ function hexToRgb(hex) {
   return [parseInt(hex.substr(1,2),16)/255, parseInt(hex.substr(3,2),16)/255, parseInt(hex.substr(5,2),16)/255];
 }
 function isValidHex(s) { return /^#[0-9A-Fa-f]{6}$/.test(s); }
+function setPoleColorOverride(hex) {
+  poleColorOverride = hex && isValidHex(hex) ? hexToRgb(hex) : null;
+}
 
 // Text color (swatch + hex input)
 const textColorIn = document.getElementById('textColor');
 const textColorHex = document.getElementById('textColorHex');
+function setTextColor(hex, shouldRefresh = true) {
+  if (!isValidHex(hex)) return;
+  currentTextColor = hex.toUpperCase();
+  textColorIn.value = currentTextColor;
+  textColorHex.value = currentTextColor;
+  if (shouldRefresh) refreshTexture();
+}
 textColorIn.addEventListener('input', () => {
-  currentTextColor = textColorIn.value;
-  textColorHex.value = textColorIn.value.toUpperCase();
-  refreshTexture();
+  setTextColor(textColorIn.value);
 });
 textColorHex.addEventListener('input', () => {
   let v = textColorHex.value;
   if (v[0] !== '#') v = '#' + v;
-  if (isValidHex(v)) { currentTextColor = v; textColorIn.value = v; refreshTexture(); }
+  if (isValidHex(v)) setTextColor(v);
 });
 
 // Color pickers
 const bgColorIn = document.getElementById('bgColor');
 const bgColorHex = document.getElementById('bgColorHex');
+function setBackgroundColor(hex) {
+  if (!isValidHex(hex)) return;
+  const v = hex.toUpperCase();
+  const c = hexToRgb(v);
+  SIM.bgColor[0] = c[0]; SIM.bgColor[1] = c[1]; SIM.bgColor[2] = c[2];
+  if (!MOON.active) {
+    SIM.flagColor[0] = c[0]; SIM.flagColor[1] = c[1]; SIM.flagColor[2] = c[2];
+  }
+  bgColorIn.value = v;
+  bgColorHex.value = v;
+}
+
+function setFlagColorOnly(hex) {
+  if (!isValidHex(hex)) return;
+  const c = hexToRgb(hex.toUpperCase());
+  SIM.flagColor[0] = c[0]; SIM.flagColor[1] = c[1]; SIM.flagColor[2] = c[2];
+}
 
 bgColorIn.addEventListener('input', () => {
-  const c = hexToRgb(bgColorIn.value);
-  SIM.bgColor[0] = c[0]; SIM.bgColor[1] = c[1]; SIM.bgColor[2] = c[2];
-  bgColorHex.value = bgColorIn.value.toUpperCase();
+  setBackgroundColor(bgColorIn.value);
 });
 bgColorHex.addEventListener('input', () => {
   let v = bgColorHex.value;
   if (v[0] !== '#') v = '#' + v;
-  if (isValidHex(v)) {
-    bgColorIn.value = v;
-    const c = hexToRgb(v);
-    SIM.bgColor[0] = c[0]; SIM.bgColor[1] = c[1]; SIM.bgColor[2] = c[2];
+  if (isValidHex(v)) setBackgroundColor(v);
+});
+
+const bgModeSelect = document.getElementById('bgModeSelect');
+const bgMediaInput = document.getElementById('bgMediaInput');
+const bgPickBtn = document.getElementById('bgPickBtn');
+const bgClearBtn = document.getElementById('bgClearBtn');
+
+function clearBackgroundMedia(resetMode = true) {
+  bgImage = null;
+  bgImageDirty = false;
+  bgVideo.pause();
+  bgVideo.removeAttribute('src');
+  bgVideo.load();
+  if (bgObjUrl) { URL.revokeObjectURL(bgObjUrl); bgObjUrl = null; }
+  clearBgTexture();
+  if (resetMode) {
+    bgMode = 'color';
+    if (bgModeSelect) bgModeSelect.value = 'color';
   }
+  if (bgMediaInput) bgMediaInput.value = '';
+}
+
+function syncBackgroundInputAccept() {
+  if (!bgMediaInput) return;
+  bgMediaInput.accept = bgMode === 'video' ? 'video/*' : bgMode === 'picture' ? 'image/*' : 'image/*,video/*';
+}
+
+function setBackgroundMode(mode, shouldPick = false) {
+  bgMode = mode || 'color';
+  if (bgModeSelect) bgModeSelect.value = bgMode;
+  syncBackgroundInputAccept();
+  if (bgMode === 'video') {
+    bgImage = null;
+    if (bgVideo.src) bgVideo.play().catch(() => {});
+  } else {
+    bgVideo.pause();
+  }
+  if (shouldPick && bgMode !== 'color') bgMediaInput?.click();
+}
+
+function pickBackgroundMedia() {
+  if (bgMode === 'color') {
+    bgMode = 'picture';
+    if (bgModeSelect) bgModeSelect.value = bgMode;
+  }
+  syncBackgroundInputAccept();
+  bgMediaInput?.click();
+}
+
+function handleBackgroundMediaFile(file) {
+  if (!file) return;
+  clearBackgroundMedia(false);
+  bgObjUrl = URL.createObjectURL(file);
+  if (file.type.startsWith('video/')) {
+    setBackgroundMode('video');
+    bgVideo.src = bgObjUrl;
+    bgVideo.onloadeddata = () => {
+      setBgTextureFromSource(bgVideo);
+      bgVideo.play().catch(() => {});
+    };
+    bgVideo.load();
+  } else if (file.type.startsWith('image/')) {
+    setBackgroundMode('picture');
+    const img = new Image();
+    img.onload = () => {
+      bgImage = img;
+      bgImageDirty = true;
+      setBgTextureFromSource(bgImage);
+      bgImageDirty = false;
+    };
+    img.src = bgObjUrl;
+  }
+}
+
+bgModeSelect?.addEventListener('change', () => setBackgroundMode(bgModeSelect.value, bgModeSelect.value !== 'color'));
+bgPickBtn?.addEventListener('click', pickBackgroundMedia);
+bgClearBtn?.addEventListener('click', () => clearBackgroundMedia(true));
+bgMediaInput?.addEventListener('change', e => handleBackgroundMediaFile(e.target.files[0]));
+
+// Look presets for fast B&W/quote variations.
+const LOOK_PRESETS = {
+  gradshow: {
+    text: '',
+    font: 'jubilee',
+    layout: 'repeat',
+    textColor: '#016F17',
+    bgColor: '#D4FED3',
+    size: 116,
+    lineHeight: 84,
+    scroll: 0,
+    ratio: [3, 2],
+    weather: 'normal',
+    wind: 100,
+    turbulence: 30,
+    gravity: -10,
+    poleColor: null,
+    defaultImage: true,
+  },
+  'bw-classic': {
+    text: 'What if form remembers?',
+    font: 'jubilee',
+    layout: 'repeat',
+    textColor: '#111111',
+    bgColor: '#F7F7F4',
+    size: 126,
+    lineHeight: 82,
+    scroll: 0,
+    ratio: [5, 5],
+    weather: 'normal',
+    wind: 92,
+    turbulence: 24,
+    gravity: -10,
+    poleColor: null,
+  },
+  'bw-invert': {
+    text: 'Hold the signal.',
+    font: 'diatype',
+    layout: 'centered',
+    textColor: '#FFFFFF',
+    bgColor: '#070707',
+    size: 96,
+    lineHeight: 94,
+    scroll: 0,
+    ratio: [4, 5],
+    weather: 'normal',
+    wind: 86,
+    turbulence: 18,
+    gravity: -10,
+    poleColor: '#FFFFFF',
+  },
+  kinetic: {
+    text: 'Make it move',
+    font: 'jubilee',
+    layout: 'repeat',
+    textColor: '#0A0A0A',
+    bgColor: '#FFFFFF',
+    size: 88,
+    lineHeight: 76,
+    scroll: 200,
+    ratio: [7, 4],
+    weather: 'normal',
+    wind: 122,
+    turbulence: 34,
+    gravity: -10,
+    poleColor: null,
+  },
+  'storm-signal': {
+    text: 'Against the wind',
+    font: 'diatype',
+    layout: 'repeat',
+    textColor: '#FFFFFF',
+    bgColor: '#05070B',
+    size: 104,
+    lineHeight: 90,
+    scroll: 0,
+    ratio: [3, 2],
+    weather: 'storm',
+    wind: 188,
+    turbulence: 58,
+    gravity: -8,
+    poleColor: '#FFFFFF',
+    scene: 'storm',
+  },
+  moon: {
+    text: '',
+    font: 'jubilee',
+    layout: 'repeat',
+    textColor: '#111111',
+    bgColor: '#0B1020',
+    flagColor: '#F4F7EE',
+    size: 112,
+    lineHeight: 84,
+    scroll: 0,
+    ratio: [3, 2],
+    weather: 'normal',
+    wind: 82,
+    turbulence: 18,
+    gravity: -10,
+    poleColor: '#FFFFFF',
+    scene: 'moon',
+    defaultImage: true,
+  },
+};
+
+let bwToggleInverted = false;
+function resetBwToggle() {
+  bwToggleInverted = false;
+  const btn = lookRow?.querySelector('[data-look="bw-toggle"]');
+  if (btn) btn.textContent = 'B&W';
+}
+function resolveLookKey(key) {
+  if (key !== 'bw-toggle') {
+    resetBwToggle();
+    return key;
+  }
+  const resolved = bwToggleInverted ? 'bw-invert' : 'bw-classic';
+  bwToggleInverted = !bwToggleInverted;
+  const btn = lookRow?.querySelector('[data-look="bw-toggle"]');
+  if (btn) btn.textContent = resolved === 'bw-invert' ? 'Invert' : 'B&W';
+  return resolved;
+}
+
+function matchingRatioPreset(aw, ah) {
+  const target = aw / ah;
+  for (const btn of ratioRow.querySelectorAll('[data-r]')) {
+    const [h, w] = btn.dataset.r.split(':').map(Number);
+    if (Math.abs((w / h) - target) < 0.01) return btn.dataset.r;
+  }
+  return null;
+}
+
+function setCustomRatioPreset(aw, ah) {
+  customAW = aw;
+  customAH = ah;
+  const match = matchingRatioPreset(aw, ah);
+  if (match) {
+    activeRatio = match;
+    setActiveByData(ratioRow, '[data-r]', 'r', match);
+  } else {
+    ensureCustomMode();
+  }
+  updateMiniPreview();
+  smoothRatioUpdate(aw, ah);
+}
+
+function setRangeValue(input, value) {
+  input.value = value;
+  input.dispatchEvent(new Event('input'));
+}
+
+function applyLookPreset(key) {
+  if (key === 'camera') {
+    resetBwToggle();
+    clearLookSceneEffects();
+    restoreDefaultSceneCamera();
+    if (liveVideoActive) {
+      clearImage();
+      setActiveByData(lookRow, '[data-look]', 'look', 'gradshow');
+      return;
+    }
+    setBackgroundMode('color');
+    setBackgroundColor('#F7F7F4');
+    setPoleColorOverride(null);
+    toggleLiveCamera();
+    return;
+  }
+  key = resolveLookKey(key);
+  const preset = LOOK_PRESETS[key];
+  if (!preset) return;
+  const hadSceneView = sceneViewMode !== 'default' || MOON.active || LIGHTNING.active;
+  clearLookSceneEffects();
+  stopLiveCamera();
+  setBackgroundMode('color');
+  currentText = preset.text;
+  textInput.value = preset.text;
+  _textWasEmpty = !preset.text.trim();
+  textLayoutUserSet = true;
+  setTextFont(preset.font);
+  setTextLayout(preset.layout);
+  setRangeValue(fontSizeSlider, preset.size);
+  setRangeValue(lineHeightSlider, preset.lineHeight);
+  setRangeValue(scrollSpeedSlider, preset.scroll);
+  setTextColor(preset.textColor, false);
+  setBackgroundColor(preset.bgColor);
+  if (preset.flagColor) setFlagColorOnly(preset.flagColor);
+  setPoleColorOverride(preset.poleColor || null);
+  if (preset.ratio) setCustomRatioPreset(preset.ratio[0], preset.ratio[1]);
+  if (preset.weather) {
+    setActiveByData(weatherRow, '[data-weather]', 'weather', preset.weather);
+    setWeather(preset.weather);
+  }
+  if (Number.isFinite(preset.wind)) setRangeValue(document.getElementById('windStrength'), preset.wind);
+  if (Number.isFinite(preset.turbulence)) setRangeValue(document.getElementById('turbulence'), preset.turbulence);
+  if (Number.isFinite(preset.gravity)) setRangeValue(document.getElementById('gravity'), preset.gravity);
+  setUnlitMode(false);
+  if (preset.defaultImage) {
+    clearBackgroundMedia(true);
+    loadedImage = null;
+    imageTexActive = false;
+    if (activeObjUrl) { URL.revokeObjectURL(activeObjUrl); activeObjUrl = null; }
+    loadDefaultTexture();
+  }
+  if (preset.scene === 'storm') {
+    setLightningActive(true);
+    applyStormCamera();
+  } else if (preset.scene === 'moon') {
+    MOON.active = true;
+    applyMoonCamera();
+  } else if (hadSceneView) {
+    restoreDefaultSceneCamera();
+  }
+  refreshTexture();
+}
+
+const lookRow = document.getElementById('lookRow');
+lookRow?.addEventListener('click', e => {
+  const btn = e.target.closest('[data-look]');
+  if (!btn) return;
+  setActiveButton(lookRow, '[data-look]', btn);
+  applyLookPreset(btn.dataset.look);
 });
 
 // File handling
@@ -2418,30 +3483,66 @@ const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('fileInput');
 const texPreview = document.getElementById('texPreview');
 const previewImg = document.getElementById('previewImg');
+const previewVideo = document.getElementById('previewVideo');
 const fitToggle = document.getElementById('fitToggle');
+const cameraBtn = document.getElementById('cameraBtn');
+const cameraInput = document.getElementById('cameraInput');
 let activeObjUrl = null;
+let cameraStream = null;
 
 function showPreview(url) {
+  if (previewVideo) previewVideo.style.display = 'none';
   previewImg.src = url;
+  previewImg.style.display = 'block';
   texPreview.style.display = 'block';
   dropzone.style.display = 'none';
   fitToggle.style.display = 'flex';
 }
 
+function showVideoPreview() {
+  previewImg.removeAttribute('src');
+  previewImg.style.display = 'none';
+  if (previewVideo) previewVideo.style.display = 'block';
+  texPreview.style.display = 'block';
+  dropzone.style.display = 'none';
+  fitToggle.style.display = 'flex';
+}
+
+function stopLiveCamera() {
+  liveVideoActive = false;
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(track => track.stop());
+    cameraStream = null;
+  }
+  if (previewVideo) {
+    previewVideo.pause();
+    previewVideo.srcObject = null;
+    previewVideo.style.display = 'none';
+  }
+  if (cameraBtn) {
+    cameraBtn.textContent = 'Live Camera';
+    cameraBtn.classList.remove('active');
+  }
+}
+
 function clearImage() {
+  stopLiveCamera();
   loadedImage = null; imageTexActive = false;
   if (activeObjUrl) { URL.revokeObjectURL(activeObjUrl); activeObjUrl = null; }
   previewImg.removeAttribute('src');
+  previewImg.style.display = 'block';
   texPreview.style.display = 'none';
   dropzone.style.display = 'block';
   fitToggle.style.display = 'none';
   fileInput.value = '';
+  if (cameraInput) cameraInput.value = '';
   setUnlitMode(false); // back to the lit cloth surface once the picture is gone
   refreshTexture();
 }
 
 function handleImageFile(file) {
   if (!file || !file.type.startsWith('image/')) return;
+  stopLiveCamera();
   const url = URL.createObjectURL(file);
   if (activeObjUrl) URL.revokeObjectURL(activeObjUrl);
   activeObjUrl = url;
@@ -2458,6 +3559,54 @@ function handleImageFile(file) {
 }
 
 fileInput.addEventListener('change', e => { if (e.target.files[0]) handleImageFile(e.target.files[0]); });
+cameraInput?.addEventListener('change', e => { if (e.target.files[0]) handleImageFile(e.target.files[0]); });
+
+async function toggleLiveCamera() {
+  if (liveVideoActive) {
+    clearImage();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || !previewVideo) {
+    cameraInput?.click();
+    return;
+  }
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    });
+    loadedImage = null;
+    if (activeObjUrl) { URL.revokeObjectURL(activeObjUrl); activeObjUrl = null; }
+    currentText = '';
+    textInput.value = '';
+    _textWasEmpty = true;
+    if (textLayout === 'titleCard') {
+      textLayoutUserSet = false;
+      setTextLayout(defaultLayoutForFont(currentFont));
+    }
+    previewVideo.srcObject = cameraStream;
+    await previewVideo.play();
+    liveVideoActive = true;
+    imageTexActive = true;
+    showVideoPreview();
+    if (cameraBtn) {
+      cameraBtn.textContent = 'Stop Camera';
+      cameraBtn.classList.add('active');
+    }
+    setUnlitMode(true);
+    refreshTexture();
+  } catch (err) {
+    console.warn('Camera access failed:', err);
+    stopLiveCamera();
+    cameraInput?.click();
+  }
+}
+
+cameraBtn?.addEventListener('click', toggleLiveCamera);
 dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
 dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
 dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.remove('dragover'); handleImageFile(e.dataTransfer.files[0]); });
@@ -2498,24 +3647,35 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   SIM.opacity = 0;
   SIM.flagColor = [0.831, 0.996, 0.827];
   SIM.bgColor = [0.831, 0.996, 0.827];
+  SUBSTEPS = 2;
+  setFabricMode('realistic');
+  WEATHER.mode = 'normal';
+  WEATHER.angleDriftMax = 24;
+  WEATHER.angleDriftForce = 1.0;
+  _savedWeather = null;
+  clearLookSceneEffects();
+  setActiveByData(weatherRow, '[data-weather]', 'weather', 'normal');
   document.getElementById('windStrength').value = 100;
   document.getElementById('turbulence').value = 30;
   document.getElementById('gravity').value = -10;
   document.getElementById('windVal').textContent = '100';
   document.getElementById('turbVal').textContent = '30';
   document.getElementById('gravityVal').textContent = '-1.0';
-  bgColorIn.value = '#D4FED3'; bgColorHex.value = '#D4FED3';
+  setBackgroundColor('#D4FED3');
   fontSizeSlider.value = 120; fontSizeVal.textContent = '120'; currentFontSize = 120;
   lineHeightSlider.value = 85; lineHeightVal.textContent = '0.85'; currentLineHeight = 0.85;
   currentFont = 'jubilee';
-  setActiveByData(fontRow, '[data-font]', 'font', 'jubilee');
+  if (fontSelect) fontSelect.value = 'jubilee';
   textLayoutUserSet = false;
   setTextLayout('repeat');
   textInput.value = ''; currentText = ''; _textWasEmpty = true;
   textScrollSpeed = 0; textScrollTime = 0;
   scrollSpeedSlider.value = 0; scrollVal.textContent = '0';
-  currentTextColor = '#016F17';
-  textColorIn.value = '#00330A'; textColorHex.value = '#00330A';
+  setTextColor('#016F17', false);
+  setPoleColorOverride(null);
+  clearBackgroundMedia(true);
+  lookRow?.querySelectorAll('[data-look]').forEach(b => b.classList.remove('active'));
+  setActiveByData(lookRow, '[data-look]', 'look', 'gradshow');
   clearImage();
   setActiveByData(ratioRow, '[data-r]', 'r', '3:2');
   customRatioDiv.classList.remove('visible');
@@ -2718,17 +3878,10 @@ function renderFlagToBlob(outW, outH, matte, transparent, mime = 'image/png', qu
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
   if (!transparent) {
-    // Background quad (flat color)
+    // Background quad
     gl.disable(gl.DEPTH_TEST);
-    gl.useProgram(bgProg);
-    gl.uniform3f(bgLoc.uBg, SIM.bgColor[0], SIM.bgColor[1], SIM.bgColor[2]);
-    gl.disableVertexAttribArray(loc.aNrm);
-    gl.disableVertexAttribArray(loc.aUV);
-    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-    gl.enableVertexAttribArray(bgLoc.aP);
-    gl.vertexAttribPointer(bgLoc.aP, 2, gl.FLOAT, false, 0, 0);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-    gl.disableVertexAttribArray(bgLoc.aP);
+    drawBackgroundQuad(w, h);
+    drawLightningBolts(w, h);
     gl.enable(gl.DEPTH_TEST);
   }
 
@@ -2748,8 +3901,11 @@ function renderFlagToBlob(outW, outH, matte, transparent, mime = 'image/png', qu
   gl.uniform3f(loc.uLight, ld[0] / ll, ld[1] / ll, ld[2] / ll);
   gl.uniform3f(loc.uEye, eye[0], eye[1], eye[2]);
   gl.uniform1f(loc.uAmbient, 0.38);
+  gl.uniform1f(loc.uLightning, lightningValue());
 
+  setModelMatrix(MODEL_IDENTITY);
   gl.uniform1i(loc.uIsGlass, 0);
+  gl.uniform1f(loc.uMoonSurface, 0.0);
   gl.uniform1f(loc.uMatte, matte ? 1.0 : 0.0);
   gl.uniform1f(loc.uUnlit, unlitMode ? 1.0 : 0.0);
   gl.uniform3f(loc.uColor, SIM.flagColor[0], SIM.flagColor[1], SIM.flagColor[2]);
@@ -3150,7 +4306,7 @@ const mobileSheetConfig = {
   text: {
     title: 'Text',
     tab: 'studio',
-    getNodes: () => [document.getElementById('sectionText')],
+    getNodes: () => [document.getElementById('sectionText'), document.getElementById('sectionLooks')],
   },
   image: {
     title: 'Image',
@@ -3285,12 +4441,9 @@ function applyTitleCardPreset({ format, width, height, matte, cameraDist, cloth,
   matteMode = !!matte;
   if (matteToggle) matteToggle.checked = matteMode;
 
-  SIM.bgColor = hexToRgb('#D3FED1');
-  if (bgColorIn) bgColorIn.value = '#D3FED1';
-  if (bgColorHex) bgColorHex.value = '#D3FED1';
-  currentTextColor = '#00330A';
-  if (textColorIn) textColorIn.value = '#00330A';
-  if (textColorHex) textColorHex.value = '#00330A';
+  setBackgroundColor('#D3FED1');
+  setTextColor('#00330A', false);
+  setPoleColorOverride(null);
 
   if (cloth) setClothMode(cloth);
 
@@ -3952,15 +5105,8 @@ function renderToFBO(fw, fh) {
 
   // Background
   gl.disable(gl.DEPTH_TEST);
-  gl.useProgram(bgProg);
-  gl.uniform3f(bgLoc.uBg, SIM.bgColor[0], SIM.bgColor[1], SIM.bgColor[2]);
-  gl.disableVertexAttribArray(loc.aNrm);
-  gl.disableVertexAttribArray(loc.aUV);
-  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-  gl.enableVertexAttribArray(bgLoc.aP);
-  gl.vertexAttribPointer(bgLoc.aP, 2, gl.FLOAT, false, 0, 0);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-  gl.disableVertexAttribArray(bgLoc.aP);
+  drawBackgroundQuad(fw, fh);
+  drawLightningBolts(fw, fh);
   gl.enable(gl.DEPTH_TEST);
 
   // Camera matching the crop view
@@ -3980,9 +5126,12 @@ function renderToFBO(fw, fh) {
   gl.uniform3f(loc.uLight, ld[0] / ll, ld[1] / ll, ld[2] / ll);
   gl.uniform3f(loc.uEye, e[0], e[1], e[2]);
   gl.uniform1f(loc.uAmbient, 0.38);
+  gl.uniform1f(loc.uLightning, lightningValue());
 
   // Flag only (no pole)
+  setModelMatrix(MOON.active ? moonFlagModel() : MODEL_IDENTITY);
   gl.uniform1i(loc.uIsGlass, 0);
+  gl.uniform1f(loc.uMoonSurface, 0.0);
   gl.uniform1f(loc.uMatte, matteMode ? 1.0 : 0.0);
   gl.uniform1f(loc.uUnlit, unlitMode ? 1.0 : 0.0);
   gl.uniform3f(loc.uColor, SIM.flagColor[0], SIM.flagColor[1], SIM.flagColor[2]);
@@ -4074,6 +5223,16 @@ function cloneCameraState() {
   };
 }
 
+function cloneMoonState() {
+  return { yaw: MOON.yaw, yawTarget: MOON.yawTarget };
+}
+
+function applyMoonState(state) {
+  if (!state) return;
+  MOON.yaw = state.yaw;
+  MOON.yawTarget = state.yawTarget;
+}
+
 function applyCameraState(state) {
   cam.tgtTheta = state.tgtTheta; cam.tgtPhi = state.tgtPhi; cam.tgtDist = state.tgtDist;
   cam.curTheta = state.curTheta; cam.curPhi = state.curPhi; cam.curDist = state.curDist;
@@ -4110,6 +5269,7 @@ function snapshotMotionState() {
     gentleTime,
     textScrollTime,
     cam: cloneCameraState(),
+    moon: cloneMoonState(),
   };
 }
 
@@ -4128,6 +5288,7 @@ function restoreMotionState(state) {
   gentleTime = state.gentleTime;
   textScrollTime = state.textScrollTime;
   applyCameraState(state.cam);
+  applyMoonState(state.moon);
   if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
     generateTextTexture(textScrollTime);
   }
@@ -4147,6 +5308,7 @@ function advanceRecordingMotionFrame(updateTexture) {
     }
     else if (clothMode === 'slight') gentleTime += SIM_DT;
     updateCamera(SIM_DT);
+    updateMoonScene(SIM_DT);
     if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
       textScrollTime += SIM_DT * textScrollSpeed * 2.5;
       scrollDirty = true;
@@ -4169,12 +5331,13 @@ async function buildSeamlessLoopFrames(onProgress) {
   try {
     for (let f = 0; f <= REC_TOTAL_FRAMES; f++) {
       advanceRecordingMotionFrame(false);
-      frames.push({
-        pos: new Float32Array(pos),
-        cam: cloneCameraState(),
-        gentleTime,
-        textScrollTime,
-      });
+        frames.push({
+          pos: new Float32Array(pos),
+          cam: cloneCameraState(),
+          moon: cloneMoonState(),
+          gentleTime,
+          textScrollTime,
+        });
       if (f % 20 === 0) {
         if (onProgress) onProgress(f, REC_TOTAL_FRAMES);
         await new Promise(r => requestAnimationFrame(r));
@@ -4206,6 +5369,7 @@ function applyLoopFrame(frame) {
   gentleTime = frame.gentleTime;
   textScrollTime = frame.textScrollTime;
   applyCameraState(frame.cam);
+  applyMoonState(frame.moon);
   computeMeshNormals();
   if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
     generateTextTexture(textScrollTime);
@@ -4494,7 +5658,8 @@ const BALL_R = 28; // usable radius inside the 72px ball
 
 function updateOrbitBall() {
   // Map theta/phi to dot position on sphere surface projected to 2D
-  const t = cam.curTheta, p = cam.curPhi;
+  const t = MOON.active ? MOON.yaw : cam.curTheta;
+  const p = MOON.active ? 0.16 : cam.curPhi;
   const x = Math.sin(t) * Math.cos(p);
   const y = -Math.sin(p);
   const z = Math.cos(t) * Math.cos(p);
@@ -4513,8 +5678,12 @@ function updateOrbitBall() {
 let orbitLastTime = 0;
 function orbitBallApplyMove(dx, dy, now) {
   const thetaDelta = dx * 0.012;
-  cam.tgtTheta += thetaDelta;
-  cam.tgtPhi = clamp(cam.tgtPhi - dy * 0.012, -1.45, 1.45);
+  if (MOON.active) {
+    rotateMoonScene(thetaDelta);
+  } else {
+    cam.tgtTheta += thetaDelta;
+    cam.tgtPhi = clamp(cam.tgtPhi - dy * 0.012, -1.45, 1.45);
+  }
   // Feed angular velocity into the cloth so centrifugal / tangential
   // forces in the physics loop respond to spinning via the orbit ball.
   const dt = Math.max(0.008, Math.min(0.05, (now - orbitLastTime) / 1000 || 0.016));
@@ -4620,6 +5789,7 @@ function loop(now) {
   if (PAUSED) {
     // Keep camera responsive while physics is frozen.
     updateCamera(SIM_DT);
+    updateMoonScene(SIM_DT);
     updateOrbitBall();
     lastTime = now;
     simAccum = 0;
@@ -4635,6 +5805,7 @@ function loop(now) {
     if (clothMode === 'full') simulate(SIM_DT);
     else if (clothMode === 'slight') gentleTime += SIM_DT;
     updateCamera(SIM_DT);
+    updateMoonScene(SIM_DT);
     if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
       textScrollTime += SIM_DT * textScrollSpeed * 2.5;
       scrollDirty = true;

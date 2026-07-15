@@ -4,6 +4,25 @@ const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").match
 const hoverCapable = window.matchMedia("(hover: hover) and (pointer: fine)");
 const coarsePointer = window.matchMedia("(pointer: coarse)");
 
+function setupPresenceFavicon() {
+  const favicon = document.querySelector("[data-presence-favicon]");
+
+  if (!favicon) {
+    return;
+  }
+
+  function updateFavicon() {
+    favicon.href = document.hidden
+      ? favicon.dataset.inactiveHref
+      : favicon.dataset.activeHref;
+  }
+
+  document.addEventListener("visibilitychange", updateFavicon);
+  updateFavicon();
+}
+
+setupPresenceFavicon();
+
 function setupIntroDisclosure() {
   const intro = document.querySelector(".site-intro");
   const shell = document.querySelector("[data-intro-shell]");

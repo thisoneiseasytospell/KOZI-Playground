@@ -418,6 +418,30 @@ main {
   opacity: 1;
 }
 
+.video-loading {
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  background: rgba(241, 240, 235, 0.72);
+  border-radius: 999px;
+  color: var(--text);
+  left: 50%;
+  opacity: 0;
+  padding: 5px 8px 6px;
+  pointer-events: none;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  transition: opacity 120ms linear, visibility 0s linear 120ms;
+  visibility: hidden;
+  z-index: 6;
+}
+
+.work-stage.is-loading .video-loading {
+  opacity: 1;
+  transition: opacity 120ms linear, visibility 0s linear;
+  visibility: visible;
+}
+
 .project-label [data-project-number] {
   color: inherit;
   display: inline-block;
@@ -500,6 +524,7 @@ main {
   }
 
   .intro-collapse {
+    font-size: 0.9em;
     min-height: 32px;
   }
 

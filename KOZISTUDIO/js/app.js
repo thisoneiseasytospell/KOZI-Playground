@@ -152,6 +152,7 @@ const projectLabel = document.querySelector("[data-project-label]");
 const projectNumber = document.querySelector("[data-project-number]");
 const projectTitle = document.querySelector("[data-project-title]");
 const motionButton = document.querySelector(".motion-permission");
+const loadingIndicator = document.querySelector("[data-video-loading]");
 const stageStatus = document.querySelector("[data-stage-status]");
 
 if (stage && frame && videos.length === 2 && projectLabel && projectNumber && projectTitle) {
@@ -201,9 +202,12 @@ async function setupWorkStage() {
   let pointerActive = false;
   let lastPointerInput = 0;
   let touchPosition = null;
+  let touchStartPosition = null;
   let touchDragging = false;
   let touchTravel = 0;
+  let expandedSwipeHandled = false;
   let suppressClick = false;
+  let loadingTimer;
   let motionListening = false;
   let baseOrientation = null;
   let motionOrigin = null;
@@ -241,6 +245,29 @@ async function setupWorkStage() {
         stage.insertBefore(canvas, frame);
         return canvas;
       });
+
+  function showLoading() {
+    if (loadingTimer || stage.classList.contains("is-loading")) {
+      return;
+    }
+
+    loadingTimer = window.setTimeout(() => {
+      loadingTimer = undefined;
+      stage.classList.add("is-loading");
+      stage.setAttribute("aria-busy", "true");
+    }, 160);
+  }
+
+  function hideLoading() {
+    window.clearTimeout(loadingTimer);
+    loadingTimer = undefined;
+    stage.classList.remove("is-loading");
+    stage.setAttribute("aria-busy", "false");
+
+    if (loadingIndicator) {
+      loadingIndicator.textContent = "Loading…";
+    }
+  }
 
   const stageAnchor = () => {
     return {
@@ -302,6 +329,37 @@ async function setupWorkStage() {
     }
 
     return ascendingProjectIndices[(currentIndex + 1) % ascendingProjectIndices.length];
+  }
+
+  function previousAscendingProjectIndex(fromIndex = currentProjectIndex) {
+    const currentIndex = ascendingProjectIndices.indexOf(fromIndex);
+
+    if (currentIndex < 0) {
+      return ascendingProjectIndices[ascendingProjectIndices.length - 1];
+    }
+
+    return ascendingProjectIndices[
+      (currentIndex - 1 + ascendingProjectIndices.length) % ascendingProjectIndices.length
+    ];
+  }
+
+  function projectIndexForMode(mode) {
+    if (mode === "random") {
+      if (
+        queuedProjectIndex >= 0 &&
+        queuedProjectIndex !== currentProjectIndex
+      ) {
+        return queuedProjectIndex;
+      }
+
+      return drawRandomProjectIndex();
+    }
+
+    if (mode === "descending") {
+      return previousAscendingProjectIndex();
+    }
+
+    return nextAscendingProjectIndex();
   }
 
   function refillRandomDeck() {
@@ -466,14 +524,12 @@ async function setupWorkStage() {
   }
 
   function switchVideo(mode = "ascending", requestedProjectIndex = null) {
-    const desiredProjectIndex = requestedProjectIndex ?? (
-      mode === "random"
-        ? drawRandomProjectIndex()
-        : nextAscendingProjectIndex()
-    );
+    const desiredProjectIndex =
+      requestedProjectIndex ?? projectIndexForMode(mode);
 
     if (!queuedReady || queuedProjectIndex !== desiredProjectIndex) {
       switchRequest = { mode, projectIndex: desiredProjectIndex };
+      showLoading();
 
       if (queuedProjectIndex !== desiredProjectIndex || !queuedLoading) {
         queueNextVideo(desiredProjectIndex);
@@ -502,8 +558,9 @@ async function setupWorkStage() {
     outgoingVideo.setAttribute("aria-hidden", "true");
     outgoingVideo.pause();
 
+    hideLoading();
     playActiveVideo();
-    queueNextVideo(nextAscendingProjectIndex());
+    queueNextVideo(projectIndexForMode(mode));
   }
 
   videos.forEach((video) => {
@@ -567,17 +624,41 @@ async function setupWorkStage() {
     }
 
     lastUserActivity = performance.now();
-    updateTargetFromPoint(event.clientX, event.clientY);
+    let distance = 0;
 
     if (touchPosition) {
-      const distance = Math.hypot(
+      distance = Math.hypot(
         event.clientX - touchPosition.x,
         event.clientY - touchPosition.y
       );
       touchTravel += distance;
-      addTravel(distance);
     }
 
+    if (frameExpanded) {
+      if (touchStartPosition && !expandedSwipeHandled) {
+        const deltaX = event.clientX - touchStartPosition.x;
+        const deltaY = event.clientY - touchStartPosition.y;
+        const swipeThreshold = Math.max(
+          42,
+          Math.min(64, stage.clientHeight * 0.07)
+        );
+
+        if (
+          Math.abs(deltaY) >= swipeThreshold &&
+          Math.abs(deltaY) > Math.abs(deltaX) * 1.15
+        ) {
+          expandedSwipeHandled = true;
+          travelAccumulator = 0;
+          switchVideo(deltaY < 0 ? "ascending" : "descending");
+        }
+      }
+
+      touchPosition = { x: event.clientX, y: event.clientY };
+      return;
+    }
+
+    updateTargetFromPoint(event.clientX, event.clientY);
+    addTravel(distance);
     touchPosition = { x: event.clientX, y: event.clientY };
   });
 
@@ -618,10 +699,16 @@ async function setupWorkStage() {
     touchDragging = true;
     pointerActive = true;
     touchTravel = 0;
+    expandedSwipeHandled = false;
     suppressClick = false;
     lastUserActivity = performance.now();
     touchPosition = { x: event.clientX, y: event.clientY };
-    updateTargetFromPoint(event.clientX, event.clientY);
+    touchStartPosition = { ...touchPosition };
+
+    if (!frameExpanded) {
+      updateTargetFromPoint(event.clientX, event.clientY);
+    }
+
     stage.setPointerCapture(event.pointerId);
   });
 
@@ -634,6 +721,8 @@ async function setupWorkStage() {
     pointerActive = false;
     lastUserActivity = performance.now();
     touchPosition = null;
+    touchStartPosition = null;
+    expandedSwipeHandled = false;
     suppressClick = event.type !== "pointercancel" && touchTravel > 10;
 
     if (suppressClick) {
@@ -708,6 +797,12 @@ async function setupWorkStage() {
     return { x: gammaDelta, y: betaDelta };
   }
 
+  function mapTiltToAxis(amount, start, minimum, maximum) {
+    return amount < 0
+      ? start + (start - minimum) * amount
+      : start + (maximum - start) * amount;
+  }
+
   function resetMotionCalibration() {
     baseOrientation = null;
     motionOrigin = { ...currentPosition };
@@ -733,16 +828,35 @@ async function setupWorkStage() {
     const betaDelta = event.beta - baseOrientation.beta;
     const gammaDelta = event.gamma - baseOrientation.gamma;
     const mapped = mapTilt(betaDelta, gammaDelta);
+    const maximumTilt = 18;
     const clamped = {
-      x: Math.max(-20, Math.min(20, mapped.x)),
-      y: Math.max(-20, Math.min(20, mapped.y)),
+      x: Math.max(-maximumTilt, Math.min(maximumTilt, mapped.x)),
+      y: Math.max(-maximumTilt, Math.min(maximumTilt, mapped.y)),
     };
-    const center = motionOrigin || currentPosition;
-    const sensitivity = Math.min(stage.clientWidth, stage.clientHeight) * 0.018;
+    const movementBounds = getMovementBounds(
+      frame.offsetWidth * frameScale,
+      frame.offsetHeight * frameScale
+    );
+    const origin = clampPosition(motionOrigin || currentPosition, movementBounds);
+    const normalizedTilt = {
+      x: clamped.x / maximumTilt,
+      y: clamped.y / maximumTilt,
+    };
+    const previousTarget = { ...targetPosition };
 
     targetPosition = {
-      x: center.x + clamped.x * sensitivity,
-      y: center.y + clamped.y * sensitivity,
+      x: mapTiltToAxis(
+        normalizedTilt.x,
+        origin.x,
+        movementBounds.minX,
+        movementBounds.maxX
+      ),
+      y: mapTiltToAxis(
+        normalizedTilt.y,
+        origin.y,
+        movementBounds.minY,
+        movementBounds.maxY
+      ),
     };
 
     if (lastTiltPosition) {
@@ -750,7 +864,10 @@ async function setupWorkStage() {
         clamped.x - lastTiltPosition.x,
         clamped.y - lastTiltPosition.y
       );
-      const tiltTravel = tiltDelta * sensitivity;
+      const tiltTravel = Math.hypot(
+        targetPosition.x - previousTarget.x,
+        targetPosition.y - previousTarget.y
+      );
 
       if (tiltDelta > 0.2) {
         lastMotionInput = performance.now();
@@ -793,7 +910,7 @@ async function setupWorkStage() {
         startMotionInput();
       } else if (motionButton) {
         motionButton.hidden = true;
-        stageStatus.textContent = "Motion access declined. Touch drag remains available.";
+        stageStatus.textContent = "Gyro access declined. Touch drag remains available.";
       }
     } catch (error) {
       console.error(error);
@@ -802,7 +919,7 @@ async function setupWorkStage() {
         motionButton.hidden = true;
       }
 
-      stageStatus.textContent = "Motion access unavailable. Touch drag remains available.";
+      stageStatus.textContent = "Gyro access unavailable. Touch drag remains available.";
     }
   }
 
@@ -1196,6 +1313,7 @@ async function setupWorkStage() {
   firstVideo.classList.add("is-active");
   firstVideo.setAttribute("aria-hidden", "false");
   stage.classList.add("is-ready");
+  hideLoading();
   playActiveVideo();
   queueNextVideo(nextAscendingProjectIndex());
   animateFrame();

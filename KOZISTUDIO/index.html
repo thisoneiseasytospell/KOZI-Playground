@@ -10,8 +10,8 @@
     >
 
     <link rel="preload" href="./assets/fonts/ABCDiatype-Regular.otf" as="font" type="font/otf" crossorigin>
-    <link rel="stylesheet" href="./css/style.css?v=27">
-    <script src="./js/app.js?v=27" defer></script>
+    <link rel="stylesheet" href="./css/style.css?v=28">
+    <script src="./js/app.js?v=28" defer></script>
   </head>
   <body id="top">
     <header class="site-intro" id="about">
@@ -76,7 +76,7 @@
     </header>
 
     <main>
-      <section class="work-stage" id="work" aria-label="Selected work" tabindex="0">
+      <section class="work-stage is-loading" id="work" aria-label="Selected work" aria-busy="true" tabindex="0">
         <h2 class="visually-hidden">Selected work</h2>
 
         <div class="video-frame" data-video-frame>
@@ -89,7 +89,8 @@
           <span data-project-title></span>
         </p>
 
-        <button class="motion-permission" type="button" hidden>Enable motion</button>
+        <p class="video-loading" data-video-loading role="status">Loading&hellip;</p>
+        <button class="motion-permission" type="button" hidden>Enable gyro</button>
         <p class="visually-hidden" data-stage-status aria-live="polite"></p>
       </section>
     </main>

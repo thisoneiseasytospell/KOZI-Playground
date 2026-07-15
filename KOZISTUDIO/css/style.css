@@ -473,10 +473,16 @@ main {
 
   .intro-follow {
     display: block;
+    font-size: 0.9em;
     margin-top: 8px;
     opacity: 1;
     position: static;
     transform: none !important;
+  }
+
+  .site-intro.is-expanded .intro-follow,
+  .site-intro.is-closing .intro-follow {
+    display: none;
   }
 
   .intro-trigger {

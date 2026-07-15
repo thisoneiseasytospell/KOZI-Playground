@@ -217,7 +217,15 @@ async function setupWorkStage() {
   let lastTrailScale = 1;
   let idlePosition = null;
   let idleLastTime = performance.now();
-  let idleVelocity = coarsePointer.matches ? { x: 32, y: 22 } : { x: 44, y: 30 };
+  const idleSpeed = coarsePointer.matches ? 39 : 53;
+  const idleStartAngle = Math.random() * Math.PI * 2;
+  let idleVelocity = {
+    x: Math.cos(idleStartAngle) * idleSpeed,
+    y: Math.sin(idleStartAngle) * idleSpeed,
+  };
+  let idleTurnRate = 0;
+  let idleTargetTurnRate = 0;
+  let idleNextSteerTime = idleLastTime;
   const trailPoolSize = coarsePointer.matches ? 128 : 312;
   const trailPoolReserve = coarsePointer.matches ? 12 : 16;
   const idleTrailMinimumDuration = 5200;
@@ -968,6 +976,24 @@ async function setupWorkStage() {
     });
   }
 
+  function chooseIdleCurve(now) {
+    const direction = Math.random() < 0.5 ? -1 : 1;
+    const nearlyStraight = Math.random() < 0.16 ? 0.2 : 1;
+
+    idleTargetTurnRate =
+      direction * (0.045 + Math.random() * 0.17) * nearlyStraight;
+    idleNextSteerTime = now + 2200 + Math.random() * 3600;
+  }
+
+  function rotateIdleVelocity(angle) {
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    const x = idleVelocity.x * cosine - idleVelocity.y * sine;
+    const y = idleVelocity.x * sine + idleVelocity.y * cosine;
+
+    idleVelocity = { x, y };
+  }
+
   function advanceIdlePosition(now, bounds) {
     if (!idlePosition) {
       idlePosition = clampPosition(currentPosition, bounds);
@@ -978,6 +1004,14 @@ async function setupWorkStage() {
     let bounced = false;
 
     idleLastTime = now;
+
+    if (now >= idleNextSteerTime) {
+      chooseIdleCurve(now);
+    }
+
+    const steeringEasing = 1 - Math.exp(-deltaTime * 0.9);
+    idleTurnRate += (idleTargetTurnRate - idleTurnRate) * steeringEasing;
+    rotateIdleVelocity(idleTurnRate * deltaTime);
     idlePosition.x += idleVelocity.x * deltaTime;
     idlePosition.y += idleVelocity.y * deltaTime;
 
@@ -1002,6 +1036,8 @@ async function setupWorkStage() {
     }
 
     if (bounced) {
+      rotateIdleVelocity((Math.random() - 0.5) * 0.34);
+      chooseIdleCurve(now);
       travelAccumulator = 0;
       switchVideo("random");
     }
@@ -1053,6 +1089,7 @@ async function setupWorkStage() {
     if (inputOverride) {
       idlePosition = { ...currentPosition };
       idleLastTime = now;
+      idleNextSteerTime = now;
     }
 
     const frameDeltaTime = Math.min(

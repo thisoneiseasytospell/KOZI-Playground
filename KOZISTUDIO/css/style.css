@@ -431,15 +431,28 @@ main {
   position: absolute;
   top: 50%;
   transform: translate(-50%, -50%);
-  transition: opacity 120ms linear, visibility 0s linear 120ms;
+  transition: opacity 420ms ease, visibility 0s linear 420ms;
   visibility: hidden;
   z-index: 6;
 }
 
 .work-stage.is-loading .video-loading {
-  opacity: 1;
-  transition: opacity 120ms linear, visibility 0s linear;
+  animation: loading-breathe 1.35s ease-in-out infinite;
+  transition: visibility 0s linear;
   visibility: visible;
+}
+
+@keyframes loading-breathe {
+  0%,
+  100% {
+    opacity: 0.18;
+    transform: translate(-50%, -50%) scale(0.98);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
 }
 
 .project-label [data-project-number] {
@@ -541,6 +554,15 @@ main {
     filter: none;
     transition-duration: 0.01ms;
     transition-delay: 0ms !important;
+  }
+
+  .video-loading {
+    transition-duration: 0.01ms;
+  }
+
+  .work-stage.is-loading .video-loading {
+    animation: none;
+    opacity: 1;
   }
 
 }

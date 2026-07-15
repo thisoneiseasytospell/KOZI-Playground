@@ -152,12 +152,13 @@ const projectLabel = document.querySelector("[data-project-label]");
 const projectNumber = document.querySelector("[data-project-number]");
 const projectTitle = document.querySelector("[data-project-title]");
 const motionButton = document.querySelector(".motion-permission");
-const loadingIndicator = document.querySelector("[data-video-loading]");
 const stageStatus = document.querySelector("[data-stage-status]");
 
 if (stage && frame && videos.length === 2 && projectLabel && projectNumber && projectTitle) {
   setupWorkStage().catch((error) => {
     console.error(error);
+    stage.classList.remove("is-loading");
+    stage.setAttribute("aria-busy", "false");
     stageStatus.textContent = "Selected work is unavailable.";
   });
 }
@@ -206,8 +207,8 @@ async function setupWorkStage() {
   let touchDragging = false;
   let touchTravel = 0;
   let expandedSwipeHandled = false;
+  let expandedSwipeOffset = { x: 0, y: 0 };
   let suppressClick = false;
-  let loadingTimer;
   let motionListening = false;
   let baseOrientation = null;
   let motionOrigin = null;
@@ -247,27 +248,9 @@ async function setupWorkStage() {
         return canvas;
       });
 
-  function showLoading() {
-    if (loadingTimer || stage.classList.contains("is-loading")) {
-      return;
-    }
-
-    loadingTimer = window.setTimeout(() => {
-      loadingTimer = undefined;
-      stage.classList.add("is-loading");
-      stage.setAttribute("aria-busy", "true");
-    }, 160);
-  }
-
   function hideLoading() {
-    window.clearTimeout(loadingTimer);
-    loadingTimer = undefined;
     stage.classList.remove("is-loading");
     stage.setAttribute("aria-busy", "false");
-
-    if (loadingIndicator) {
-      loadingIndicator.textContent = "Loading…";
-    }
   }
 
   const stageAnchor = () => {
@@ -530,7 +513,6 @@ async function setupWorkStage() {
 
     if (!queuedReady || queuedProjectIndex !== desiredProjectIndex) {
       switchRequest = { mode, projectIndex: desiredProjectIndex };
-      showLoading();
 
       if (queuedProjectIndex !== desiredProjectIndex || !queuedLoading) {
         queueNextVideo(desiredProjectIndex);
@@ -559,7 +541,6 @@ async function setupWorkStage() {
     outgoingVideo.setAttribute("aria-hidden", "true");
     outgoingVideo.pause();
 
-    hideLoading();
     playActiveVideo();
     queueNextVideo(projectIndexForMode(mode));
   }
@@ -641,10 +622,19 @@ async function setupWorkStage() {
         const deltaY = event.clientY - touchStartPosition.y;
         const horizontalDistance = Math.abs(deltaX);
         const verticalDistance = Math.abs(deltaY);
+        const nudgeLimit = Math.max(
+          10,
+          Math.min(18, Math.min(stage.clientWidth, stage.clientHeight) * 0.045)
+        );
         const swipeThreshold = Math.max(
           42,
           Math.min(64, Math.min(stage.clientWidth, stage.clientHeight) * 0.12)
         );
+
+        expandedSwipeOffset = {
+          x: Math.max(-nudgeLimit, Math.min(nudgeLimit, deltaX * 0.16)),
+          y: Math.max(-nudgeLimit, Math.min(nudgeLimit, deltaY * 0.16)),
+        };
 
         if (Math.max(horizontalDistance, verticalDistance) >= swipeThreshold) {
           const forward = verticalDistance >= horizontalDistance
@@ -760,11 +750,13 @@ async function setupWorkStage() {
     );
 
     if (frameExpanded && coarsePointer.matches) {
-      expandedLockedPosition = clampPosition(currentPosition, targetBounds);
+      expandedLockedPosition = clampPosition(stageAnchor(), targetBounds);
       targetPosition = { ...expandedLockedPosition };
+      expandedSwipeOffset = { x: 0, y: 0 };
       clearTrail();
     } else {
       expandedLockedPosition = null;
+      expandedSwipeOffset = { x: 0, y: 0 };
       targetPosition = clampPosition(targetPosition, targetBounds);
     }
 
@@ -864,8 +856,6 @@ async function setupWorkStage() {
       x: clamped.x / maximumTilt,
       y: clamped.y / maximumTilt,
     };
-    const previousTarget = { ...targetPosition };
-
     targetPosition = {
       x: mapTiltToAxis(
         normalizedTilt.x,
@@ -886,10 +876,9 @@ async function setupWorkStage() {
         clamped.x - lastTiltPosition.x,
         clamped.y - lastTiltPosition.y
       );
-      const tiltTravel = Math.hypot(
-        targetPosition.x - previousTarget.x,
-        targetPosition.y - previousTarget.y
-      );
+      const gyroSequenceScale =
+        Math.min(stage.clientWidth, stage.clientHeight) * 0.014;
+      const tiltTravel = tiltDelta * gyroSequenceScale;
 
       if (tiltDelta > 0.2) {
         lastMotionInput = performance.now();
@@ -974,12 +963,15 @@ async function setupWorkStage() {
       frame.offsetHeight * targetFrameScale
     );
 
-    currentPosition = clampPosition(currentPosition, targetBounds);
+    currentPosition = frameExpanded && coarsePointer.matches
+      ? clampPosition(stageAnchor(), targetBounds)
+      : clampPosition(currentPosition, targetBounds);
     targetPosition = { ...currentPosition };
     idlePosition = { ...currentPosition };
     expandedLockedPosition = frameExpanded && coarsePointer.matches
-      ? { ...currentPosition }
+      ? clampPosition(stageAnchor(), targetBounds)
       : null;
+    expandedSwipeOffset = { x: 0, y: 0 };
     idleLastTime = performance.now();
     lastTrailPosition = { ...currentPosition };
     lastTrailScale = frameScale;
@@ -1205,6 +1197,17 @@ async function setupWorkStage() {
     const bounds = getMovementBounds(visibleFrameWidth, visibleFrameHeight);
     const center = clampPosition(stageAnchor(), bounds);
     const mobileExpanded = frameExpanded && coarsePointer.matches;
+
+    if (mobileExpanded && !touchDragging) {
+      const nudgeReturnEasing = reduceMotion ? 1 : 0.16;
+      expandedSwipeOffset.x += (0 - expandedSwipeOffset.x) * nudgeReturnEasing;
+      expandedSwipeOffset.y += (0 - expandedSwipeOffset.y) * nudgeReturnEasing;
+
+      if (Math.hypot(expandedSwipeOffset.x, expandedSwipeOffset.y) < 0.1) {
+        expandedSwipeOffset = { x: 0, y: 0 };
+      }
+    }
+
     const pointerOverride =
       !mobileExpanded &&
       (touchDragging || (pointerActive && now - lastPointerInput < 3000));
@@ -1214,7 +1217,10 @@ async function setupWorkStage() {
     const desired = reduceMotion
       ? center
       : mobileExpanded
-        ? expandedLockedPosition || currentPosition
+        ? {
+            x: (expandedLockedPosition || center).x + expandedSwipeOffset.x,
+            y: (expandedLockedPosition || center).y + expandedSwipeOffset.y,
+          }
         : inputOverride
           ? targetPosition
           : advanceIdlePosition(now, bounds);

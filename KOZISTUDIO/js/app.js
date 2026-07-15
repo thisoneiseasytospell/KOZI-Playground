@@ -215,6 +215,7 @@ async function setupWorkStage() {
   let lastMotionInput = 0;
   let lastUserActivity = performance.now();
   let frameExpanded = false;
+  let expandedLockedPosition = null;
   let trailCursor = 0;
   let lastTrailTime = 0;
   let lastTrailPosition = null;
@@ -638,18 +639,21 @@ async function setupWorkStage() {
       if (touchStartPosition && !expandedSwipeHandled) {
         const deltaX = event.clientX - touchStartPosition.x;
         const deltaY = event.clientY - touchStartPosition.y;
+        const horizontalDistance = Math.abs(deltaX);
+        const verticalDistance = Math.abs(deltaY);
         const swipeThreshold = Math.max(
           42,
-          Math.min(64, stage.clientHeight * 0.07)
+          Math.min(64, Math.min(stage.clientWidth, stage.clientHeight) * 0.12)
         );
 
-        if (
-          Math.abs(deltaY) >= swipeThreshold &&
-          Math.abs(deltaY) > Math.abs(deltaX) * 1.15
-        ) {
+        if (Math.max(horizontalDistance, verticalDistance) >= swipeThreshold) {
+          const forward = verticalDistance >= horizontalDistance
+            ? deltaY < 0
+            : deltaX < 0;
+
           expandedSwipeHandled = true;
           travelAccumulator = 0;
-          switchVideo(deltaY < 0 ? "ascending" : "descending");
+          switchVideo(forward ? "ascending" : "descending");
         }
       }
 
@@ -755,7 +759,20 @@ async function setupWorkStage() {
       frame.offsetHeight * targetFrameScale
     );
 
-    targetPosition = clampPosition(targetPosition, targetBounds);
+    if (frameExpanded && coarsePointer.matches) {
+      expandedLockedPosition = clampPosition(currentPosition, targetBounds);
+      targetPosition = { ...expandedLockedPosition };
+      clearTrail();
+    } else {
+      expandedLockedPosition = null;
+      targetPosition = clampPosition(targetPosition, targetBounds);
+    }
+
+    if (coarsePointer.matches) {
+      lastMotionInput = 0;
+      resetMotionCalibration();
+    }
+
     idlePosition = clampPosition(idlePosition || currentPosition, targetBounds);
     idleLastTime = lastUserActivity;
     previousFramePosition = { ...currentPosition };
@@ -811,7 +828,12 @@ async function setupWorkStage() {
   }
 
   function handleOrientation(event) {
-    if (!stageVisible || event.beta == null || event.gamma == null) {
+    if (
+      !stageVisible ||
+      (frameExpanded && coarsePointer.matches) ||
+      event.beta == null ||
+      event.gamma == null
+    ) {
       return;
     }
 
@@ -955,6 +977,9 @@ async function setupWorkStage() {
     currentPosition = clampPosition(currentPosition, targetBounds);
     targetPosition = { ...currentPosition };
     idlePosition = { ...currentPosition };
+    expandedLockedPosition = frameExpanded && coarsePointer.matches
+      ? { ...currentPosition }
+      : null;
     idleLastTime = performance.now();
     lastTrailPosition = { ...currentPosition };
     lastTrailScale = frameScale;
@@ -1166,6 +1191,7 @@ async function setupWorkStage() {
     const frameWidth = frame.offsetWidth;
     const frameHeight = frame.offsetHeight;
     const captionGap = 8;
+    const captionEdgeInset = 8;
     const scaleEasing = reduceMotion ? 1 : 0.085;
 
     frameScale += (targetFrameScale - frameScale) * scaleEasing;
@@ -1178,32 +1204,41 @@ async function setupWorkStage() {
     const visibleFrameHeight = frameHeight * frameScale;
     const bounds = getMovementBounds(visibleFrameWidth, visibleFrameHeight);
     const center = clampPosition(stageAnchor(), bounds);
+    const mobileExpanded = frameExpanded && coarsePointer.matches;
     const pointerOverride =
-      touchDragging || (pointerActive && now - lastPointerInput < 3000);
-    const motionOverride = lastMotionInput > 0 && now - lastMotionInput < 260;
+      !mobileExpanded &&
+      (touchDragging || (pointerActive && now - lastPointerInput < 3000));
+    const motionOverride =
+      !mobileExpanded && lastMotionInput > 0 && now - lastMotionInput < 260;
     const inputOverride = pointerOverride || motionOverride;
     const desired = reduceMotion
       ? center
-      : inputOverride
-        ? targetPosition
-        : advanceIdlePosition(now, bounds);
+      : mobileExpanded
+        ? expandedLockedPosition || currentPosition
+        : inputOverride
+          ? targetPosition
+          : advanceIdlePosition(now, bounds);
     const clampedTarget = clampPosition(desired, bounds);
     const scaleTransitioning = Math.abs(targetFrameScale - frameScale) >= 0.001;
     const easing = reduceMotion
       ? 1
-      : inputOverride
-        ? pointerOverride
-          ? 0.22
-          : 0.085
-        : scaleTransitioning
+      : mobileExpanded
+        ? scaleTransitioning
           ? 0.14
-          : 1;
+          : 1
+        : inputOverride
+          ? pointerOverride
+            ? 0.22
+            : 0.085
+          : scaleTransitioning
+            ? 0.14
+            : 1;
 
     currentPosition.x += (clampedTarget.x - currentPosition.x) * easing;
     currentPosition.y += (clampedTarget.y - currentPosition.y) * easing;
     currentPosition = clampPosition(currentPosition, bounds);
 
-    if (inputOverride) {
+    if (inputOverride || mobileExpanded) {
       idlePosition = { ...currentPosition };
       idleLastTime = now;
       idleNextSteerTime = now;
@@ -1217,7 +1252,7 @@ async function setupWorkStage() {
       x: (currentPosition.x - previousFramePosition.x) / frameDeltaTime,
       y: (currentPosition.y - previousFramePosition.y) / frameDeltaTime,
     };
-    const velocityEasing = inputOverride ? 0.28 : 0.42;
+    const velocityEasing = inputOverride || mobileExpanded ? 0.28 : 0.42;
 
     frameVelocity.x += (rawVelocity.x - frameVelocity.x) * velocityEasing;
     frameVelocity.y += (rawVelocity.y - frameVelocity.y) * velocityEasing;
@@ -1227,9 +1262,16 @@ async function setupWorkStage() {
     frame.style.transform = `translate3d(${currentPosition.x - visibleFrameWidth / 2}px, ${
       currentPosition.y - visibleFrameHeight / 2
     }px, 0) scale(${frameScale})`;
+    const preferredLabelY = currentPosition.y + visibleFrameHeight / 2 + captionGap;
+    const maximumLabelY = Math.max(
+      captionEdgeInset,
+      stage.clientHeight - projectLabel.offsetHeight - captionEdgeInset
+    );
+    const labelY = Math.min(preferredLabelY, maximumLabelY);
+
     projectLabel.style.maxWidth = `${visibleFrameWidth}px`;
     projectLabel.style.transform = `translate3d(${currentPosition.x - visibleFrameWidth / 2}px, ${
-      currentPosition.y + visibleFrameHeight / 2 + captionGap
+      labelY
     }px, 0)`;
 
     if (!lastTrailPosition) {
@@ -1259,6 +1301,7 @@ async function setupWorkStage() {
 
     if (
       stageVisible &&
+      !mobileExpanded &&
       now - lastTrailTime >= trailInterval &&
       (distanceSinceTrail >= trailDistance || scaleDistanceSinceTrail >= trailDistance)
     ) {

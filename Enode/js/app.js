@@ -3,19 +3,13 @@
 
 // ─── State ───────────────────────────────────────────────────────
 const state = {
-  mode: 'Video',          // Video | Image | Camera | Noise | Strips | Random
+  mode: 'Video',          // Video | Image | Camera | Strips | Random
   aspect: '1:1',
   exportW: 1080,
   exportH: 1080,
   density: 60,
   cellSize: 1,
   morph: 1,
-  speed: 0.45,
-  reaction: 72,           // 1..100 → 0.01..1.0 lerp
-  noiseScale: 22,
-  noiseType: 'simplex',   // simplex | ridged | warped (cycles on re-click)
-  noiseContrast: 1.0,     // 0.5 = washed, 1 = normal, 4 = punchy
-  angle: 0,               // halftone angle 0..45
   invert: false,
   outline: false,
   stroke: 1,
@@ -39,7 +33,6 @@ const state = {
     invertY: false,
     speed: 1.9,           // time advance (reference: time += speed * 0.01 / frame)
   },
-  audioColorMode: false,   // override FG hue from bass/mid/treble balance
   randomAudioDriven: false,// Random mode: each rect's value = its band level
   // Modulation matrix: each row routes a SOURCE (band level, per-band hit, beat,
   // BPM tick, or a generator) to a visual TARGET through an attack/release
@@ -47,12 +40,15 @@ const state = {
   audioMods: [
     { source: 'bass',    target: 'timeSpeed', depth: 0.73, attack: 45, release: 220, chance: 1,   invert: false, speed: 0.4,  bpmSync: false, env: 0, phase: 0 },
     { source: 'hit.mid', target: 'morph',     depth: 0.74, attack: 45, release: 220, chance: 0.9, invert: false, speed: 0.4,  bpmSync: false, env: 0, phase: 0 },
-    { source: 'beat/8',  target: 'flicker',   depth: 0.48, attack: 45, release: 220, chance: 0.9, invert: true,  speed: 0.4,  bpmSync: false, env: 0, phase: 0 },
     { source: 'lfo',     target: 'stripAnim', depth: 0.62, attack: 45, release: 220, chance: 1,   invert: false, speed: 0.25, bpmSync: true,  env: 0, phase: 0 },
   ],
 };
 
 function _clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+function smooth01(v) {
+  v = _clamp(v, 0, 1);
+  return v * v * (3 - 2 * v);
+}
 
 // ─── Modulation registries ───────────────────────────────────────
 // TARGETS: how each routable parameter responds. `apply:'mul'` scales the base
@@ -66,10 +62,7 @@ const MOD_TARGETS = {
   flicker:       { label: 'Flicker (data)', apply: 'add', range: 1.0 },
   timeSpeed:     { label: 'Playback speed', apply: 'mul', range: 3.0 },
   density:       { label: 'Density',        apply: 'add', range: 36,  clamp: [4, 240] },
-  morph:         { label: 'Morph',          apply: 'add', range: 1.2, clamp: [0, 4] },
-  angle:         { label: 'Halftone angle', apply: 'add', range: 45,  clamp: [0, 45] },
-  noiseScale:    { label: 'Noise scale',    apply: 'add', range: 24,  clamp: [1, 120] },
-  noiseContrast: { label: 'Noise contrast', apply: 'add', range: 2.0, clamp: [0.2, 6] },
+  morph:         { label: 'Roundness',      apply: 'add', range: 1.2, clamp: [0, 4] },
   hue:           { label: 'Hue rotate',     apply: 'add', range: 180 },
   stripCount:    { label: 'Strips · count', apply: 'add', range: 12,  clamp: [1, 50] },
   stripPhase:    { label: 'Strips · phase', apply: 'add', range: 1.0, clamp: [0, 5] },
@@ -101,31 +94,10 @@ function bpmTick(n) { return !!(window.enodeBpm && enodeBpm.onBeat[n]); }
 
 // Display order for the pickers.
 const MOD_SOURCE_ORDER = ['bass','mid','treble','rms','beat','hit.bass','hit.mid','hit.treble','beat/1','beat/2','beat/4','beat/8','beat/16','lfo','saw','noise'];
-const MOD_TARGET_ORDER = ['cellSize','ripple','scan','flicker','timeSpeed','density','morph','angle','noiseScale','noiseContrast','hue','stripCount','stripPhase','stripAnim','stripAmp'];
+const MOD_TARGET_ORDER = ['cellSize','ripple','scan','flicker','timeSpeed','density','morph','hue','stripCount','stripPhase','stripAnim','stripAmp'];
 
 // Generators: free-run speed (slider 0..1 → ~0.15..2 Hz) or quantized BPM sync.
 const GEN_SYNC_BEATS = [16, 8, 4, 2, 1];
-
-// Color-mode helper: returns an HSL color whose hue is weighted by spectral
-// balance. Bass-heavy → warm red, mid-heavy → green, treble-heavy → blue.
-// Lightness lifts a touch with overall loudness so quiet sections aren't dim.
-// Smoothed band-balance colour. The raw hue jumps every frame as the spectrum
-// shifts, which strobes; a heavy EMA makes it drift slowly between hues instead.
-let _bandHue = 120, _bandLight = 50;
-function audioBandColor() {
-  if (!window.enodeAudio) return null;
-  const bs = enodeAudio.levels.bass;
-  const ms = enodeAudio.levels.mid;
-  const ts = enodeAudio.levels.treble;
-  const total = bs + ms + ts;
-  if (total < 0.05) return null; // near-silence: don't override FG
-  // Hue stops: bass ~14° (red-orange), mid ~120° (green), treble ~220° (blue)
-  const hue = (14 * bs + 120 * ms + 220 * ts) / total;
-  const light = 50 + Math.min(15, total * 6);
-  _bandHue   += (hue   - _bandHue)   * 0.03;   // ~0.4 s glide @60fps
-  _bandLight += (light - _bandLight) * 0.03;
-  return `hsl(${_bandHue.toFixed(1)}, 75%, ${_bandLight.toFixed(1)}%)`;
-}
 
 // dt → EMA factor for a time constant (ms); framerate-independent.
 function modAlpha(tau, dt) { return 1 - Math.exp(-(dt || 16) / Math.max(1, tau)); }
@@ -155,6 +127,15 @@ function generatorValue(m, dt) {
 // `event` sources snap to 1 on a hit (instant attack) then decay; `gen` is direct.
 function updateMods(dt) {
   if (!window.enodeAudio || !state.audioMods) return;
+  // No track playing → every row decays to silence, generators and inverted
+  // rows included, so page load and pause are calm and deterministic.
+  if (!enodeAudio.playing) {
+    for (const m of state.audioMods) {
+      m.env += (0 - m.env) * modAlpha(220, dt);
+      m._value = 0;
+    }
+    return;
+  }
   for (const m of state.audioMods) {
     const src = MOD_SOURCES[m.source];
     if (!src) { m.env = 0; m._value = 0; continue; }
@@ -204,35 +185,9 @@ const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('fileInput');
 
 // ─── Source handling ─────────────────────────────────────────────
+// Simplex is still used by the modulation matrix's `noise` generator source.
 const simplex = new SimplexNoise();
 
-const NOISE_TYPES = ['simplex', 'ridged', 'warped'];
-
-// Returns a 0..1 value sampled from the chosen noise type. `ns` is the
-// frequency-space scaling already computed by the caller.
-function sampleNoise(type, x, y, t, ns, contrast) {
-  let v;
-  if (type === 'ridged') {
-    // Sharp ridges: 1 - |simplex|, squared to push contrast toward black/white.
-    const raw = simplex.noise3D(x * ns, y * ns, t);
-    v = 1 - Math.abs(raw);
-    v = v * v;
-  } else if (type === 'warped') {
-    // Domain-warped: displace sampling coords by a second noise field so the
-    // flow feels swirly / liquid rather than uniform.
-    const wx = simplex.noise3D(x * ns + 100, y * ns,       t * 0.7) * 0.6;
-    const wy = simplex.noise3D(x * ns,       y * ns + 200, t * 0.7) * 0.6;
-    v = (simplex.noise3D(x * ns + wx, y * ns + wy, t) + 1) / 2;
-  } else {
-    // simplex (default)
-    v = (simplex.noise3D(x * ns, y * ns, t) + 1) / 2;
-  }
-  if (contrast !== 1) {
-    v = 0.5 + (v - 0.5) * contrast;
-    if (v < 0) v = 0; else if (v > 1) v = 1;
-  }
-  return v;
-}
 const sampleCanvas = document.createElement('canvas');
 const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
 
@@ -249,6 +204,7 @@ let smoothed = [];
 let lastDensity = 0;
 let lastRows = 0;
 let randomSourceCanvas = null; // grayscale rectangles painted here; fed to grid sampler
+let mediaLoadToken = 0;
 
 function createVideoEl() {
   const v = document.createElement('video');
@@ -260,20 +216,32 @@ function createVideoEl() {
   return v;
 }
 
-function setVideoSource(url) {
+function setVideoSource(url, opts) {
+  opts = opts || {};
   if (!activeVideo) {
     activeVideo = createVideoEl();
     activeVideo.loop = true; // browser handles the loop; we hide the seam via snap
+  }
+  const token = ++mediaLoadToken;
+  if (opts.matchAspect) {
+    activeVideo.addEventListener('loadedmetadata', () => {
+      if (token === mediaLoadToken) matchOutputToSource(activeVideo.videoWidth, activeVideo.videoHeight);
+    }, { once: true });
   }
   activeVideo.src = url;
   lastVideoTime = 0;
   activeVideo.play().catch(() => {});
 }
 
-function setImageSource(url) {
+function setImageSource(url, opts) {
+  opts = opts || {};
+  const token = ++mediaLoadToken;
   const img = new Image();
   img.crossOrigin = 'anonymous';
-  img.onload = () => { imageEl = img; };
+  img.onload = () => {
+    imageEl = img;
+    if (opts.matchAspect && token === mediaLoadToken) matchOutputToSource(img.naturalWidth, img.naturalHeight);
+  };
   img.src = url;
 }
 
@@ -544,6 +512,34 @@ function applyAspect(val) {
   const sel = document.getElementById('resSelect');
   const key = `${w}x${h}`;
   if ([...sel.options].some(o => o.value === key)) sel.value = key;
+  document.getElementById('customRes').style.display = 'none';
+  document.getElementById('customW').value = w;
+  document.getElementById('customH').value = h;
+}
+
+function evenPx(n) {
+  return Math.max(2, Math.round(n / 2) * 2);
+}
+
+function matchOutputToSource(sourceW, sourceH) {
+  if (!sourceW || !sourceH || !isFinite(sourceW) || !isFinite(sourceH)) return;
+  const shortEdge = 1080;
+  const ar = sourceW / sourceH;
+  const w = ar >= 1 ? evenPx(shortEdge * ar) : shortEdge;
+  const h = ar >= 1 ? shortEdge : evenPx(shortEdge / ar);
+  const sel = document.getElementById('resSelect');
+  const customRes = document.getElementById('customRes');
+  const customW = document.getElementById('customW');
+  const customH = document.getElementById('customH');
+  if (sel) sel.value = 'custom';
+  if (customRes) customRes.style.display = '';
+  if (customW) customW.value = w;
+  if (customH) customH.value = h;
+  document.querySelectorAll('#aspectSeg button').forEach(b => b.classList.remove('active'));
+  state.aspect = 'custom';
+  setExportSize(w, h);
+  updateSourcePreview();
+  if (state.editRects) updateRectEditor();
 }
 
 window.addEventListener('resize', fitCanvasToStage);
@@ -575,23 +571,16 @@ function drawScene(targetCtx, w, h, opts) {
   const scanPos = (animClock * 0.35) % 1;           // scan sweep position 0..1
   const flickerFrame = Math.floor(animClock * 14);  // flicker refresh rate
   const morph = liveMod ? applyMods(state.morph, 'morph') : state.morph;
-  const angleDeg = opts.angle != null ? opts.angle
-      : (liveMod ? applyMods(state.angle, 'angle') : state.angle);
-  const angle = angleDeg * Math.PI / 180;
-  const reactionLerp = state.reaction / 100;
+  // Smoothing is automatic: Strips needs a heavy lag for its fluid feel,
+  // every other mode tracks the source fast.
+  const reactionLerp = (state.mode === 'Strips' ? 8 : 72) / 100;
   const invert = state.invert;
   const outline = state.outline;
   const stroke = state.stroke;
-  // Color mode overrides FG with a band-weighted hue; otherwise a `hue` mod row
-  // can rotate the FG hue. The user's BG slider still applies. Falls back to
-  // state.fg when audio is silent / off.
-  const bandFg = (liveMod && state.audioColorMode) ? audioBandColor() : null;
+  // A `hue` mod row can rotate the FG hue; otherwise the picked FG applies.
   const hueRot = liveMod ? modSum('hue') * MOD_TARGETS.hue.range : 0;
-  const fg = bandFg || (hueRot !== 0 ? rotateHue(state.fg, hueRot) : state.fg);
+  const fg = hueRot !== 0 ? rotateHue(state.fg, hueRot) : state.fg;
   const bg = state.bg;
-  const noiseScaleBase = liveMod ? applyMods(state.noiseScale, 'noiseScale') : state.noiseScale;
-  const noiseScale = 1 / (noiseScaleBase * 2 + 0.1);
-  const noiseContrast = liveMod ? applyMods(state.noiseContrast, 'noiseContrast') : state.noiseContrast;
   const mode = state.mode;
   // Strips params: live modulation only on the live render (variation
   // thumbnails keep static param values). Speed is applied in tick(), where
@@ -629,7 +618,7 @@ function drawScene(targetCtx, w, h, opts) {
   }
 
   let sampleData = null;
-  if (src && mode !== 'Noise' && mode !== 'Strips') {
+  if (src && mode !== 'Strips') {
     sampleCanvas.width = density;
     sampleCanvas.height = rows;
     // Center-crop the source to the canvas aspect ratio so circles/cameras
@@ -652,42 +641,20 @@ function drawScene(targetCtx, w, h, opts) {
     } catch (e) {}
   }
 
-  // Halftone angle: rotate the cell grid around the canvas center.
-  // Oversample by sqrt(2) so corners stay covered when rotated.
-  const cx = w / 2, cy = h / 2;
-  if (angle !== 0) {
-    targetCtx.save();
-    targetCtx.translate(cx, cy);
-    targetCtx.rotate(angle);
-    targetCtx.translate(-cx, -cy);
-  }
-
-  // Effective grid extends past canvas when rotated. Compute extra rings.
-  const pad = angle !== 0 ? Math.ceil(density * 0.4) : 0;
-
   targetCtx.fillStyle = fg;
   targetCtx.strokeStyle = fg;
   targetCtx.lineWidth = stroke;
 
-  for (let i = -pad; i < density + pad; i++) {
-    for (let j = -pad; j < rows + pad; j++) {
+  for (let i = 0; i < density; i++) {
+    for (let j = 0; j < rows; j++) {
       let target;
-      const inBounds = i >= 0 && i < density && j >= 0 && j < rows;
-      if (mode === 'Noise') {
-        target = sampleNoise(state.noiseType, i, j, time, noiseScale, noiseContrast);
-      } else if (mode === 'Strips') {
+      if (mode === 'Strips') {
         // i/density (not i/(density-1)) — matches the reference indexing.
         target = stripsValue(i / density, j / rows, time, stripsParams);
-      } else if (sampleData && inBounds) {
+      } else if (sampleData) {
         const idx = (j * density + i) * 4;
         target = (0.299 * sampleData[idx] + 0.587 * sampleData[idx + 1] + 0.114 * sampleData[idx + 2]) / 255;
-      } else if (sampleData) {
-        // Out-of-bounds (rotation pad): sample nearest valid cell
-        const ii = Math.max(0, Math.min(density - 1, i));
-        const jj = Math.max(0, Math.min(rows - 1, j));
-        const idx = (jj * density + ii) * 4;
-        target = (0.299 * sampleData[idx] + 0.587 * sampleData[idx + 1] + 0.114 * sampleData[idx + 2]) / 255;
-      } else if (useSmoothing && inBounds) {
+      } else if (useSmoothing) {
         target = buf[i + j * density] || 0;
       } else {
         target = 0;
@@ -696,7 +663,7 @@ function drawScene(targetCtx, w, h, opts) {
       if (invert) target = 1 - target;
 
       let val;
-      if (useSmoothing && inBounds) {
+      if (useSmoothing) {
         if (snapNextFrame) {
           buf[i + j * density] = target;
         } else {
@@ -735,9 +702,8 @@ function drawScene(targetCtx, w, h, opts) {
       const size = cellSize * cellSizeMul * val;
       const radius = (size / 2) * Math.min(1, val * morph);
 
-      // Outline mode: skip cells that are too small for a clean stroke. A 1px
-      // stroke on a sub-pixel rect causes anti-aliasing flicker as size lerps;
-      // fill is forgiving but stroke shows it. Threshold = stroke * 3.
+      // Outline mode fades in from the old stability threshold instead of
+      // popping on/off as small cells cross a single cutoff.
       const minDraw = outline ? Math.max(2, stroke * 3) : 0.5;
       if (size > minDraw) {
         targetCtx.beginPath();
@@ -753,13 +719,23 @@ function drawScene(targetCtx, w, h, opts) {
           targetCtx.arcTo(x0, y0 + s, x0, y0, r);
           targetCtx.arcTo(x0, y0, x0 + s, y0, r);
         }
-        if (outline) targetCtx.stroke();
-        else targetCtx.fill();
+        if (outline) {
+          const fadeSpan = Math.max(4, stroke * 4);
+          const alpha = smooth01((size - minDraw) / fadeSpan);
+          if (alpha < 1) {
+            const prevAlpha = targetCtx.globalAlpha;
+            targetCtx.globalAlpha = prevAlpha * alpha;
+            targetCtx.stroke();
+            targetCtx.globalAlpha = prevAlpha;
+          } else {
+            targetCtx.stroke();
+          }
+        } else {
+          targetCtx.fill();
+        }
       }
     }
   }
-
-  if (angle !== 0) targetCtx.restore();
 }
 
 let _lastTickT = 0;
@@ -777,10 +753,9 @@ function tick(now) {
     updateMods(dt);
   }
 
-  // Bass-driven speed surge for the generative modes so Noise/Strips visibly
-  // move with the kick. (Video uses a much gentler, smoothed lean below.)
+  // Bass-driven speed surge for the generative mode so Strips visibly
+  // moves with the kick. (Video uses a much gentler, smoothed lean below.)
   const speedBoost = applyMods(1, 'timeSpeed');
-  if (state.playing && state.mode === 'Noise')  time += state.speed * (dt / 1000) * speedBoost;
   // Strips: reference advances `time += speed * 0.01` per 60fps frame —
   // normalized by dt so it runs the same on any refresh rate.
   if (state.playing && state.mode === 'Strips') {
@@ -819,6 +794,23 @@ document.querySelectorAll('.tab').forEach(tab => {
   });
 });
 
+// ─── Disclosures ────────────────────────────────────────────────
+// Advanced sections ship collapsed so the default sidebar stays rookie-simple;
+// everything inside keeps working while hidden.
+function wireDisclosure(btnId, panelId) {
+  const btn = document.getElementById(btnId);
+  const panel = document.getElementById(panelId);
+  if (!btn || !panel) return;
+  btn.addEventListener('click', () => {
+    panel.hidden = !panel.hidden;
+    btn.classList.toggle('open', !panel.hidden);
+    const mark = btn.querySelector('.disclosure-mark');
+    if (mark) mark.textContent = panel.hidden ? '+' : '–';
+  });
+}
+wireDisclosure('modDisclosure', 'modPanel');
+wireDisclosure('stripsDisclosure', 'stripsFine');
+
 // ─── Segmented controls ─────────────────────────────────────────
 function wireSeg(id, onChange) {
   const root = document.getElementById(id);
@@ -839,13 +831,6 @@ wireSeg('modeSeg', (val, wasActive) => {
     regenerateRects();
     return;
   }
-  // Noise button on re-click cycles through noise types (simplex/ridged/warped)
-  if (val === 'Noise' && wasActive) {
-    const i = NOISE_TYPES.indexOf(state.noiseType);
-    state.noiseType = NOISE_TYPES[(i + 1) % NOISE_TYPES.length];
-    if (typeof syncNoiseUI === 'function') syncNoiseUI();
-    return;
-  }
   state.mode = val;
   if (val === 'Camera') {
     if (!cameraStream) startCamera();
@@ -859,7 +844,6 @@ wireSeg('modeSeg', (val, wasActive) => {
   }
   updateEditorVisibility();
   updateStripsVisibility();
-  updateNoiseVisibility();
   updateRandomVisibility();
   updateSourcePreview();
 });
@@ -881,9 +865,6 @@ function wireSlider(id, key, valId, fmt) {
 wireSlider('density', 'density', 'densityVal', n => Math.round(n));
 wireSlider('cellSize', 'cellSize', 'cellSizeVal', n => n.toFixed(2));
 wireSlider('morph', 'morph', 'morphVal', n => n.toFixed(2));
-wireSlider('speed', 'speed', 'speedVal', n => n.toFixed(2));
-wireSlider('reaction', 'reaction', 'reactionVal', n => Math.round(n));
-wireSlider('angle', 'angle', 'angleVal', n => Math.round(n) + '°');
 wireSlider('stroke', 'stroke', 'strokeVal', n => n.toFixed(1));
 
 // ─── Strips controls ───────────────────────────────────────────
@@ -934,9 +915,9 @@ const STRIP_PRESETS = {
 };
 
 // The reference sketch's default look — applied once, the first time the user
-// enters Strips mode. reaction 8 (heavy smoothing) is essential to the fluid
-// feel; the rest is the grey-on-grey outlined-squircle aesthetic.
-const STRIP_LOOK = { density: 88, reaction: 8, cellSize: 0.6, morph: 1.0, outline: true, stroke: 1, fg: '#919191', bg: '#DBD8D8' };
+// enters Strips mode: the grey-on-grey outlined-squircle aesthetic. (The heavy
+// smoothing essential to the fluid feel is applied per-mode in drawScene.)
+const STRIP_LOOK = { density: 88, cellSize: 0.6, morph: 1.0, outline: true, stroke: 1, fg: '#919191', bg: '#DBD8D8' };
 let stripLookApplied = false;
 function applyStripLook() {
   if (stripLookApplied) return;
@@ -969,7 +950,6 @@ function syncStripLookUI() {
   };
   setSlider('density',  'densityVal',  state.density,  n => Math.round(n));
   setSlider('cellSize', 'cellSizeVal', state.cellSize, n => n.toFixed(2));
-  setSlider('reaction', 'reactionVal', state.reaction, n => Math.round(n));
   setSlider('morph',    'morphVal',    state.morph,    n => n.toFixed(2));
   setSlider('stroke',   'strokeVal',   state.stroke,   n => n.toFixed(1));
   const outlineChip = document.getElementById('chipOutline');
@@ -1022,13 +1002,6 @@ function updateRandomVisibility() {
   if (el) el.style.display = state.mode === 'Random' ? '' : 'none';
 }
 
-// Color mode: FG hue follows band balance
-const audioColorToggle = document.getElementById('audioColorToggle');
-audioColorToggle.addEventListener('click', () => {
-  state.audioColorMode = !state.audioColorMode;
-  audioColorToggle.classList.toggle('active', state.audioColorMode);
-});
-
 // Audio-driven Random rectangles
 const randomAudioToggle = document.getElementById('randomAudioToggle');
 randomAudioToggle.addEventListener('click', () => {
@@ -1038,37 +1011,6 @@ randomAudioToggle.addEventListener('click', () => {
   // when audio is silent (resets to black) or rebuilds to original brightness.
   if (state.randomAudioDriven) repaintRandomAudio();
   else rebuildRandomSource();
-});
-
-// ─── Noise controls ────────────────────────────────────────────
-const noiseGroup       = document.getElementById('noiseGroup');
-const noiseTypeLabel   = document.getElementById('noiseTypeLabel');
-const noiseScaleSlider = document.getElementById('noiseScaleSlider');
-const noiseScaleVal    = document.getElementById('noiseScaleVal');
-const noiseContrastEl  = document.getElementById('noiseContrast');
-const noiseContrastVal = document.getElementById('noiseContrastVal');
-
-function syncNoiseUI() {
-  // Capitalize the type for display
-  const t = state.noiseType;
-  noiseTypeLabel.textContent = t.charAt(0).toUpperCase() + t.slice(1);
-  noiseScaleSlider.value = state.noiseScale;
-  noiseScaleVal.textContent = Math.round(state.noiseScale);
-  noiseContrastEl.value = state.noiseContrast;
-  noiseContrastVal.textContent = state.noiseContrast.toFixed(2);
-}
-
-function updateNoiseVisibility() {
-  noiseGroup.style.display = state.mode === 'Noise' ? '' : 'none';
-}
-
-noiseScaleSlider.addEventListener('input', e => {
-  state.noiseScale = parseFloat(e.target.value);
-  noiseScaleVal.textContent = Math.round(state.noiseScale);
-});
-noiseContrastEl.addEventListener('input', e => {
-  state.noiseContrast = parseFloat(e.target.value);
-  noiseContrastVal.textContent = state.noiseContrast.toFixed(2);
 });
 
 // Big toggle chips replace the old <input type=checkbox> controls.
@@ -1122,11 +1064,11 @@ function loadFile(file) {
   if (!file) return;
   const url = URL.createObjectURL(file);
   if (file.type.startsWith('image/')) {
-    setImageSource(url);
+    setImageSource(url, { matchAspect: true });
     state.mode = 'Image';
     syncModeUI();
   } else if (file.type.startsWith('video/')) {
-    setVideoSource(url);
+    setVideoSource(url, { matchAspect: true });
     state.mode = 'Video';
     syncModeUI();
   } else if (file.type.startsWith('audio/')) {
@@ -1336,20 +1278,46 @@ function snapshotSource() {
 let frozenSource = null;
 let variationPresets = [];
 
+// The state fields a variation carries. Thumbnails render by swapping these
+// into state (drawScene reads them from there), then restoring the snapshot.
+const VARIATION_KEYS = ['density', 'cellSize', 'morph', 'invert', 'outline', 'stroke', 'fg', 'bg', 'randomSeed'];
+
 function makeVariations() {
-  // 9 randomized combos of density / cellSize / angle.
+  // 9 randomized combos across geometry, style and color — not just grid size,
+  // so the tiles read as genuinely different directions, not nudges.
   const rng = mulberry32(Math.floor(Math.random() * 1e9));
+  const cellChoices = [0.6, 0.8, 1.0, 1.2, 1.6];
+  const morphChoices = [0, 0.4, 1.0, 1.6, 2.5];
+  // Current colors weighted highest, then the three preset combos.
+  const comboChoices = [
+    { fg: state.fg, bg: state.bg },
+    { fg: state.fg, bg: state.bg },
+    { fg: state.fg, bg: state.bg },
+    { fg: '#000000', bg: '#FFFFFF' },
+    { fg: '#FFFFFF', bg: '#000000' },
+    { fg: '#FF3A2F', bg: '#0a0a0a' },
+  ];
+  // Shuffled density deck cycled across the tiles guarantees a spread of
+  // coarse-to-fine grids instead of clustering near one value.
+  const densityDeck = [16, 28, 44, 60, 80, 100].sort(() => rng() - 0.5);
+  const stripNames = Object.keys(STRIP_PRESETS);
   variationPresets = [];
   for (let i = 0; i < 9; i++) {
-    const densityChoices = [16, 28, 44, 60, 80, 100];
-    const cellChoices = [0.6, 0.8, 1.0, 1.2, 1.6];
-    // Heavy weight on 0° — only one in ~6 variations is rotated
-    const angleChoices = [0, 0, 0, 0, 0, 0, 0, 0, 15, 30, 45];
+    const combo = comboChoices[Math.floor(rng() * comboChoices.length)];
+    const outline = rng() < 0.2;
     variationPresets.push({
-      density: densityChoices[Math.floor(rng() * densityChoices.length)],
+      density: densityDeck[i % densityDeck.length],
       cellSize: cellChoices[Math.floor(rng() * cellChoices.length)],
-      angle: angleChoices[Math.floor(rng() * angleChoices.length)],
+      morph: morphChoices[Math.floor(rng() * morphChoices.length)],
+      invert: rng() < 0.35,
+      outline,
+      stroke: outline ? 1 + Math.round(rng()) : state.stroke,
+      fg: combo.fg,
+      bg: combo.bg,
       randomSeed: Math.floor(rng() * 1e9),
+      strips: state.mode === 'Strips'
+        ? { ...state.strips, ...STRIP_PRESETS[stripNames[Math.floor(rng() * stripNames.length)]].strips }
+        : null,
     });
   }
 }
@@ -1367,12 +1335,17 @@ function closeVariations() {
   frozenSource = null;
 }
 
+function applyVariationToState(preset) {
+  for (const k of VARIATION_KEYS) state[k] = preset[k];
+  if (preset.strips) Object.assign(state.strips, preset.strips);
+}
+
 function renderVariations() {
   modalGrid.innerHTML = '';
   const tileSize = 240;
   const ar = state.exportW / state.exportH;
   const tw = tileSize, th = Math.round(tileSize / ar);
-  variationPresets.forEach((preset, idx) => {
+  variationPresets.forEach(preset => {
     const tile = document.createElement('div');
     tile.className = 'modal-tile';
     tile.style.aspectRatio = `${state.exportW}/${state.exportH}`;
@@ -1380,45 +1353,38 @@ function renderVariations() {
     cv.width = tw; cv.height = th;
     const c2 = cv.getContext('2d');
 
-    // Render with the preset's params, using the snapshot source.
-    const origDensity = state.density, origCell = state.cellSize, origAngle = state.angle, origSeed = state.randomSeed;
-    state.density = preset.density;
-    state.cellSize = preset.cellSize;
-    state.angle = preset.angle;
-    state.randomSeed = preset.randomSeed;
+    // Render with the preset's params swapped into state, then restore.
+    const snapshot = {};
+    for (const k of VARIATION_KEYS) snapshot[k] = state[k];
+    const stripsSnapshot = { ...state.strips };
+    applyVariationToState(preset);
 
     let sourceOverride = null;
     if (state.mode === 'Random') {
       sourceOverride = buildRandomCanvas(preset.randomSeed, state.exportW, state.exportH, state.gradient);
-    } else if (state.mode !== 'Noise' && frozenSource) {
+    } else if (frozenSource) {
       sourceOverride = frozenSource;
     }
     drawScene(c2, tw, th, { noSmoothing: true, sourceOverride });
 
-    state.density = origDensity;
-    state.cellSize = origCell;
-    state.angle = origAngle;
-    state.randomSeed = origSeed;
+    Object.assign(state, snapshot);
+    Object.assign(state.strips, stripsSnapshot);
 
     tile.appendChild(cv);
     const meta = document.createElement('div');
     meta.className = 'modal-tile-meta';
-    meta.textContent = `${preset.density} · ${preset.cellSize.toFixed(1)} · ${preset.angle}°`;
+    const flags = [preset.invert && 'inv', preset.outline && 'out'].filter(Boolean);
+    meta.textContent = [preset.density, preset.morph.toFixed(1), ...flags].join(' · ');
     tile.appendChild(meta);
 
     tile.addEventListener('click', () => {
-      state.density = preset.density;
-      state.cellSize = preset.cellSize;
-      state.angle = preset.angle;
-      state.randomSeed = preset.randomSeed;
+      applyVariationToState(preset);
       if (state.mode === 'Random') regenerateRects();
-      // Sync UI
-      document.getElementById('density').value = preset.density;
-      document.getElementById('densityVal').textContent = preset.density;
-      document.getElementById('cellSize').value = preset.cellSize;
-      document.getElementById('cellSizeVal').textContent = preset.cellSize.toFixed(2);
-      document.getElementById('angle').value = preset.angle;
-      document.getElementById('angleVal').textContent = preset.angle + '°';
+      // Sync UI: sliders/chips/swatches for everything a variation can touch.
+      syncStripLookUI();
+      syncStripsUI();
+      clearActiveStripPreset();
+      chipInvert.classList.toggle('active', state.invert);
       closeVariations();
     });
 
@@ -1498,28 +1464,25 @@ function buildSVG(w, h) {
   const cellSize = w / density;
   const cellMul = applyMods(state.cellSize, 'cellSize');
   const morph = applyMods(state.morph, 'morph');
-  const angle = state.angle;
-  const cx = w / 2, cy = h / 2;
 
   const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`];
   parts.push(`<rect width="${w}" height="${h}" fill="${state.bg}"/>`);
-  parts.push(angle !== 0 ? `<g transform="rotate(${angle} ${cx} ${cy})">` : '<g>');
+  parts.push('<g>');
 
-  const pad = angle !== 0 ? Math.ceil(density * 0.4) : 0;
-  for (let i = -pad; i < density + pad; i++) {
-    for (let j = -pad; j < rows + pad; j++) {
-      // Rotation pad ring clamp-samples the nearest buffer cell, like the live render.
-      const ii = Math.max(0, Math.min(density - 1, i));
-      const jj = Math.max(0, Math.min(rows - 1, j));
-      const v = smoothed[ii + jj * density] || 0;
+  for (let i = 0; i < density; i++) {
+    for (let j = 0; j < rows; j++) {
+      const v = smoothed[i + j * density] || 0;
       const size = cellSize * cellMul * v;
       const minDrawSvg = state.outline ? Math.max(2, state.stroke * 3) : 0.5;
       if (size < minDrawSvg) continue;
+      const opacity = state.outline ? smooth01((size - minDrawSvg) / Math.max(4, state.stroke * 4)) : 1;
+      if (opacity <= 0) continue;
       const x = i * cellSize + cellSize / 2 - size / 2;
       const y = j * cellSize + cellSize / 2 - size / 2;
       const r = (size / 2) * Math.min(1, v * morph);
+      const opacityAttr = state.outline && opacity < 1 ? ` opacity="${opacity.toFixed(3)}"` : '';
       const fillOrStroke = state.outline
-        ? `fill="none" stroke="${state.fg}" stroke-width="${state.stroke}"`
+        ? `fill="none" stroke="${state.fg}" stroke-width="${state.stroke}"${opacityAttr}`
         : `fill="${state.fg}"`;
       parts.push(`<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${size.toFixed(2)}" height="${size.toFixed(2)}" rx="${r.toFixed(2)}" ry="${r.toFixed(2)}" ${fillOrStroke}/>`);
     }
@@ -1538,9 +1501,9 @@ document.getElementById('exportSVG').addEventListener('click', () => {
 // Records the live canvas while it renders, so smoothing, audio modulation and
 // FX land in the file exactly as seen — a 10 s export records for 10 s.
 // captureTick() (called from tick() after drawScene) copies the canvas into
-// the recorder at 25 fps slots; the recording object supplies captureFrame()
+// the recorder at 60 fps slots; the recording object supplies captureFrame()
 // and finish() per format.
-const REC_FPS = 25;
+const REC_FPS = 60;
 let recording = null;
 
 // For Video mode, match the source duration for a seamless loop.
@@ -1736,22 +1699,6 @@ function updateSourcePreview() {
     for (let i = 0; i < targetW; i += step) {
       for (let j = 0; j < targetH; j += step) {
         const v = stripsValue(i / Math.max(1, targetW - 1), j / Math.max(1, targetH - 1), time, sp);
-        const g = Math.round(v * 255);
-        sourcePreviewCtx.fillStyle = `rgb(${g},${g},${g})`;
-        sourcePreviewCtx.fillRect(i, j, step, step);
-      }
-    }
-    sourcePreviewWrap.classList.add('has-content');
-    return;
-  } else if (state.mode === 'Noise') {
-    sourcePreviewCtx.fillStyle = '#202020';
-    sourcePreviewCtx.fillRect(0, 0, targetW, targetH);
-    // Sample a few noise points so user knows it's animating
-    const ns = 1 / (state.noiseScale * 2 + 0.1);
-    const step = 4;
-    for (let i = 0; i < targetW; i += step) {
-      for (let j = 0; j < targetH; j += step) {
-        const v = sampleNoise(state.noiseType, i * 0.5, j * 0.5, time, ns, state.noiseContrast);
         const g = Math.round(v * 255);
         sourcePreviewCtx.fillStyle = `rgb(${g},${g},${g})`;
         sourcePreviewCtx.fillRect(i, j, step, step);
@@ -2130,7 +2077,7 @@ modListEl.addEventListener('click', e => {
 
 const modAddBtn = document.getElementById('modAddBtn');
 if (modAddBtn) modAddBtn.addEventListener('click', () => {
-  state.audioMods.push({ source: 'treble', target: 'angle', depth: 0.5, attack: 45, release: 220, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 });
+  state.audioMods.push({ source: 'treble', target: 'hue', depth: 0.5, attack: 45, release: 220, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 });
   renderModList();
 });
 
@@ -2139,9 +2086,9 @@ if (modAddBtn) modAddBtn.addEventListener('click', () => {
 // and generators add slow drift. One target per row so they don't pile up.
 const RANDOM_POOLS = [
   { src: ['bass', 'beat', 'hit.bass', 'beat/4'], tgt: ['cellSize', 'density', 'stripCount', 'timeSpeed', 'ripple'] },
-  { src: ['mid', 'hit.mid', 'rms'],              tgt: ['morph', 'noiseContrast', 'stripPhase', 'scan'] },
-  { src: ['treble', 'hit.treble', 'beat/8'],     tgt: ['angle', 'noiseScale', 'hue', 'flicker'] },
-  { src: ['lfo', 'noise', 'saw'],                tgt: ['hue', 'noiseScale', 'stripAnim', 'angle'] },
+  { src: ['mid', 'hit.mid', 'rms'],              tgt: ['morph', 'stripPhase', 'scan'] },
+  { src: ['treble', 'hit.treble', 'beat/8'],     tgt: ['hue', 'flicker'] },
+  { src: ['lfo', 'noise', 'saw'],                tgt: ['hue', 'stripAnim'] },
 ];
 const _pick = a => a[Math.floor(Math.random() * a.length)];
 function randomizeMods() {
@@ -2232,7 +2179,5 @@ setVideoSource(DEMO_VIDEO_URL);
 regenerateRects(); // pre-populate so Random shows immediately on first switch
 updateEditorVisibility(); // sync Gradient chip visibility with initial mode
 updateStripsVisibility(); // hide Strips panel until user picks Strips mode
-updateNoiseVisibility();  // hide Noise panel until user picks Noise mode
 updateRandomVisibility(); // hide Random panel until user picks Random mode
-syncNoiseUI();
 requestAnimationFrame(tick);

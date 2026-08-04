@@ -63,7 +63,6 @@
             <button data-val="Video" class="active">Video</button>
             <button data-val="Image">Image</button>
             <button data-val="Camera">Camera</button>
-            <button data-val="Noise">Noise</button>
             <button data-val="Strips" data-tip="Animated horizontal wave bands.">Strips</button>
             <button data-val="Random" data-tip="Click again to reshuffle the layout.">Random</button>
           </div>
@@ -86,7 +85,8 @@
             <button data-preset="vertical">Vertical Flow</button>
           </div>
 
-          <div class="label" style="margin-top:14px">Strips settings</div>
+          <button class="disclosure" id="stripsDisclosure">Fine-tune <span class="disclosure-mark">+</span></button>
+          <div class="disclosure-body" id="stripsFine" hidden>
           <div class="slider-row">
             <label data-tip="How many vertical strips across the canvas.">Count <span class="val" id="stripCountVal">7</span></label>
             <input type="range" id="stripCount" min="1" max="50" step="1" value="7">
@@ -131,23 +131,6 @@
             <span class="dot"></span>
             <span>Invert Y axis</span>
           </button>
-        </div>
-
-        <!-- NOISE ──────────────────────────────────────────── -->
-        <div class="group noise-group" id="noiseGroup" style="display:none">
-          <div class="label">Noise — <span id="noiseTypeLabel" class="noise-type-label">Simplex</span></div>
-          <div class="noise-hint">click <b>Noise</b> again to cycle type</div>
-          <div class="slider-row">
-            <label data-tip="Lower = bigger blobs, higher = finer detail.">Scale <span class="val" id="noiseScaleVal">22</span></label>
-            <input type="range" id="noiseScaleSlider" min="5" max="60" step="1" value="22">
-          </div>
-          <div class="slider-row">
-            <label data-tip="Pushes mid-tones toward black/white for a punchier image.">Contrast <span class="val" id="noiseContrastVal">1.00</span></label>
-            <input type="range" id="noiseContrast" min="0.5" max="4" step="0.05" value="1">
-          </div>
-          <div class="slider-row">
-            <label data-tip="How fast the noise field drifts.">Speed <span class="val" id="speedVal">0.45</span></label>
-            <input type="range" id="speed" min="0" max="2" step="0.01" value="0.45">
           </div>
         </div>
 
@@ -186,16 +169,14 @@
           </div>
           <div class="audio-drop" id="audioDrop">drop .mp3 here</div>
 
-          <div class="sub-label">Reactivity <span class="sub-hint">source → parameter</span></div>
-          <div class="mod-list" id="modList"></div>
-          <div class="mod-actions">
-            <button class="mod-add" id="modAddBtn">+ Add routing</button>
-            <button class="mod-add" id="modRandomBtn" data-tip="Generate a fresh set of routings that still make musical sense.">⚄ Randomize</button>
+          <button class="disclosure" id="modDisclosure" data-tip="Route audio (bass, hits, beats) to visual parameters.">Reactivity <span class="disclosure-mark">+</span></button>
+          <div class="disclosure-body" id="modPanel" hidden>
+            <div class="mod-list" id="modList"></div>
+            <div class="mod-actions">
+              <button class="mod-add" id="modAddBtn">+ Add routing</button>
+              <button class="mod-add" id="modRandomBtn" data-tip="Generate a fresh set of routings that still make musical sense.">⚄ Randomize</button>
+            </div>
           </div>
-          <button class="audio-strips-toggle" id="audioColorToggle" style="margin-top:10px">
-            <span class="dot"></span>
-            <span>Color mode (bands → hue)</span>
-          </button>
         </div>
 
         <!-- TOGGLES ────────────────────────────────────────── -->
@@ -240,21 +221,13 @@
             <label data-tip="Maximum size of each cell relative to its grid slot. 1 fills the slot.">Cell size <span class="val" id="cellSizeVal">1.00</span></label>
             <input type="range" id="cellSize" min="0" max="2" step="0.01" value="1">
           </div>
-          <div class="slider-row">
-            <label data-tip="Rotates the cell grid. Classic halftone newsprint look at 15° or 45°.">Halftone angle <span class="val" id="angleVal">0°</span></label>
-            <input type="range" id="angle" min="0" max="45" step="1" value="0">
-          </div>
-          <div class="slider-row">
-            <label data-tip="How quickly cells follow the source. Low = lazy/lagging, 100 = instant.">Reaction speed <span class="val" id="reactionVal">72</span></label>
-            <input type="range" id="reaction" min="1" max="100" step="1" value="72">
-          </div>
         </div>
 
         <!-- STYLE ──────────────────────────────────────────── -->
         <div class="group">
           <div class="label">Style</div>
           <div class="slider-row">
-            <label data-tip="Square-to-circle transition. 0 = square, higher = more rounded at bright cells.">Morph <span class="val" id="morphVal">1.00</span></label>
+            <label data-tip="Square-to-circle transition. 0 = square, higher = more rounded at bright cells.">Roundness <span class="val" id="morphVal">1.00</span></label>
             <input type="range" id="morph" min="0" max="3" step="0.01" value="1">
           </div>
           <div class="slider-row stroke-row" id="strokeRow" style="display:none">
@@ -313,7 +286,7 @@
         </div>
 
         <div class="group">
-          <div class="label">MP4 video (25fps)</div>
+          <div class="label">MP4 video (60fps)</div>
           <div class="slider-row">
             <label>Duration <span class="val" id="durVal">5.0s</span></label>
             <input type="range" id="duration" min="1" max="15" step="0.5" value="5">

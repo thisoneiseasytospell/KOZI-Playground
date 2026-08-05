@@ -44,6 +44,8 @@ const state = {
   ],
 };
 
+const MAX_CELL_SIZE = 1.1;
+
 function _clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 function smooth01(v) {
   v = _clamp(v, 0, 1);
@@ -56,7 +58,7 @@ function smooth01(v) {
 // `ripple`/`scan`/`flicker`/`timeSpeed`/`hue` have no base slider — they read Σ via
 // a synthetic base (0 or 1). New target = one entry here + one apply-site.
 const MOD_TARGETS = {
-  cellSize:      { label: 'Cell size',      apply: 'mul', range: 2.0, clamp: [0, 2] },
+  cellSize:      { label: 'Cell size',      apply: 'mul', range: 2.0, clamp: [0, MAX_CELL_SIZE] },
   ripple:        { label: 'Ripple (pulse)', apply: 'add', range: 1.2 },
   scan:          { label: 'Scan (sweep)',   apply: 'add', range: 1.4 },
   flicker:       { label: 'Flicker (data)', apply: 'add', range: 1.0 },
@@ -559,9 +561,9 @@ function drawScene(targetCtx, w, h, opts) {
   // use the noSmoothing path (liveMod=false) and stay static, never modulated.
   const density = Math.floor(opts.density != null ? opts.density
       : (liveMod ? applyMods(state.density, 'density') : state.density));
-  const cellSizeMul = opts.cellSize != null
+  const cellSizeMul = _clamp(opts.cellSize != null
       ? opts.cellSize
-      : (liveMod ? applyMods(state.cellSize, 'cellSize') : state.cellSize);
+      : (liveMod ? applyMods(state.cellSize, 'cellSize') : state.cellSize), 0, MAX_CELL_SIZE);
   // timeSpeed / hue / the per-cell effects have no base slider — they read Σ via a
   // synthetic base. Ripple / Scan / Flicker replace the old sparkle jitter.
   const rippleAmt  = liveMod ? applyMods(0, 'ripple')  : 0;
@@ -1286,7 +1288,7 @@ function makeVariations() {
   // 9 randomized combos across geometry, style and color — not just grid size,
   // so the tiles read as genuinely different directions, not nudges.
   const rng = mulberry32(Math.floor(Math.random() * 1e9));
-  const cellChoices = [0.6, 0.8, 1.0, 1.2, 1.6];
+  const cellChoices = [0.6, 0.75, 0.9, 1.0, MAX_CELL_SIZE];
   const morphChoices = [0, 0.4, 1.0, 1.6, 2.5];
   // Current colors weighted highest, then the three preset combos.
   const comboChoices = [
@@ -1462,7 +1464,7 @@ function buildSVG(w, h) {
   const density = lastDensity || Math.floor(state.density);
   const rows = lastRows || Math.ceil(h / (w / Math.max(1, density)));
   const cellSize = w / density;
-  const cellMul = applyMods(state.cellSize, 'cellSize');
+  const cellMul = _clamp(applyMods(state.cellSize, 'cellSize'), 0, MAX_CELL_SIZE);
   const morph = applyMods(state.morph, 'morph');
 
   const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`];

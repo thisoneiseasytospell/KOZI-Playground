@@ -211,6 +211,15 @@
           </div>
           <div class="audio-drop" id="audioDrop">drop .mp3 here</div>
 
+          <div class="slider-row audio-influence-row">
+            <label data-tip="Master strength for every audio-to-visual routing.">Visual influence <span class="val" id="audioInfluenceVal">1.35×</span></label>
+            <input type="range" id="audioInfluence" min="0" max="2" step="0.05" value="1.35">
+          </div>
+          <button class="audio-strips-toggle camera-mic-toggle" id="cameraMicToggle" style="display:none" aria-pressed="false">
+            <span class="dot"></span>
+            <span id="cameraMicLabel">React to camera microphone</span>
+          </button>
+
           <button class="disclosure" id="modDisclosure" data-tip="Route audio (bass, hits, beats) to visual parameters.">Reactivity <span class="disclosure-mark">+</span></button>
           <div class="disclosure-body" id="modPanel" hidden>
             <div class="mod-list" id="modList"></div>

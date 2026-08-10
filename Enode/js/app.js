@@ -37,11 +37,18 @@ const state = {
     speed: 1.9,           // time advance (reference: time += speed * 0.01 / frame)
   },
   randomAudioDriven: false,// Random mode: each rect's value = its band level
+  audioInfluence: 1.35,    // master multiplier for every audio modulation row
+  cameraMicEnabled: true,
   // Modulation matrix: each row routes a SOURCE (band level, per-band hit, beat,
   // BPM tick, or a generator) to a visual TARGET through an attack/release
-  // envelope. The default follows detected kicks instead of an unrelated clock.
+  // envelope. Loudness + mids affect every mode; the remaining rows give Strips
+  // extra movement and deformation without introducing radial waves.
   audioMods: [
-    { source: 'beat', target: 'timeSpeed', depth: 0.32, attack: 12, release: 120, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
+    { source: 'rms',     target: 'pulse',        depth: 0.75, attack: 12, release: 90,  chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
+    { source: 'mid',     target: 'cellContrast', depth: 0.45, attack: 18, release: 120, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
+    { source: 'beat',    target: 'timeSpeed',    depth: 0.30, attack: 12, release: 110, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
+    { source: 'bass',    target: 'stripAmp',     depth: 0.38, attack: 14, release: 100, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
+    { source: 'treble', target: 'stripPhase',   depth: 0.25, attack: 16, release: 110, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
   ],
 };
 
@@ -68,9 +75,11 @@ function smooth01(v) {
 // ─── Modulation registries ───────────────────────────────────────
 // TARGETS: how each routable parameter responds. `apply:'mul'` scales the base
 // (effective = base × (1 + Σ·range)); `apply:'add'` offsets it (base + Σ·range).
-// `scan`/`flicker`/`timeSpeed`/`hue` have no base slider — they read Σ via
+// `pulse`/`cellContrast`/`scan`/`flicker`/`timeSpeed`/`hue` have no base slider — they read Σ via
 // a synthetic base (0 or 1). New target = one entry here + one apply-site.
 const MOD_TARGETS = {
+  pulse:         { label: 'Cells · audio pulse', apply: 'add', range: 0.70 },
+  cellContrast:  { label: 'Cells · contrast',    apply: 'add', range: 1.0 },
   scan:          { label: 'Scan (sweep)',   apply: 'add', range: 1.4 },
   flicker:       { label: 'Flicker (data)', apply: 'add', range: 1.0 },
   timeSpeed:     { label: 'Playback speed', apply: 'mul', range: 3.0 },
@@ -106,7 +115,7 @@ function bpmTick(n) { return !!(window.enodeBpm && enodeBpm.onBeat[n]); }
 
 // Display order for the pickers.
 const MOD_SOURCE_ORDER = ['bass','mid','treble','rms','beat','hit.bass','hit.mid','hit.treble','beat/1','beat/2','beat/4','beat/8','beat/16','lfo','saw','noise'];
-const MOD_TARGET_ORDER = ['scan','flicker','timeSpeed','density','hue','stripCount','stripPhase','stripAnim','stripAmp'];
+const MOD_TARGET_ORDER = ['pulse','cellContrast','scan','flicker','timeSpeed','density','hue','stripCount','stripPhase','stripAnim','stripAmp'];
 
 // Generators: free-run speed (slider 0..1 → ~0.15..2 Hz) or quantized BPM sync.
 const GEN_SYNC_BEATS = [16, 8, 4, 2, 1];
@@ -139,9 +148,9 @@ function generatorValue(m, dt) {
 // `event` sources snap to 1 on a hit (instant attack) then decay; `gen` is direct.
 function updateMods(dt) {
   if (!window.enodeAudio || !state.audioMods) return;
-  // No track playing → every row decays to silence, generators and inverted
-  // rows included, so page load and pause are calm and deterministic.
-  if (!enodeAudio.playing) {
+  // No track or microphone → every row decays to silence, generators and
+  // inverted rows included, so page load and pause are calm and deterministic.
+  if (!enodeAudio.playing && !enodeAudio.micActive) {
     for (const m of state.audioMods) {
       m.env += (0 - m.env) * modAlpha(220, dt);
       m._value = 0;
@@ -160,7 +169,7 @@ function updateMods(dt) {
       const tgt = src.read() || 0;
       m.env += (tgt - m.env) * modAlpha(tgt > m.env ? m.attack : m.release, dt);
     }
-    m._value = (m.invert ? 1 - m.env : m.env) * m.depth;
+    m._value = (m.invert ? 1 - m.env : m.env) * m.depth * state.audioInfluence;
   }
 }
 
@@ -209,6 +218,7 @@ let lastVideoTime = 0;
 let snapNextFrame = false;  // set when video loops, used to instant-snap smoothing
 let imageEl = null;
 let cameraStream = null;
+let cameraMicStream = null;
 let cameraVideo = null;
 let time = 0;
 let animClock = 0;          // wall-clock seconds; drives the per-cell effects in every mode
@@ -394,24 +404,98 @@ function updateGifPlayback(now) {
   });
 }
 
+function syncCameraMicUI() {
+  const button = document.getElementById('cameraMicToggle');
+  const label = document.getElementById('cameraMicLabel');
+  if (!button) return;
+  const inCamera = state.mode === 'Camera';
+  const active = !!(window.enodeAudio && enodeAudio.micActive);
+  button.style.display = inCamera ? '' : 'none';
+  button.classList.toggle('active', active);
+  button.setAttribute('aria-pressed', String(active));
+  if (label) label.textContent = active ? 'Camera microphone is driving visuals' : 'React to camera microphone';
+}
+
+function attachCameraMicrophone(stream) {
+  if (!stream || !window.enodeAudio) return false;
+  const connected = enodeAudio.useMicrophone(stream);
+  if (connected) {
+    const analysis = document.getElementById('soundAnalysis');
+    if (analysis) analysis.style.display = '';
+  }
+  syncCameraMicUI();
+  return connected;
+}
+
+async function enableCameraMicrophone() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
+  try {
+    cameraMicStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false },
+      video: false,
+    });
+    state.cameraMicEnabled = true;
+    return attachCameraMicrophone(cameraMicStream);
+  } catch (error) {
+    state.cameraMicEnabled = false;
+    syncCameraMicUI();
+    alert('Microphone access denied or unavailable. Camera video will keep working.');
+    return false;
+  }
+}
+
+function disableCameraMicrophone() {
+  state.cameraMicEnabled = false;
+  if (window.enodeAudio) enodeAudio.stopMicrophone();
+  const streams = new Set([cameraStream, cameraMicStream]);
+  for (const stream of streams) {
+    if (!stream) continue;
+    stream.getAudioTracks().forEach(track => track.stop());
+  }
+  cameraMicStream = null;
+  syncCameraMicUI();
+}
+
 async function startCamera() {
   try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    const wantsMic = state.cameraMicEnabled;
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: wantsMic ? { echoCancellation: true, noiseSuppression: false, autoGainControl: false } : false,
+      });
+    } catch (combinedError) {
+      if (!wantsMic) throw combinedError;
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      state.cameraMicEnabled = false;
+    }
     cameraVideo = createVideoEl();
     cameraVideo.srcObject = cameraStream;
     await cameraVideo.play();
+    const hasMic = cameraStream.getAudioTracks().some(track => track.readyState === 'live');
+    if (hasMic) {
+      cameraMicStream = cameraStream;
+      attachCameraMicrophone(cameraStream);
+    } else {
+      syncCameraMicUI();
+    }
   } catch (e) {
     alert('Camera access denied or unavailable.');
     cameraStream = null;
+    syncCameraMicUI();
   }
 }
 
 function stopCamera() {
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(t => t.stop());
-    cameraStream = null;
+  if (window.enodeAudio) enodeAudio.stopMicrophone();
+  const streams = new Set([cameraStream, cameraMicStream]);
+  for (const stream of streams) {
+    if (stream) stream.getTracks().forEach(t => t.stop());
   }
+  cameraStream = null;
+  cameraMicStream = null;
   cameraVideo = null;
+  syncCameraMicUI();
 }
 
 function currentSource() {
@@ -554,7 +638,7 @@ function paintRectsTo(c, rects, W, H, gradients) {
 // frequency mapping matches musical perception (each band covers an octave-ish
 // range rather than a flat slice). bandRowIdx 0 = lowest band, rows-1 = highest.
 function bandLevelForRow(bandRowIdx, totalRows) {
-  if (!window.enodeAudio || !enodeAudio.freq || !enodeAudio.loaded) return 0;
+  if (!window.enodeAudio || !enodeAudio.freq || (!enodeAudio.loaded && !enodeAudio.micActive)) return 0;
   const freq = enodeAudio.freq;
   const usable = Math.floor(freq.length * 0.55); // ignore mostly-empty top bins
   const lo = Math.floor(Math.pow(bandRowIdx / totalRows, 2.3) * usable);
@@ -786,8 +870,10 @@ function drawScene(targetCtx, w, h, opts) {
   // are deliberately fixed: large values are circles, small values are squares.
   const density = Math.floor(opts.density != null ? opts.density
       : (liveMod ? applyMods(state.density, 'density') : state.density));
-  // timeSpeed / hue / the per-cell effects have no base slider — they read Σ via a
-  // synthetic base. Scan and Flicker are optional matrix effects.
+  // Pulse / contrast / timeSpeed / hue / the per-cell effects have no base slider.
+  // Pulse and contrast are uniform across the artboard, never radial.
+  const pulseAmt   = liveMod ? applyMods(0, 'pulse')   : 0;
+  const cellContrastAmt = liveMod ? applyMods(0, 'cellContrast') : 0;
   const scanAmt    = liveMod ? applyMods(0, 'scan')    : 0;
   const flickerAmt = liveMod ? applyMods(0, 'flicker') : 0;
   const fxActive = scanAmt > 0.001 || flickerAmt > 0.001;
@@ -922,6 +1008,13 @@ function drawScene(targetCtx, w, h, opts) {
         val += boost;
         if (val < 0) val = 0; else if (val > 1) val = 1;
       }
+
+      // Audio contrast spreads mid-tones before the uniform scale pulse. Both
+      // affect Camera/Image/Video as clearly as Strips while preserving geometry.
+      if (cellContrastAmt > 0.001) {
+        val = _clamp(0.5 + (val - 0.5) * (1 + cellContrastAmt), 0, 1);
+      }
+      if (pulseAmt > 0.001) val = Math.min(1, val * (1 + pulseAmt));
 
       const size = cellSize * val;
       const radius = (size / 2) * Math.min(1, Math.max(0, val));
@@ -1094,7 +1187,7 @@ wireSeg('modeSeg', (val, wasActive) => {
   state.mode = val;
   if (val === 'Camera') {
     if (!cameraStream) startCamera();
-  } else if (cameraStream) {
+  } else if (cameraStream || cameraMicStream || (window.enodeAudio && enodeAudio.micActive)) {
     stopCamera();
   }
   if (val === 'Strips') applyStripLook();
@@ -1105,6 +1198,7 @@ wireSeg('modeSeg', (val, wasActive) => {
   updateEditorVisibility();
   updateStripsVisibility();
   updateRandomVisibility();
+  syncCameraMicUI();
   updateSourcePreview();
 });
 
@@ -1124,6 +1218,7 @@ function wireSlider(id, key, valId, fmt) {
 
 wireSlider('density', 'density', 'densityVal', n => Math.round(n));
 wireSlider('stroke', 'stroke', 'strokeVal', n => n.toFixed(1));
+wireSlider('audioInfluence', 'audioInfluence', 'audioInfluenceVal', n => n.toFixed(2) + '×');
 
 // ─── Strips controls ───────────────────────────────────────────
 const stripsGroup = document.getElementById('stripsGroup');
@@ -1509,6 +1604,7 @@ function syncModeUI() {
   updateEditorVisibility();
   updateStripsVisibility();
   updateRandomVisibility();
+  syncCameraMicUI();
   updateSourcePreview();
 }
 
@@ -2405,9 +2501,23 @@ const audioVizCanvas  = document.getElementById('audioViz');
 const audioVizCtx     = audioVizCanvas.getContext('2d');
 const soundAnalysisEl = document.getElementById('soundAnalysis');
 const audioDrop       = document.getElementById('audioDrop');
+const cameraMicToggle = document.getElementById('cameraMicToggle');
 
 let audioSeekDragging = false;
 let currentTrackUrl   = null;
+
+cameraMicToggle.addEventListener('click', async () => {
+  if (state.mode !== 'Camera') return;
+  if (enodeAudio.micActive) {
+    disableCameraMicrophone();
+    return;
+  }
+  state.cameraMicEnabled = true;
+  const cameraHasLiveMic = cameraStream
+    && cameraStream.getAudioTracks().some(track => track.readyState === 'live');
+  if (cameraHasLiveMic) attachCameraMicrophone(cameraStream);
+  else await enableCameraMicrophone();
+});
 
 function formatTime(t) {
   if (!isFinite(t) || t < 0) t = 0;
@@ -2599,8 +2709,8 @@ if (modAddBtn) modAddBtn.addEventListener('click', () => {
 // texture, highs drive fine/fast ones, and generators add free-running drift.
 // The fixed BPM grid is deliberately excluded because it is not track-derived.
 const RANDOM_POOLS = [
-  { src: ['bass', 'beat', 'hit.bass'],           tgt: ['density', 'stripCount', 'timeSpeed'] },
-  { src: ['mid', 'hit.mid', 'rms'],              tgt: ['stripPhase', 'scan'] },
+  { src: ['bass', 'beat', 'hit.bass'],           tgt: ['pulse', 'density', 'stripCount', 'timeSpeed'] },
+  { src: ['mid', 'hit.mid', 'rms'],              tgt: ['cellContrast', 'stripPhase', 'scan'] },
   { src: ['treble', 'hit.treble'],               tgt: ['hue', 'flicker'] },
   { src: ['lfo', 'noise', 'saw'],                tgt: ['hue', 'stripAnim'] },
 ];
@@ -2630,13 +2740,15 @@ renderModList();
 
 // Per-frame: refresh transport readout and draw the mini FFT visualizer.
 function audioVizTick() {
-  if (!currentTrackUrl) return;
-  const dur = enodeAudio.duration || 0;
-  const t = enodeAudio.currentTime;
-  if (!audioSeekDragging) {
-    audioSeek.value = dur > 0 ? Math.round((t / dur) * 1000) : 0;
+  if (!currentTrackUrl && !enodeAudio.micActive) return;
+  if (currentTrackUrl) {
+    const dur = enodeAudio.duration || 0;
+    const t = enodeAudio.currentTime;
+    if (!audioSeekDragging) {
+      audioSeek.value = dur > 0 ? Math.round((t / dur) * 1000) : 0;
+    }
+    audioTimeEl.textContent = formatTime(t) + ' / ' + formatTime(dur);
   }
-  audioTimeEl.textContent = formatTime(t) + ' / ' + formatTime(dur);
   drawAudioViz();
 }
 

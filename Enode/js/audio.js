@@ -4,6 +4,7 @@
  *   .ready          — true once an AudioContext has been created
  *   .loaded         — true once a track has decoded enough to play
  *   .playing        — transport state
+ *   .micActive      — true while a live microphone is feeding analysis
  *   .currentTime    — audio element current time (getter)
  *   .duration       — audio element duration (getter)
  *   .freq[]         — Uint8Array of latest frequency magnitudes (0..255)
@@ -12,6 +13,7 @@
  *   .onsets         — { bass, mid, treble } momentarily true on per-band hits
  *   .load(url)      — load a track by URL (also accepts a File via objectURL upstream)
  *   .play()/.pause()/.toggle()/.seek(t)
+ *   .useMicrophone(stream)/.stopMicrophone() — silent live-input analysis
  *   .update(dt)     — call once per frame from the render loop (dt = ms elapsed)
  *   .onLoaded(fn)   — register a callback fired when a new track is ready
  *   .onTransport(fn)— register a callback fired when play/pause/seek changes
@@ -52,6 +54,7 @@
     ready: false,
     loaded: false,
     playing: false,
+    micActive: false,
     freq: new Uint8Array(FFT_SIZE / 2),
     // Raw smoothed bands (0..1) — useful for the FFT viz / sanity checks.
     bands: { bass: 0, mid: 0, treble: 0, rms: 0 },
@@ -70,6 +73,8 @@
     pause,
     toggle,
     seek,
+    useMicrophone,
+    stopMicrophone,
     update,
     getSpectrumLog,
     onLoaded(fn) { loadedCbs.push(fn); },
@@ -80,6 +85,10 @@
   let analyser = null;
   let sourceNode = null;
   let audioEl = null;
+  let micAnalyser = null;
+  let micSourceNode = null;
+  let micSilentGain = null;
+  const micFreq = new Uint8Array(FFT_SIZE / 2);
   // Bass running average (for beat detector)
   let bassAvg = 0;
   let lastBeatTime = 0;
@@ -148,9 +157,28 @@
     }
   }
 
+  function resetAnalysis() {
+    api.freq.fill(0);
+    micFreq.fill(0);
+    bassAvg = 0;
+    lastBeatTime = 0;
+    api.beat = false;
+    api.onsets.bass = api.onsets.mid = api.onsets.treble = false;
+    for (const key in smooth) {
+      smooth[key] = 0;
+      peak[key] = PEAK_FLOOR;
+      floor[key] = 0;
+      api.bands[key] = 0;
+      api.levels[key] = 0;
+    }
+    onsetArmed.bass = onsetArmed.mid = onsetArmed.treble = true;
+    lastOnset.bass = lastOnset.mid = lastOnset.treble = 0;
+  }
+
   function load(url) {
     ensureCtx();
     ensureAudioEl();
+    resetAnalysis();
     // Hook the element into the graph on first load. MediaElementSource can
     // only be created once per element, so we reuse the node thereafter.
     if (!sourceNode) {
@@ -186,6 +214,42 @@
     if (!audioEl) return;
     if (!isFinite(t)) return;
     try { audioEl.currentTime = Math.max(0, Math.min(api.duration || 0, t)); } catch (e) {}
+  }
+
+  // Feed a MediaStream into a separate analyser. Its output is connected through
+  // a zero-gain node so the graph remains live without echoing the mic to speakers.
+  function useMicrophone(stream) {
+    ensureCtx();
+    stopMicrophone();
+    if (!stream || !stream.getAudioTracks || !stream.getAudioTracks().some(t => t.readyState === 'live')) return false;
+    micAnalyser = ctx.createAnalyser();
+    micAnalyser.fftSize = FFT_SIZE;
+    micAnalyser.smoothingTimeConstant = SMOOTHING;
+    micSourceNode = ctx.createMediaStreamSource(stream);
+    micSilentGain = ctx.createGain();
+    micSilentGain.gain.value = 0;
+    micSourceNode.connect(micAnalyser);
+    micAnalyser.connect(micSilentGain);
+    micSilentGain.connect(ctx.destination);
+    api.micActive = true;
+    resetAnalysis();
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    notify(transportCbs);
+    return true;
+  }
+
+  function stopMicrophone() {
+    if (micSourceNode) { try { micSourceNode.disconnect(); } catch (e) {} }
+    if (micAnalyser) { try { micAnalyser.disconnect(); } catch (e) {} }
+    if (micSilentGain) { try { micSilentGain.disconnect(); } catch (e) {} }
+    micSourceNode = null;
+    micAnalyser = null;
+    micSilentGain = null;
+    micFreq.fill(0);
+    if (api.micActive) {
+      api.micActive = false;
+      notify(transportCbs);
+    }
   }
 
   // Range average of freq[] expressed as 0..1 (raw is 0..255).
@@ -240,7 +304,9 @@
   // Called once per render-loop frame. dt = ms since last frame.
   function update(dt) {
     dt = dt || 16;
-    if (!analyser || !audioEl || (audioEl.paused && smooth.rms < 0.001)) {
+    const trackActive = !!(analyser && audioEl && !audioEl.paused);
+    const microphoneActive = !!(api.micActive && micAnalyser);
+    if (!trackActive && !microphoneActive && smooth.rms < 0.001) {
       // Decay smoothed bands toward 0 when nothing's playing so visuals settle.
       const a = alpha(120, dt);
       for (const k in smooth) {
@@ -253,16 +319,27 @@
       api.onsets.bass = api.onsets.mid = api.onsets.treble = false;
       return;
     }
-    analyser.getByteFrequencyData(api.freq);
+    if (trackActive) analyser.getByteFrequencyData(api.freq);
+    else api.freq.fill(0);
+    if (microphoneActive) {
+      micAnalyser.getByteFrequencyData(micFreq);
+      // Track + microphone can coexist; use the stronger bin so either source
+      // can drive the artwork without routing the microphone to the speakers.
+      for (let i = 0; i < api.freq.length; i++) {
+        if (micFreq[i] > api.freq[i]) api.freq[i] = micFreq[i];
+      }
+    }
     if (!bandIndex) recomputeBandIndex();
 
     const bass   = avgRange(bandIndex.bass[0],   bandIndex.bass[1]);
     const mid    = avgRange(bandIndex.mid[0],    bandIndex.mid[1]);
     const treble = avgRange(bandIndex.treble[0], bandIndex.treble[1]);
-    // RMS approximated from full spectrum mean.
-    let total = 0;
-    for (let i = 0; i < api.freq.length; i++) total += api.freq[i];
-    const rms = (total / api.freq.length) / 255;
+    // Root-mean-square over the musically useful spectrum. Ignoring the mostly
+    // empty ultrasonic bins gives tracks and microphones a reliable master level.
+    const rmsBins = Math.min(api.freq.length, Math.max(1, Math.ceil(12000 / binHz)));
+    let totalSquares = 0;
+    for (let i = 0; i < rmsBins; i++) totalSquares += api.freq[i] * api.freq[i];
+    const rms = Math.sqrt(totalSquares / rmsBins) / 255;
 
     // Light, framerate-independent EMA on top of the analyser. Bass tracks
     // almost instantly so kicks read through; the musical envelope is applied

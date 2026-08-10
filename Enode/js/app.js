@@ -8,6 +8,7 @@ const state = {
   exportW: 1080,
   exportH: 1080,
   density: 60,
+  cellSize: 1,
   invert: false,
   outline: false,
   stroke: 1,
@@ -51,6 +52,10 @@ const state = {
     { source: 'treble', target: 'stripPhase',   depth: 0.25, attack: 16, release: 110, chance: 1, invert: false, speed: 0.4, bpmSync: false, env: 0, phase: 0 },
   ],
 };
+
+// Cell scale is capped at one grid slot. Outline geometry subtracts its stroke
+// from this footprint below, so neighbouring cells can touch but never overlap.
+const MAX_CELL_SIZE = 1;
 
 const ARTBOARD_PATTERNS = [
   { id: 'single-up',    label: 'Up',       layout: 'single', directions: ['up'] },
@@ -714,9 +719,10 @@ function mapArtboardUV(u, v) {
   };
 }
 
-// Directional strips. The gradient now travels continuously and wraps, while
-// the existing phase modes retain the stagger/wave character across bands.
-// Up/down use vertical strips; left/right use horizontal strips.
+// Directional, oscillating strips. Each strip has its own phase, so neighbours
+// can travel in opposite directions during the same frame and form a real wave.
+// Up/down use vertical strips; left/right use horizontal strips. Direction sets
+// the initial travel orientation; the sine oscillator always reverses naturally.
 function stripsValue(x, y, t, p, direction) {
   direction = direction || 'down';
   const verticalMotion = direction === 'up' || direction === 'down';
@@ -728,17 +734,17 @@ function stripsValue(x, y, t, p, direction) {
   if (p.phaseMode === 'Linear') {
     phase = stripIndex * p.phaseShift;
   } else if (p.phaseMode === 'Random') {
-    const hash = Math.sin(stripIndex * 12.9898) * 43758.5453;
-    phase = (hash - Math.floor(hash)) * p.phaseShift * 2;
+    phase = ((Math.sin(stripIndex * 12.9898) * 43758.5453) % 1) * p.phaseShift * 10;
   } else { // Sine
-    phase = Math.sin(stripIndex * p.phaseShift) * 0.5;
+    phase = Math.sin(stripIndex * p.phaseShift) * Math.PI;
   }
 
-  // A feature in f(position + t) moves toward the negative axis. Therefore
-  // positive time is up/left and negative time is down/right.
+  // A feature in f(position + offset) moves opposite to the offset. Reversing
+  // the clock preserves the selected initial direction without removing the
+  // bidirectional motion of the sine wave.
   const travelSign = direction === 'up' || direction === 'left' ? 1 : -1;
-  const offset = phase * p.amplitude;
-  let wrapped = (along + travelSign * t + offset) % 1;
+  const offset = Math.sin(travelSign * t + phase) * p.amplitude;
+  let wrapped = (along + offset) % 1;
   if (wrapped < 0) wrapped += 1;
 
   wrapped = (wrapped - 0.5) * p.contrast + 0.5;
@@ -866,10 +872,11 @@ function drawScene(targetCtx, w, h, opts) {
   const liveMod = !opts.noSmoothing;
 
   // Each modulatable param reads its base from state and is pushed by the matrix
-  // via applyMods() — but only on the live render. Cell scale and shape direction
-  // are deliberately fixed: large values are circles, small values are squares.
+  // via applyMods() — but only on the live render. Large values are circles and
+  // small values are squares; the user-controlled cell scale stays fixed.
   const density = Math.floor(opts.density != null ? opts.density
       : (liveMod ? applyMods(state.density, 'density') : state.density));
+  const cellScale = _clamp(state.cellSize, 0, MAX_CELL_SIZE);
   // Pulse / contrast / timeSpeed / hue / the per-cell effects have no base slider.
   // Pulse and contrast are uniform across the artboard, never radial.
   const pulseAmt   = liveMod ? applyMods(0, 'pulse')   : 0;
@@ -1016,7 +1023,11 @@ function drawScene(targetCtx, w, h, opts) {
       }
       if (pulseAmt > 0.001) val = Math.min(1, val * (1 + pulseAmt));
 
-      const size = cellSize * val;
+      // Treat the slider value as the complete visual footprint. Canvas strokes
+      // extend half their width beyond both sides of a path, so subtract one
+      // stroke width from outlined paths to keep their outer edges in the slot.
+      const footprint = cellSize * cellScale * val;
+      const size = Math.max(0, footprint - (outline ? stroke : 0));
       const radius = (size / 2) * Math.min(1, Math.max(0, val));
 
       // Outline mode fades in from the old stability threshold instead of
@@ -1109,10 +1120,10 @@ function tick(now) {
   // Bass-driven speed surge for the generative mode so Strips visibly
   // moves with the kick. (Video uses a much gentler, smoothed lean below.)
   const speedBoost = applyMods(1, 'timeSpeed');
-  // Strips use continuous wrapped travel. The scale keeps the existing speed
-  // range useful while remaining refresh-rate independent.
+  // Match the reference oscillator: `time += speed * 0.01` per 60 fps frame,
+  // normalized by dt so speed is independent of the display refresh rate.
   if (state.playing && state.mode === 'Strips') {
-    time += applyMods(state.strips.speed, 'stripAnim') * 0.18 * (dt / 1000) * speedBoost;
+    time += applyMods(state.strips.speed, 'stripAnim') * 0.01 * (dt / 16.667) * speedBoost;
   }
   // Video: a gentle, heavily-smoothed tempo lean — never the old 0.5–4× lurch.
   if (state.mode === 'Video' && activeVideo && activeVideo.readyState >= 2) {
@@ -1217,6 +1228,7 @@ function wireSlider(id, key, valId, fmt) {
 }
 
 wireSlider('density', 'density', 'densityVal', n => Math.round(n));
+wireSlider('cellSize', 'cellSize', 'cellSizeVal', n => n.toFixed(2));
 wireSlider('stroke', 'stroke', 'strokeVal', n => n.toFixed(1));
 wireSlider('audioInfluence', 'audioInfluence', 'audioInfluenceVal', n => n.toFixed(2) + '×');
 
@@ -1984,6 +1996,7 @@ function buildSVG(w, h) {
   const density = lastDensity || Math.floor(state.density);
   const rows = lastRows || Math.ceil(h / (w / Math.max(1, density)));
   const cellSize = w / density;
+  const cellScale = _clamp(state.cellSize, 0, MAX_CELL_SIZE);
 
   const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`];
   parts.push(`<rect width="${w}" height="${h}" fill="${state.bg}"/>`);
@@ -1992,7 +2005,8 @@ function buildSVG(w, h) {
   for (let i = 0; i < density; i++) {
     for (let j = 0; j < rows; j++) {
       const v = smoothed[i + j * density] || 0;
-      const size = cellSize * v;
+      const footprint = cellSize * cellScale * v;
+      const size = Math.max(0, footprint - (state.outline ? state.stroke : 0));
       const minDrawSvg = state.outline ? Math.max(2, state.stroke * 3) : 0.5;
       if (size < minDrawSvg) continue;
       const opacity = state.outline ? smooth01((size - minDrawSvg) / Math.max(4, state.stroke * 4)) : 1;

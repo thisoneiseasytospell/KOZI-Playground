@@ -17,11 +17,57 @@
         <canvas id="canvas"></canvas>
         <div class="rect-editor" id="rectEditor"></div>
       </div>
-      <button class="canvas-action" id="canvasEditBtn" style="display:none">Edit rectangles</button>
+      <div class="fps-counter" id="fpsCounter" aria-label="Live frame rate">-- FPS</div>
+      <div class="artboard-island" id="artboardIsland" aria-label="Artboard tools">
+        <button class="island-btn" id="rotateArtboard" aria-label="Rotate artboard 90 degrees clockwise" data-tip="Rotate artboard 90° clockwise">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19 8V4l-2 2a8 8 0 1 0 2.3 8"/>
+          </svg>
+        </button>
+        <button class="island-btn" id="flipArtboardX" aria-label="Flip artboard horizontally" data-tip="Flip artboard horizontally">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3v18"/>
+            <path d="M9 6 3.5 12 9 18zM15 6l5.5 6-5.5 6z"/>
+          </svg>
+        </button>
+        <button class="island-btn" id="flipArtboardY" aria-label="Flip artboard vertically" data-tip="Flip artboard vertically">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 12h18"/>
+            <path d="m6 9 6-5.5L18 9zM6 15l6 5.5 6-5.5z"/>
+          </svg>
+        </button>
+
+        <span class="island-divider" aria-hidden="true"></span>
+
+        <div class="island-menu-wrap">
+          <button class="island-btn pattern-trigger" id="patternMenuBtn" aria-label="Choose strip direction, split, or mirror pattern" aria-haspopup="true" aria-expanded="false" data-tip="Direction, split & mirror">
+            <span class="pattern-current-icon" id="patternCurrentIcon" aria-hidden="true"></span>
+            <svg class="island-chevron" viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>
+          </button>
+          <div class="pattern-popover" id="patternPopover" hidden>
+            <div class="pattern-popover-title">Direction · Split · Mirror</div>
+            <div class="pattern-grid" id="patternGrid" role="menu"></div>
+          </div>
+        </div>
+
+        <button class="island-btn" id="resetArtboard" aria-label="Reset artboard transformations" data-tip="Reset artboard transformations">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 8V4l2.4 2.4A8 8 0 1 1 4 13"/>
+          </svg>
+        </button>
+
+        <span class="island-divider mode-tool" id="editToolDivider" aria-hidden="true" style="display:none"></span>
+        <button class="island-btn mode-tool" id="canvasEditBtn" aria-label="Edit rectangles" data-tip="Edit rectangles" style="display:none">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4" y="5" width="16" height="14"/>
+            <path d="M2.5 8V3.5H7M17 3.5h4.5V8M21.5 16v4.5H17M7 20.5H2.5V16"/>
+          </svg>
+        </button>
+      </div>
       <div class="drop-overlay" id="dropOverlay">
         <div class="drop-overlay-inner">
           <div class="drop-icon">+</div>
-          <div class="drop-text">Drop image or video</div>
+          <div class="drop-text">Drop image, GIF, or video</div>
         </div>
       </div>
       <div class="stage-info" id="stageInfo">1080 × 1080</div>
@@ -55,15 +101,15 @@
         <div class="group">
           <div class="label">Source</div>
           <div class="dropzone" id="dropzone">
-            <input type="file" id="fileInput" accept="image/*,video/*" hidden>
+            <input type="file" id="fileInput" accept=".gif,image/gif,image/*,video/*" hidden>
             <div class="dropzone-label">Drop or click to load</div>
-            <div class="dropzone-hint">Image or video</div>
+            <div class="dropzone-hint">Image, animated GIF, or video</div>
           </div>
           <div class="seg" id="modeSeg" style="margin-top:8px">
             <button data-val="Video" class="active">Video</button>
             <button data-val="Image">Image</button>
             <button data-val="Camera">Camera</button>
-            <button data-val="Strips" data-tip="Animated horizontal wave bands.">Strips</button>
+            <button data-val="Strips" data-tip="Directional animated strip field.">Strips</button>
             <button data-val="Random" data-tip="Click again to reshuffle the layout.">Random</button>
           </div>
           <div class="source-preview-wrap">
@@ -96,7 +142,7 @@
             <input type="range" id="stripPhase" min="0" max="5" step="0.01" value="0.11">
           </div>
           <div class="slider-row">
-            <label data-tip="How far each strip's gradient scrolls per wave cycle.">Amplitude <span class="val" id="stripAmpVal">1.05</span></label>
+            <label data-tip="How strongly the per-strip phase offsets displace the moving gradient.">Amplitude <span class="val" id="stripAmpVal">1.05</span></label>
             <input type="range" id="stripAmp" min="0" max="2" step="0.01" value="1.05">
           </div>
           <div class="slider-row">
@@ -127,10 +173,6 @@
             <label data-tip="Snaps values to N discrete levels (posterize). 0 = off.">Quantize <span class="val" id="stripQuantVal">3</span></label>
             <input type="range" id="stripQuant" min="0" max="20" step="1" value="3">
           </div>
-          <button class="audio-strips-toggle" id="stripInvertY">
-            <span class="dot"></span>
-            <span>Invert Y axis</span>
-          </button>
           </div>
         </div>
 
@@ -217,19 +259,11 @@
             <label data-tip="How many cells across the grid. Higher = finer, more dots.">Density <span class="val" id="densityVal">60</span></label>
             <input type="range" id="density" min="4" max="120" step="1" value="60">
           </div>
-          <div class="slider-row">
-            <label data-tip="Maximum size of each cell relative to its grid slot. 1 fills the slot.">Cell size <span class="val" id="cellSizeVal">1.00</span></label>
-            <input type="range" id="cellSize" min="0" max="1.1" step="0.01" value="1">
-          </div>
         </div>
 
         <!-- STYLE ──────────────────────────────────────────── -->
         <div class="group">
           <div class="label">Style</div>
-          <div class="slider-row">
-            <label data-tip="Square-to-circle transition. 0 = square, higher = more rounded at bright cells.">Roundness <span class="val" id="morphVal">1.00</span></label>
-            <input type="range" id="morph" min="0" max="3" step="0.01" value="1">
-          </div>
           <div class="slider-row stroke-row" id="strokeRow" style="display:none">
             <label data-tip="Thickness of the outline stroke in pixels.">Stroke weight <span class="val" id="strokeVal">1.0</span></label>
             <input type="range" id="stroke" min="0.5" max="10" step="0.5" value="1">
@@ -286,17 +320,25 @@
         </div>
 
         <div class="group">
-          <div class="label">MP4 video (60fps)</div>
+          <div class="label">Animation</div>
+          <div class="export-fps-row">
+            <div class="label-mini">GIF frame rate</div>
+            <div class="seg" id="gifFpsSeg" aria-label="GIF frame rate">
+              <button data-val="30" class="active">30 FPS</button>
+              <button data-val="60">60 FPS</button>
+            </div>
+          </div>
           <div class="slider-row">
             <label>Duration <span class="val" id="durVal">5.0s</span></label>
             <input type="range" id="duration" min="1" max="15" step="0.5" value="5">
           </div>
+          <button class="btn-primary" id="exportGIF">Export GIF</button>
           <button class="btn-primary" id="exportMP4">Export MP4</button>
           <button class="btn-primary" id="exportPNGseq">Export PNG sequence</button>
         </div>
 
         <div class="group">
-          <div class="hint">PNG sequence is delivered as a single .zip with numbered frames. Use Chrome for best performance.</div>
+          <div class="hint">GIF exports at the selected 30 or 60 FPS and loops continuously. 60 FPS takes longer and creates a larger file. MP4 and PNG sequences export at 60 FPS; PNG sequences are delivered as a numbered .zip.</div>
         </div>
       </section>
 

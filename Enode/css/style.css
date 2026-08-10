@@ -77,7 +77,7 @@ button, input, select, textarea {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  padding: 28px;
+  padding: 28px 28px 82px;
 }
 
 .canvas-wrap {
@@ -97,6 +97,18 @@ canvas {
   height: auto;
   border-radius: 0;
   box-shadow: 0 0 0 1px var(--line), 0 18px 50px -20px rgba(0,0,0,0.55);
+}
+
+/* Native animated-GIF compatibility clock. It remains rendered but outside the
+   viewport so engines that freeze detached images continue advancing frames. */
+.gif-clock-source {
+  position: fixed;
+  top: 0;
+  left: -2px;
+  width: 1px;
+  height: 1px;
+  opacity: 0.001;
+  pointer-events: none;
 }
 
 .drop-overlay {
@@ -138,6 +150,18 @@ canvas {
   color: var(--fg-mute);
   font-size: 11px;
   letter-spacing: 0.04em;
+}
+
+.fps-counter {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  color: var(--fg-mute);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 
 /* ─── Sidebar ──────────────────────────────────────────── */
@@ -507,6 +531,10 @@ input[type=range]::-moz-range-thumb {
   color: var(--fg-mute);
   line-height: 1.5;
   margin-top: 6px;
+}
+
+.export-fps-row {
+  margin-bottom: 12px;
 }
 
 /* Color */
@@ -987,35 +1015,184 @@ input[type=range]::-moz-range-thumb {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
 }
 
-/* ─── Canvas overlay action button (Edit rectangles) ─── */
-.canvas-action {
+/* ─── Floating artboard tools ─────────────────────────── */
+.artboard-island {
   position: absolute;
-  bottom: 22px;
+  bottom: 18px;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 44px;
+  padding: 4px;
   background: var(--overlay-bg);
   color: var(--fg);
   border: 1px solid var(--line-2);
-  padding: 9px 18px;
-  border-radius: 0;
-  cursor: pointer;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  border-radius: 10px;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.28);
   z-index: 40;
 }
-.canvas-action:hover {
-  background: var(--overlay-bg);
-  filter: brightness(1.15);
-  border-color: var(--cyan);
+
+.island-btn {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, opacity 0.12s;
 }
-.canvas-action.active {
-  background: var(--cyan);
-  color: #000;
-  border-color: var(--cyan);
+
+.island-btn:hover,
+.island-btn:focus-visible {
+  color: var(--fg);
+  background: var(--bg-4);
+  outline: none;
+}
+
+.island-btn.active {
+  color: var(--bg);
+  background: var(--fg);
+}
+
+.island-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.island-btn > svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.island-divider {
+  width: 1px;
+  height: 22px;
+  margin: 0 3px;
+  background: var(--line-2);
+  opacity: 0.75;
+}
+
+.island-menu-wrap {
+  position: relative;
+}
+
+.pattern-trigger {
+  width: 48px;
+  gap: 3px;
+}
+
+.pattern-current-icon {
+  display: inline-flex;
+  width: 23px;
+  height: 23px;
+}
+
+.pattern-current-icon svg,
+.pattern-diagram svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.island-btn .island-chevron {
+  width: 10px;
+  height: 10px;
+  stroke-width: 1.5;
+}
+
+.pattern-popover {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 12px);
+  width: 326px;
+  transform: translateX(-50%);
+  padding: 10px;
+  background: var(--overlay-bg-strong);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  box-shadow: 0 18px 44px rgba(0,0,0,0.38);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.pattern-popover[hidden] { display: none; }
+
+.pattern-popover-title {
+  padding: 2px 3px 9px;
+  color: var(--fg-mute);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pattern-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.pattern-option {
+  min-width: 0;
+  height: 60px;
+  padding: 5px 3px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--bg-3);
+  color: var(--fg-mute);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.pattern-option:hover,
+.pattern-option:focus-visible {
+  color: var(--fg);
+  border-color: var(--line-2);
+  outline: none;
+}
+
+.pattern-option.active {
+  color: var(--fg);
+  border-color: var(--fg);
+  background: var(--bg-4);
+}
+
+.pattern-diagram {
+  display: block;
+  width: 39px;
+  height: 29px;
+}
+
+.pattern-label {
+  overflow: hidden;
+  max-width: 100%;
+  color: inherit;
+  font-size: 8px;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ─── Sticky action bar at the bottom of the sidebar ── */
@@ -1347,6 +1524,19 @@ input[type=range]::-moz-range-thumb {
   }
   .stage {
     min-height: 0;
+    padding: 14px 14px 66px;
+  }
+  .artboard-island {
+    bottom: 10px;
+  }
+  .pattern-popover {
+    position: fixed;
+    left: 50%;
+    bottom: calc(60vh + 58px);
+    width: min(326px, calc(100vw - 20px));
+  }
+  .pattern-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
   /* The 3 track buttons can wrap on very narrow phones; let the grid breathe. */
   .audio-tracks {

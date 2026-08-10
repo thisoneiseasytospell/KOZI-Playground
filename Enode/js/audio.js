@@ -20,7 +20,7 @@
 
 (function () {
   const FFT_SIZE = 1024;          // 512 frequency bins
-  const SMOOTHING = 0.5;          // AnalyserNode internal smoothing — lower = snappier attack
+  const SMOOTHING = 0.35;         // Snappy enough for visual hits without noisy band meters
   // Frequency band ranges (Hz). Tuned for typical music.
   const BAND_BASS   = [20,   180];
   const BAND_MID    = [180,  2000];
@@ -28,7 +28,7 @@
   // Smoothing time-constants (ms). Converted to a per-frame factor via dt so
   // response is identical at 30 / 60 / 120fps. Bass is near-instant so kicks
   // read through; the musical "feel" envelope lives in the app's modulators.
-  const BAND_TAU = { bass: 25, mid: 40, treble: 40, rms: 60 };
+  const BAND_TAU = { bass: 18, mid: 30, treble: 30, rms: 50 };
   const PEAK_RISE_TAU = 60;       // latch new peaks fast
   const PEAK_FALL_TAU = 4000;     // re-adapt sensitivity over a few seconds (was ~16s)
   const BASS_AVG_TAU  = 350;      // adaptive baseline for beat detection

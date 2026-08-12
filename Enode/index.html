@@ -7,7 +7,6 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Enode Oker</title>
   <link rel="stylesheet" href="css/style.css">
-  <script src="vendor/simplex-noise.min.js"></script>
   <script src="vendor/jszip.min.js"></script>
 </head>
 <body>
@@ -176,60 +175,6 @@
           </div>
         </div>
 
-        <!-- RANDOM ─────────────────────────────────────────── -->
-        <div class="group random-group" id="randomGroup" style="display:none">
-          <div class="label">Random</div>
-          <button class="audio-strips-toggle" id="randomAudioToggle">
-            <span class="dot"></span>
-            <span>Drive from audio (EQ rectangles)</span>
-          </button>
-          <div class="noise-hint">each rect maps to a frequency band by its y-position. click <b>Random</b> again to reshuffle.</div>
-        </div>
-
-        <!-- AUDIO ──────────────────────────────────────────── -->
-        <div class="group">
-          <div class="label">Audio
-            <span class="audio-status" id="audioStatus"></span>
-          </div>
-          <div class="audio-tracks" id="audioTracks">
-            <button data-src="music/zep nobody.mp3" data-name="Zep — Nobody's Fault">Zep</button>
-            <button data-src="music/still dreaming nas.mp3" data-name="Nas — Still Dreaming">Nas</button>
-            <button data-src="music/de la soul.mp3" data-name="De La Soul">De La Soul</button>
-          </div>
-          <div class="audio-transport" id="audioTransport" style="display:none">
-            <button class="audio-play" id="audioPlayBtn" aria-label="Play / pause">
-              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                <path id="audioPlayIcon" d="M7 5l12 7-12 7z" fill="currentColor"/>
-              </svg>
-            </button>
-            <input type="range" id="audioSeek" min="0" max="1000" step="1" value="0" class="audio-seek">
-            <span class="audio-time" id="audioTime">0:00 / 0:00</span>
-          </div>
-          <div id="soundAnalysis" class="sound-analysis" style="display:none">
-            <div class="sub-label">Sound Analysis</div>
-            <canvas id="audioViz" class="audio-viz" width="280" height="90"></canvas>
-          </div>
-          <div class="audio-drop" id="audioDrop">drop .mp3 here</div>
-
-          <div class="slider-row audio-influence-row">
-            <label data-tip="Master strength for every audio-to-visual routing.">Visual influence <span class="val" id="audioInfluenceVal">1.35×</span></label>
-            <input type="range" id="audioInfluence" min="0" max="2" step="0.05" value="1.35">
-          </div>
-          <button class="audio-strips-toggle camera-mic-toggle" id="cameraMicToggle" style="display:none" aria-pressed="false">
-            <span class="dot"></span>
-            <span id="cameraMicLabel">React to camera microphone</span>
-          </button>
-
-          <button class="disclosure" id="modDisclosure" data-tip="Route audio (bass, hits, beats) to visual parameters.">Reactivity <span class="disclosure-mark">+</span></button>
-          <div class="disclosure-body" id="modPanel" hidden>
-            <div class="mod-list" id="modList"></div>
-            <div class="mod-actions">
-              <button class="mod-add" id="modAddBtn">+ Add routing</button>
-              <button class="mod-add" id="modRandomBtn" data-tip="Generate a fresh set of routings that still make musical sense.">⚄ Randomize</button>
-            </div>
-          </div>
-        </div>
-
         <!-- TOGGLES ────────────────────────────────────────── -->
         <div class="group">
           <div class="toggle-list">
@@ -275,35 +220,11 @@
         </div>
 
         <!-- STYLE ──────────────────────────────────────────── -->
-        <div class="group">
+        <div class="group" id="styleGroup" style="display:none">
           <div class="label">Style</div>
-          <div class="slider-row stroke-row" id="strokeRow" style="display:none">
+          <div class="slider-row stroke-row" id="strokeRow">
             <label data-tip="Thickness of the outline stroke in pixels.">Stroke weight <span class="val" id="strokeVal">1.0</span></label>
             <input type="range" id="stroke" min="0.5" max="10" step="0.5" value="1">
-          </div>
-          <div class="color-row">
-            <div class="color-cell">
-              <div class="label-mini">Foreground</div>
-              <button class="swatch" id="fgSwatch" data-target="fg" style="background:#000"></button>
-            </div>
-            <button class="swap-btn" id="swapColors" aria-label="Swap foreground and background">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M7 4L4 7l3 3"/>
-                <path d="M4 7h12a4 4 0 014 4"/>
-                <path d="M17 20l3-3-3-3"/>
-                <path d="M20 17H8a4 4 0 01-4-4"/>
-              </svg>
-            </button>
-            <div class="color-cell">
-              <div class="label-mini">Background</div>
-              <button class="swatch" id="bgSwatch" data-target="bg" style="background:#fff"></button>
-            </div>
-          </div>
-          <div class="label-mini" style="margin-top:14px">Presets</div>
-          <div class="combo-row" id="comboRow">
-            <button class="combo" data-fg="#000000" data-bg="#FFFFFF"><span style="background:#fff"></span><span style="background:#000"></span></button>
-            <button class="combo" data-fg="#FFFFFF" data-bg="#000000"><span style="background:#000"></span><span style="background:#fff"></span></button>
-            <button class="combo" data-fg="#FF3A2F" data-bg="#0a0a0a"><span style="background:#0a0a0a"></span><span style="background:#FF3A2F"></span></button>
           </div>
         </div>
 
@@ -372,20 +293,6 @@
     </aside>
   </div>
 
-  <!-- Color picker popover -->
-  <div class="picker" id="picker" style="display:none">
-    <div class="picker-sv" id="pickerSV">
-      <div class="picker-sv-grad-s"></div>
-      <div class="picker-sv-grad-v"></div>
-      <div class="picker-sv-handle" id="pickerSVHandle"></div>
-    </div>
-    <div class="picker-hue" id="pickerHue">
-      <div class="picker-hue-handle" id="pickerHueHandle"></div>
-    </div>
-    <input type="text" id="pickerHex" class="picker-hex" maxlength="7" value="#000000">
-    <div class="picker-presets" id="pickerPresets"></div>
-  </div>
-
   <!-- Variations modal -->
   <div class="modal" id="modal" style="display:none">
     <div class="modal-backdrop" id="modalBackdrop"></div>
@@ -401,8 +308,6 @@
     </div>
   </div>
 
-  <script src="js/audio.js"></script>
-  <script src="js/bpm.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

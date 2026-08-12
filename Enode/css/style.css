@@ -17,7 +17,6 @@
   --fg-dim: #c8c8c8;
   --fg-mute: #8a8a8a;
   --accent: #ffffff;
-  --cyan: #00d4ff;
   --side-w: 320px;
   --r: 0px;
   --overlay-bg: rgba(0, 0, 0, 0.75);
@@ -260,18 +259,6 @@ canvas {
   margin-bottom: 6px;
 }
 
-/* Sub-section heading inside a group (e.g. Audio → Reactivity). Carries a
-   hairline divider so the two halves of a merged group stay visually distinct. */
-.sub-label {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--fg-mute);
-  margin: 16px 0 10px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-
 .row {
   display: flex;
   gap: 6px;
@@ -480,9 +467,9 @@ input[type=range]::-moz-range-thumb {
 }
 
 .btn-primary.recording {
-  background: #3a1a1a;
-  border-color: #8a3333;
-  color: #ff9090;
+  background: var(--fg);
+  border-color: var(--fg);
+  color: var(--bg);
 }
 
 .btn-small {
@@ -536,144 +523,6 @@ input[type=range]::-moz-range-thumb {
 .export-fps-row {
   margin-bottom: 12px;
 }
-
-/* Color */
-.color-row {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 10px;
-  align-items: end;
-}
-
-.swap-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  background: transparent;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r);
-  color: var(--fg-dim);
-  cursor: pointer;
-  padding: 0;
-}
-.swap-btn:hover {
-  color: var(--fg);
-  border-color: var(--fg);
-}
-
-.swatch {
-  width: 100%;
-  height: 32px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r);
-  cursor: pointer;
-  padding: 0;
-}
-
-.swatch:hover { border-color: var(--fg-dim); }
-
-/* ─── Color picker popover ─────────────────────────────── */
-.picker {
-  position: fixed;
-  width: 220px;
-  background: var(--bg-2);
-  border: 1px solid var(--line-2);
-  border-radius: 0;
-  padding: 10px;
-  z-index: 9000;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-}
-
-.picker-sv {
-  position: relative;
-  width: 100%;
-  height: 140px;
-  border-radius: var(--r);
-  cursor: crosshair;
-  margin-bottom: 8px;
-  overflow: hidden;
-}
-
-.picker-sv-grad-s {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to right, #fff, transparent);
-}
-
-.picker-sv-grad-v {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to top, #000, transparent);
-}
-
-.picker-sv-handle {
-  position: absolute;
-  width: 12px;
-  height: 12px;
-  border: 2px solid #fff;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
-}
-
-.picker-hue {
-  position: relative;
-  width: 100%;
-  height: 12px;
-  border-radius: 0;
-  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
-  cursor: crosshair;
-  margin-bottom: 8px;
-}
-
-.picker-hue-handle {
-  position: absolute;
-  top: -2px;
-  width: 4px;
-  height: 16px;
-  background: #fff;
-  border: 1px solid #000;
-  border-radius: 0;
-  transform: translateX(-50%);
-  pointer-events: none;
-}
-
-.picker-hex {
-  width: 100%;
-  background: var(--bg-3);
-  border: 1px solid var(--line-2);
-  padding: 6px 8px;
-  border-radius: var(--r);
-  font-family: inherit;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  text-align: center;
-  margin-bottom: 8px;
-}
-
-.picker-hex:focus {
-  outline: none;
-  border-color: var(--fg-dim);
-}
-
-.picker-presets {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 3px;
-}
-
-.picker-preset {
-  aspect-ratio: 1;
-  border: 1px solid var(--line-2);
-  border-radius: 0;
-  cursor: pointer;
-  padding: 0;
-}
-
-.picker-preset:hover { border-color: var(--fg); }
 
 /* ─── Variations modal ─────────────────────────────────── */
 .modal {
@@ -810,32 +659,6 @@ input[type=range]::-moz-range-thumb {
 }
 .chip.hidden { display: none; }
 
-/* ─── Color combo presets ─────────────────────────────── */
-.combo-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 6px;
-}
-.combo {
-  display: flex;
-  height: 38px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r);
-  cursor: pointer;
-  padding: 0;
-  overflow: hidden;
-  background: transparent;
-  transition: border-color 0.12s, transform 0.12s;
-}
-.combo:hover {
-  border-color: var(--fg);
-  transform: scale(1.02);
-}
-.combo span {
-  flex: 1;
-  display: block;
-}
-
 /* ─── Strips presets + controls ───────────────────────── */
 .strips-presets {
   display: grid;
@@ -966,6 +789,7 @@ input[type=range]::-moz-range-thumb {
   height: 100%;
   display: block;
   object-fit: contain;
+  filter: grayscale(1);
   border-radius: 0;
   box-shadow: none;
 }
@@ -993,15 +817,15 @@ input[type=range]::-moz-range-thumb {
 }
 .rect-handle {
   position: absolute;
-  border: 1px dashed var(--cyan);
-  background: rgba(0, 212, 255, 0.05);
+  border: 1px dashed var(--fg);
+  background: var(--bg-3);
   cursor: move;
   box-sizing: border-box;
   transition: background 0.1s, border-color 0.1s;
 }
 .rect-handle:hover {
   border-style: solid;
-  background: rgba(0, 212, 255, 0.12);
+  background: var(--bg-4);
 }
 .rect-handle .grip {
   position: absolute;
@@ -1009,7 +833,7 @@ input[type=range]::-moz-range-thumb {
   bottom: -5px;
   width: 10px;
   height: 10px;
-  background: var(--cyan);
+  background: var(--fg);
   cursor: nwse-resize;
   border-radius: 0;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
@@ -1222,171 +1046,6 @@ input[type=range]::-moz-range-thumb {
   transform: rotate(-12deg);
 }
 
-/* ─── Audio group ──────────────────────────────────────── */
-.audio-status {
-  float: right;
-  font-size: 10px;
-  color: var(--fg-mute);
-  letter-spacing: 0.04em;
-}
-.audio-status.live { color: var(--cyan); }
-
-.audio-tracks {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-}
-.audio-tracks button {
-  background: var(--bg-3);
-  border: none;
-  color: var(--fg-dim);
-  padding: 8px 4px;
-  border-radius: var(--r);
-  cursor: pointer;
-  font-size: 11px;
-  letter-spacing: 0.01em;
-  transition: background 0.1s, color 0.1s;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.audio-tracks button:hover { color: var(--fg); }
-.audio-tracks button.active {
-  background: var(--bg-4);
-  color: var(--fg);
-  box-shadow: inset 0 0 0 1px var(--line-2);
-}
-
-.audio-transport {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-.audio-play {
-  flex: 0 0 28px;
-  height: 28px;
-  background: var(--bg-3);
-  border: none;
-  border-radius: var(--r);
-  color: var(--fg);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.audio-play:hover { background: var(--bg-4); }
-.audio-seek {
-  flex: 1;
-  margin: 0;
-}
-.audio-time {
-  flex: 0 0 auto;
-  font-size: 10px;
-  color: var(--fg-mute);
-  font-variant-numeric: tabular-nums;
-}
-
-.sound-analysis { margin-top: 6px; }
-.audio-viz {
-  display: block;
-  width: 100%;
-  height: auto;
-  margin-top: 8px;
-  background: var(--bg-3);
-  border-radius: var(--r);
-}
-
-.audio-drop {
-  margin-top: 8px;
-  padding: 8px;
-  border: 1px dashed var(--line);
-  border-radius: var(--r);
-  text-align: center;
-  font-size: 10px;
-  color: var(--fg-mute);
-  letter-spacing: 0.05em;
-  text-transform: lowercase;
-  transition: border-color 0.1s, color 0.1s, background 0.1s;
-}
-.audio-drop.over {
-  border-color: var(--cyan);
-  color: var(--cyan);
-  background: rgba(0, 212, 255, 0.06);
-}
-
-.audio-influence-row {
-  margin-top: 12px;
-}
-
-.camera-mic-toggle {
-  margin-top: 2px;
-}
-
-/* ─── Modulator panel ─────────────────────────────────── */
-.mod-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.mod-row {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 7px 8px;
-  background: var(--bg-2);
-  border-radius: var(--r);
-  box-shadow: inset 0 0 0 1px transparent;
-  transition: box-shadow 0.12s;
-}
-.mod-row-head {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  color: var(--fg-dim);
-  letter-spacing: 0.02em;
-}
-.mod-row-head .mod-depth-val {
-  color: var(--fg-mute);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-.audio-strips-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  background: var(--bg-3);
-  border: none;
-  color: var(--fg-dim);
-  padding: 8px 10px;
-  border-radius: var(--r);
-  cursor: pointer;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  margin-bottom: 10px;
-  text-align: left;
-  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
-}
-.audio-strips-toggle:hover { color: var(--fg); }
-.audio-strips-toggle .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--line-2);
-  flex-shrink: 0;
-  transition: background 0.12s, box-shadow 0.12s;
-}
-.audio-strips-toggle.active {
-  color: var(--fg);
-  box-shadow: inset 0 0 0 1px var(--line-2);
-}
-.audio-strips-toggle.active .dot {
-  background: var(--cyan);
-  box-shadow: 0 0 6px var(--cyan);
-}
-
 /* Advanced sections collapsed behind a static +/– disclosure button. */
 .disclosure {
   width: 100%;
@@ -1409,112 +1068,6 @@ input[type=range]::-moz-range-thumb {
 .disclosure.open { color: var(--fg-dim); }
 .disclosure-mark { color: var(--fg-mute); font-size: 13px; }
 .disclosure-body { margin-top: 12px; }
-
-.noise-hint {
-  font-size: 10px;
-  color: var(--fg-mute);
-  margin-bottom: 10px;
-  letter-spacing: 0.02em;
-}
-.noise-hint b { color: var(--fg-dim); font-weight: 700; }
-
-.mod-hint {
-  color: var(--fg-mute);
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  margin-left: 8px;
-}
-.mod-depth-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.mod-row .mod-depth { flex: 1; width: 100%; margin: 0; }
-
-/* ─── Modulation matrix controls ───────────────────────── */
-.mod-src, .mod-tgt {
-  flex: 1;
-  min-width: 0;
-  background: var(--bg-3);
-  color: var(--fg);
-  border: none;
-  border-radius: var(--r);
-  padding: 4px 6px;
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-}
-.mod-src:hover, .mod-tgt:hover { background: var(--bg-4); }
-.mod-src:focus, .mod-tgt:focus { outline: 1px solid var(--fg-mute); }
-.mod-arrow { color: var(--fg-mute); font-size: 11px; flex-shrink: 0; }
-.mod-icon {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  background: transparent;
-  border: none;
-  color: var(--fg-mute);
-  border-radius: var(--r);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  transition: background 0.12s, color 0.12s;
-}
-.mod-icon:hover { background: var(--bg-3); color: var(--fg); }
-.mod-depth-val {
-  color: var(--fg-mute);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  min-width: 26px;
-  text-align: right;
-}
-.mod-adv-panel {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  padding: 6px 2px 2px;
-  border-top: 1px solid var(--bg-4);
-}
-.mod-adv-field {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1 1 80px;
-  font-size: 10px;
-  color: var(--fg-mute);
-}
-.mod-adv-field input { width: 100%; margin: 0; }
-.mod-adv-check {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  color: var(--fg-dim);
-  cursor: pointer;
-}
-.mod-add {
-  width: 100%;
-  margin-top: 8px;
-  padding: 7px 10px;
-  background: var(--bg-3);
-  border: 1px dashed var(--bg-4);
-  color: var(--fg-mute);
-  border-radius: var(--r);
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
-}
-.mod-add:hover { background: var(--bg-4); color: var(--fg); border-color: var(--fg-mute); }
-.mod-actions { display: flex; gap: 6px; margin-top: 8px; }
-.mod-actions .mod-add { flex: 1; margin-top: 0; }
-.sub-hint { color: var(--fg-mute); font-size: 10px; letter-spacing: 0; text-transform: none; }
 
 /* ─── Mobile fallback ──────────────────────────────────── */
 @media (max-width: 720px) {
@@ -1545,14 +1098,6 @@ input[type=range]::-moz-range-thumb {
   }
   .pattern-grid {
     grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
-  /* The 3 track buttons can wrap on very narrow phones; let the grid breathe. */
-  .audio-tracks {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  /* Bigger touch targets for the audio toggle dots. */
-  .audio-strips-toggle {
-    padding: 12px 10px;
   }
   /* Source preview can be shorter on mobile to free room for controls. */
   .source-preview {

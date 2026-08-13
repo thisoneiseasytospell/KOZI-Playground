@@ -525,6 +525,7 @@ const TAU = Math.PI * 2, D2R = Math.PI / 180;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const rnd = (a, b) => a + Math.random() * (b - a);
 const F1 = v => (Math.round(v * 10) / 10).toString();
+const MOUSE_EYE_LONGITUDE = 0.34, MOUSE_EYE_LATITUDE = 0.5;
 
 /* ---------- 3D math ---------- */
 function mul3(A, B) {
@@ -808,11 +809,13 @@ function setExpression(i, smoothHappy = false) {
       const posX = side === 'L' ? S.xL.x : S.xR.x;
       const posY = side === 'L' ? S.yL.x : S.yR.x;
       const ex = EX[side];
-      orbitEntry[side].lon = sgn * 13 + (posX + ex.dx.x) * 0.35 + S.gx.x + S.fy.x * 0.34;
-      orbitEntry[side].lat = SHAPES[state.shape].face.lat + (posY - ex.dy.x) * 0.35 + S.gy.x - S.fx.x * 0.28;
+      orbitEntry[side].lon = sgn * 13 + (posX + ex.dx.x) * 0.35 + S.gx.x + S.fy.x * MOUSE_EYE_LONGITUDE;
+      orbitEntry[side].lat = SHAPES[state.shape].face.lat + (posY - ex.dy.x) * 0.35 + S.gy.x - S.fx.x * MOUSE_EYE_LATITUDE;
     }
   }
   state.expr = i;
+  const orbitSpeedCard = document.getElementById('orbitSpeedCard');
+  if (orbitSpeedCard) orbitSpeedCard.style.display = i === 26 ? '' : 'none';
   const [l, r] = EXPRESSIONS[i];
   for (const k of EYE_KEYS) {
     EX.L[k].t = l[k] || 0;
@@ -1455,8 +1458,8 @@ function eyePathD(side, m) {
     pl = placeEye(m, lon, lat, true);
   } else {
     // The farther the cursor is from center, the farther the eyes travel toward the edge.
-    lon += S.fy.x * 0.34;
-    lat -= S.fx.x * 0.28;
+    lon += S.fy.x * MOUSE_EYE_LONGITUDE;
+    lat -= S.fx.x * MOUSE_EYE_LATITUDE;
     pl = placeEye(m, lon, lat);
   }
   if (pl.alpha <= 0.01) return { d: '', alpha: 0 };
@@ -1943,15 +1946,7 @@ document.getElementById('pane-expr').innerHTML = `
       <button class="btn" id="btnReset">Reset</button>
     </div>
   </div>
-  <div class="card">
-    <h3>Spring speed</h3>
-    <div class="sub">How snappy every morph and movement settles.</div>
-    <div class="sliderrow">
-      <input type="range" id="speedSlider" min="2" max="14" step="0.5" value="${state.speed}">
-      <span class="val" id="speedVal">${state.speed.toFixed(1)}</span>
-    </div>
-  </div>
-  <div class="card">
+  <div class="card" id="orbitSpeedCard" style="display:${state.expr === 26 ? '' : 'none'}">
     <h3>Orbit speed</h3>
     <div class="sub">From a slow drift to three full revolutions per second.</div>
     <div class="sliderrow">
@@ -2230,8 +2225,6 @@ function resetAvatar() {
   document.getElementById('planeLiftControl').style.display = 'none';
   planeEyeLiftSlider.value = 7;
   document.getElementById('planeEyeLiftVal').textContent = '7';
-  speedSlider.value = 7;
-  document.getElementById('speedVal').textContent = '7.0';
   orbitSpeedSlider.value = 220;
   document.getElementById('orbitSpeedVal').textContent = '220°/s';
   orbitBurstStart = -1e9;
@@ -2242,11 +2235,6 @@ function resetAvatar() {
   updateDevInspector(true);
 }
 document.getElementById('btnReset').addEventListener('click', resetAvatar);
-const speedSlider = document.getElementById('speedSlider');
-speedSlider.addEventListener('input', () => {
-  state.speed = +speedSlider.value;
-  document.getElementById('speedVal').textContent = state.speed.toFixed(1);
-});
 const orbitSpeedSlider = document.getElementById('orbitSpeedSlider');
 orbitSpeedSlider.addEventListener('input', () => {
   const requestedSpeed = +orbitSpeedSlider.value;
@@ -2304,8 +2292,8 @@ function currentEyeAnchor(side) {
     };
   }
   return {
-    longitude: sign * 13 + (posX + ex.dx.x) * 0.35 + S.gx.x + S.fy.x * 0.34,
-    latitude: SHAPES[state.shape].face.lat + (posY - ex.dy.x) * 0.35 + S.gy.x - S.fx.x * 0.28,
+    longitude: sign * 13 + (posX + ex.dx.x) * 0.35 + S.gx.x + S.fy.x * MOUSE_EYE_LONGITUDE,
+    latitude: SHAPES[state.shape].face.lat + (posY - ex.dy.x) * 0.35 + S.gy.x - S.fx.x * MOUSE_EYE_LATITUDE,
   };
 }
 
@@ -2433,7 +2421,7 @@ function getImplementationSpec() {
     mouseFollow: {
       defaultEnabled: true,
       maximumHeadRotationDegrees: { x: 28, y: 42 },
-      eyeEdgeTravel: { longitudePerHeadYDegree: 0.34, latitudePerHeadXDegree: -0.28 },
+      eyeEdgeTravel: { longitudePerHeadYDegree: MOUSE_EYE_LONGITUDE, latitudePerHeadXDegree: -MOUSE_EYE_LATITUDE },
     },
     orbit: {
       sourceExpression: 26,

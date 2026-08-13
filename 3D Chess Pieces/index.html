@@ -80,14 +80,17 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { SVGLoader } from 'three/addons/loaders/SVGLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 
 const ORDER = window.CHESS_ORDER;
-const STROKE_W = 10.025;
-const BEVEL_T = 7, BEVEL_S = 9;      // caps keep the exact SVG contour; sides bulge ~stroke width
+const BEVEL_T = 8, BEVEL_S = 10;     // caps keep the exact SVG contour; sides bulge ~stroke width
+const RIDGE_R = 5.5;                 // outline ridge radius, ~half the SVG stroke width (10.025)
+const RIDGE_FLATTEN = 0.65;          // elliptical cross-section: wider than tall
+const RIDGE_SINK = 1.0;              // how deep the ridge sits into the cap surface
 const SPACING = 300;
 const COLORS = {
-  white: { body: 0xf7f6fb, line: 0x5b5b5b },
-  black: { body: 0x494952, line: 0x1d1d23 }
+  white: { body: 0xf7f6fb },
+  black: { body: 0x494952 }
 };
 const state = { piece: 'all', set: 'white', depth: 44, spin: true };
 
@@ -132,17 +135,19 @@ const ground = new THREE.Mesh(
 ground.receiveShadow = true;
 scene.add(ground);
 
-// ---------- materials (shared, recolored on set switch) ----------
-const bodyMat = new THREE.MeshStandardMaterial({ color: COLORS.white.body, roughness: 0.5, metalness: 0 });
-const lineMat = new THREE.MeshStandardMaterial({ color: COLORS.white.line, roughness: 0.85, metalness: 0, side: THREE.DoubleSide });
+// ---------- material (shared, recolored on set switch) ----------
+const bodyMat = new THREE.MeshPhysicalMaterial({
+  color: COLORS.white.body, roughness: 0.38, metalness: 0,
+  clearcoat: 0.5, clearcoatRoughness: 0.25
+});
 
 // ---------- SVG -> parts ----------
 // Each piece is a list of parts drawn in document order: a fill path, usually
 // followed by its outline path (same d, or a slightly larger d on the bases).
-// The outline path defines both the extruded contour and the flat stroke decal;
-// open stroke paths (knight's muzzle line) become decals on the previous part.
+// The outline path defines the extruded contour and doubles as the centerline
+// of an embossed ridge on the caps; open stroke paths (knight's muzzle line)
+// become ridges on the previous part.
 const loader = new SVGLoader();
-const strokeStyle = SVGLoader.getStrokeStyle(STROKE_W, '#000', 'round', 'round', 4);
 
 function parsePiece(name) {
   const dom = new DOMParser().parseFromString(window.CHESS_SVG[name], 'image/svg+xml');
@@ -158,15 +163,15 @@ function parsePiece(name) {
     const stroke = node.getAttribute('stroke');
     const closed = /z\s*$/i.test(node.getAttribute('d'));
     if (fill && fill !== 'none') {
-      last = { shape: paths[i], outlined: false, decals: [] };
+      last = { shape: paths[i], outlined: false, lines: [] };
       parts.push(last);
     } else if (stroke) {
       if (closed && last && !last.outlined) {
         last.shape = paths[i];               // outer contour wins (bases are drawn larger)
         last.outlined = true;
-        last.decals.push(paths[i]);
+        last.lines.push(paths[i]);
       } else if (last) {
-        last.decals.push(paths[i]);
+        last.lines.push(paths[i]);
       }
     }
   });
@@ -177,30 +182,64 @@ const parsed = {};
 ORDER.forEach(n => parsed[n] = parsePiece(n));
 
 // ---------- build meshes ----------
+// Embossed outline: a flattened tube swept along the stroke centerline,
+// half-sunk into the cap so it reads as a soft raised ridge.
+function ridgeGeometry(sub) {
+  const len = sub.getLength();
+  if (len < 2) return null;
+  const div = Math.max(24, Math.min(400, Math.round(len / 4)));
+  let pts = sub.getSpacedPoints(div);
+  const closed = pts[0].distanceTo(pts[pts.length - 1]) < 0.5;
+  if (closed) pts = pts.slice(0, -1);
+  if (pts.length < 3) return null;
+  // Catmull-Rom through evenly spaced samples gently rounds sharp corners
+  const curve = new THREE.CatmullRomCurve3(
+    pts.map(p => new THREE.Vector3(p.x, p.y, 0)), closed, 'centripetal');
+  const tube = new THREE.TubeGeometry(curve, div, RIDGE_R, 12, closed);
+  let geo = tube;
+  if (!closed) {                             // round end caps for open lines
+    const ends = [0, 1].map(t => {
+      const s = new THREE.SphereGeometry(RIDGE_R, 12, 8);
+      const p = curve.getPoint(t);
+      s.translate(p.x, p.y, 0);
+      return s;
+    });
+    geo = BufferGeometryUtils.mergeGeometries([tube, ...ends]);
+  }
+  geo.deleteAttribute('uv');
+  geo.scale(1, 1, RIDGE_FLATTEN);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 function buildPiece(name, depthBase) {
   const inner = new THREE.Group();
   parsed[name].forEach((part, pi) => {
     const depth = depthBase + pi * 4;        // later-drawn parts sit proud, like the 2D layering
     const shapes = SVGLoader.createShapes(part.shape);
-    const geo = new THREE.ExtrudeGeometry(shapes, {
+    let geo = new THREE.ExtrudeGeometry(shapes, {
       depth, bevelEnabled: true, bevelThickness: BEVEL_T, bevelSize: BEVEL_S,
-      bevelSegments: 5, curveSegments: 14
+      bevelSegments: 10, curveSegments: 24
     });
+    geo.deleteAttribute('uv');
+    // smooth-shade the rounded bevel and curved walls, keep truly sharp corners
+    geo = BufferGeometryUtils.toCreasedNormals(geo, THREE.MathUtils.degToRad(50));
     geo.translate(0, 0, -depth / 2);
     const mesh = new THREE.Mesh(geo, bodyMat);
     mesh.castShadow = true;
     mesh.name = `${name}-part${pi}`;
     inner.add(mesh);
 
-    const capZ = depth / 2 + BEVEL_T + 0.5;
-    for (const dpath of part.decals) {
-      for (const sub of dpath.subPaths) {
-        const sg = SVGLoader.pointsToStroke(sub.getPoints(), strokeStyle);
-        if (!sg) continue;
-        const front = new THREE.Mesh(sg, lineMat);
-        front.position.z = capZ;
-        const back = new THREE.Mesh(sg, lineMat);
-        back.position.z = -capZ;
+    const ridgeZ = depth / 2 + BEVEL_T - RIDGE_SINK;
+    for (const lpath of part.lines) {
+      for (const sub of lpath.subPaths) {
+        const rg = ridgeGeometry(sub);
+        if (!rg) continue;
+        const front = new THREE.Mesh(rg, bodyMat);
+        front.position.z = ridgeZ;
+        const back = new THREE.Mesh(rg, bodyMat);
+        back.position.z = -ridgeZ;
+        front.castShadow = back.castShadow = true;
         inner.add(front, back);
       }
     }
@@ -261,7 +300,6 @@ document.querySelectorAll('#bar [data-set]').forEach(btn => {
     state.set = btn.dataset.set;
     document.querySelectorAll('#bar [data-set]').forEach(b => b.classList.toggle('active', b === btn));
     bodyMat.color.setHex(COLORS[state.set].body);
-    lineMat.color.setHex(COLORS[state.set].line);
   });
 });
 const spinBtn = document.getElementById('spin');

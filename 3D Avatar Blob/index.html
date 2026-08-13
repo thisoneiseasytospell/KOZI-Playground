@@ -196,6 +196,24 @@
   #brand:hover { text-decoration:underline; text-underline-offset:3px; }
   #brand .back { font-size:15px; font-weight:400; transform:translateY(-1px); }
   #caption { bottom:20px; color:#65655f; font-size:11px; letter-spacing:.01em; }
+  #resetHold {
+    position:fixed; z-index:100; inset:0; display:flex; align-items:center; justify-content:center;
+    padding:24px; background:rgba(17,17,15,.58); color:var(--ink); opacity:0;
+    visibility:hidden; pointer-events:none; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    transition:opacity .18s ease, visibility 0s linear .18s;
+  }
+  #resetHold.show { opacity:1; visibility:visible; transition-delay:0s; }
+  .reset-hold-dialog {
+    width:min(360px, 100%); padding:20px; border:1px solid var(--ink);
+    background:var(--paper); box-shadow:10px 10px 0 rgba(0,0,0,.2);
+    transform:translateY(10px); transition:transform .22s ease;
+  }
+  #resetHold.show .reset-hold-dialog { transform:translateY(0); }
+  .reset-hold-copy { display:flex; justify-content:space-between; align-items:baseline; gap:20px; margin-bottom:18px; }
+  .reset-hold-copy strong { font-size:18px; line-height:1; font-weight:700; letter-spacing:-.025em; }
+  .reset-hold-copy span { color:var(--muted); font-size:10px; white-space:nowrap; }
+  .reset-hold-track { height:3px; background:var(--line); overflow:hidden; }
+  #resetHoldBar { width:0; height:100%; background:var(--ink); }
   #panel {
     width:460px; background:var(--paper); padding:26px 24px 44px;
     border-left:1px solid var(--ink);
@@ -420,7 +438,13 @@
     <a id="brand" href="../index.html" aria-label="Back to KOZI Playground overview"><span class="back">←</span>Playground overview</a>
     <canvas id="orbCanvas"></canvas>
     <svg id="stage"></svg>
-    <div id="caption"><b>E</b> Mouse follow <span id="mouseFollowStatus">ON</span> · Drag rotate · Click blink · <b>/</b> iOS handoff · <b>R</b> reset</div>
+    <div id="caption"><b>E</b> Mouse follow <span id="mouseFollowStatus">ON</span> · Drag rotate · Click blink · <b>/</b> iOS handoff · Hold <b>R</b> reset</div>
+    <div id="resetHold" role="status" aria-live="polite" aria-hidden="true">
+      <div class="reset-hold-dialog">
+        <div class="reset-hold-copy"><strong id="resetHoldTitle">Reset avatar?</strong><span id="resetHoldHint">Hold R to confirm</span></div>
+        <div class="reset-hold-track"><div id="resetHoldBar"></div></div>
+      </div>
+    </div>
     <section id="devInspector" aria-hidden="true" inert aria-label="iOS implementation handoff">
       <header class="dev-head">
         <div class="dev-title"><h2>iOS implementation handoff</h2><span>Live source of truth</span></div>
@@ -736,7 +760,7 @@ const SHAPE_ICONS = {
 const state = {
   shape: 'sphere',
   dims: { w: 210, h: 210, d: 210 },
-  userRot: { x: -4, y: -14, z: -6 },
+  userRot: { x: -4, y: -14, z: 0 },
   eyes: { pL: 50, pR: 53, xL: 0, yL: 0, xR: 0, yR: 0 },
   links: { w: true, h: true, p: true },
   motion: true,
@@ -1663,6 +1687,56 @@ function setMouseFollow(enabled) {
   if (devInspector.classList.contains('open')) updateDevInspector(true);
 }
 
+const RESET_HOLD_MS = 1500;
+const resetHoldEl = document.getElementById('resetHold');
+const resetHoldBar = document.getElementById('resetHoldBar');
+const resetHoldTitle = document.getElementById('resetHoldTitle');
+const resetHoldHint = document.getElementById('resetHoldHint');
+let resetHoldActive = false, resetHoldStarted = 0, resetHoldTimer = 0, resetHoldFrame = 0, resetHoldHideTimer = 0;
+
+function drawResetHold() {
+  if (!resetHoldActive) return;
+  const progress = clamp((performance.now() - resetHoldStarted) / RESET_HOLD_MS, 0, 1);
+  resetHoldBar.style.width = `${progress * 100}%`;
+  resetHoldFrame = requestAnimationFrame(drawResetHold);
+}
+
+function beginResetHold() {
+  if (resetHoldActive) return;
+  clearTimeout(resetHoldHideTimer);
+  resetHoldActive = true;
+  resetHoldStarted = performance.now();
+  resetHoldTitle.textContent = 'Reset avatar?';
+  resetHoldHint.textContent = 'Hold R to confirm';
+  resetHoldBar.style.width = '0%';
+  resetHoldEl.classList.add('show');
+  resetHoldEl.setAttribute('aria-hidden', 'false');
+  resetHoldFrame = requestAnimationFrame(drawResetHold);
+  resetHoldTimer = setTimeout(() => {
+    if (!resetHoldActive) return;
+    resetHoldActive = false;
+    cancelAnimationFrame(resetHoldFrame);
+    resetHoldBar.style.width = '100%';
+    resetHoldTitle.textContent = 'Avatar reset';
+    resetHoldHint.textContent = '';
+    resetAvatar();
+    resetHoldHideTimer = setTimeout(() => {
+      resetHoldEl.classList.remove('show');
+      resetHoldEl.setAttribute('aria-hidden', 'true');
+    }, 520);
+  }, RESET_HOLD_MS);
+}
+
+function cancelResetHold() {
+  if (!resetHoldActive) return;
+  resetHoldActive = false;
+  clearTimeout(resetHoldTimer);
+  cancelAnimationFrame(resetHoldFrame);
+  resetHoldEl.classList.remove('show');
+  resetHoldEl.setAttribute('aria-hidden', 'true');
+  resetHoldBar.style.width = '0%';
+}
+
 document.addEventListener('keydown', e => {
   const target = e.target;
   const isEditing = target instanceof HTMLElement && (
@@ -1683,7 +1757,7 @@ document.addEventListener('keydown', e => {
 
   if (e.key.toLowerCase() === 'r' && !isEditing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) {
     e.preventDefault();
-    resetAvatar();
+    beginResetHold();
     return;
   }
 
@@ -1692,6 +1766,11 @@ document.addEventListener('keydown', e => {
     setMouseFollow(!state.mouseFollow);
   }
 });
+document.addEventListener('keyup', e => {
+  if (e.key.toLowerCase() === 'r') cancelResetHold();
+});
+window.addEventListener('blur', cancelResetHold);
+document.addEventListener('visibilitychange', () => { if (document.hidden) cancelResetHold(); });
 document.getElementById('devClose').addEventListener('click', () => setDevInspectorOpen(false));
 
 function updatePointerFocus(e) {
@@ -2131,7 +2210,7 @@ document.getElementById('btnBlink').addEventListener('click', blinkNow);
 function resetAvatar() {
   state.shape = 'sphere';
   beginStateTransition('idle');
-  state.userRot = { x: -4, y: -14, z: -6 };
+  state.userRot = { x: -4, y: -14, z: 0 };
   state.links = { w: true, h: true, p: true };
   state.motion = true;
   state.speed = 7;
@@ -2376,7 +2455,7 @@ function getImplementationSpec() {
     defaults: {
       shape: 'sphere',
       dimensionsUnits: { width: 210, height: 210, depth: 210 },
-      rotationDegrees: { x: -4, y: -14, z: -6 },
+      rotationDegrees: { x: -4, y: -14, z: 0 },
       state: 'idle',
       expressionSourceID: 1,
       planeEyeDistanceUnits: 7,

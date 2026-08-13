@@ -1,0 +1,2438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2D/3D Avatar — KOZI Playground</title>
+<style>
+  @font-face {
+    font-family: "ABC Diatype";
+    src: url("fonts/ABCDiatype-Regular.otf") format("opentype");
+    font-style: normal;
+    font-weight: 400 699;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "ABC Diatype";
+    src: url("fonts/ABCDiatype-Bold.otf") format("opentype");
+    font-style: normal;
+    font-weight: 700 900;
+    font-display: swap;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    font-family: Inter, -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
+    background:#0b0b11; color:#16161a; overflow:hidden;
+    font-variant-numeric: tabular-nums;
+  }
+  #app { display:flex; height:100vh; }
+
+  /* ---------- stage ---------- */
+  #stagewrap {
+    flex:1; min-width:0; position:relative;
+    background: radial-gradient(120% 90% at 50% 42%, #12121b 0%, #0b0b11 62%, #08080d 100%);
+  }
+  #stage { position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+  #orbCanvas {
+    position:absolute; inset:0; width:100%; height:100%;
+    display:none; opacity:0; pointer-events:none;
+  }
+  #brand {
+    position:absolute; top:20px; left:24px; z-index:2;
+    font-size:13px; font-weight:700; color:#e8e8ee; letter-spacing:.01em;
+    display:flex; align-items:center; gap:8px; text-decoration:none;
+  }
+  #caption {
+    position:absolute; bottom:18px; left:0; right:0; text-align:center; z-index:2; pointer-events:none;
+    font-size:12px; color:#6d6d7a;
+  }
+  /* ---------- panel ---------- */
+  #panel {
+    width:478px; flex:none; background:#edeef3; overflow-y:auto; padding:22px 22px 40px;
+  }
+  #panel::-webkit-scrollbar { width:10px; }
+  #panel::-webkit-scrollbar-thumb { background:#d4d5dd; border-radius:6px; border:3px solid #edeef3; }
+
+  .eyebrow { font-size:11px; font-weight:700; letter-spacing:.16em; color:#5460f2; margin-bottom:6px; }
+  .phead { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:16px; }
+  .phead h1 { font-size:26px; font-weight:800; letter-spacing:-.02em; }
+  .tabs {
+    display:flex; background:#fff; border:1px solid #e2e3ea; border-radius:14px;
+    padding:4px; margin-bottom:16px; box-shadow:0 1px 2px rgba(20,20,40,.04);
+  }
+  .tabs button {
+    flex:1; border:0; background:transparent; font:inherit; font-size:13.5px; font-weight:700;
+    color:#66666f; padding:9px 0; border-radius:10px; cursor:pointer;
+  }
+  .tabs button.active { background:#17171c; color:#fff; }
+
+  .card {
+    background:#fff; border:1px solid #e4e5eb; border-radius:16px; padding:16px 16px 18px;
+    margin-bottom:14px; box-shadow:0 1px 2px rgba(20,20,40,.04);
+  }
+  .card h3 { font-size:15px; font-weight:750; margin-bottom:3px; }
+  .card .sub { font-size:12px; color:#8b8b96; line-height:1.45; margin-bottom:13px; }
+  .cardtop { display:flex; justify-content:space-between; align-items:flex-start; }
+
+  .shapegrid { display:grid; grid-template-columns:repeat(4, 1fr); gap:9px; margin-bottom:14px; }
+  .shapegrid button {
+    border:1.5px solid #e4e5eb; background:#fff; border-radius:12px; cursor:pointer;
+    padding:10px 2px 8px; display:flex; flex-direction:column; align-items:center; gap:6px;
+    font:inherit; font-size:11px; font-weight:600; color:#71717c;
+  }
+  .shapegrid button svg { display:block; }
+  .shapegrid button .ic { stroke:#8b8b96; fill:#a7a7b2; }
+  .shapegrid button:hover { border-color:#cfd0da; }
+  .shapegrid button.sel { border-color:#5460f2; background:#eef0fe; color:#4550e6; }
+  .shapegrid button.sel .ic { stroke:#5460f2; fill:#6373f2; }
+
+  .frow { display:flex; align-items:center; justify-content:space-between; margin-top:9px; }
+  .fgrid2 { display:grid; grid-template-columns:1fr 1fr; column-gap:18px; }
+  .flabel {
+    display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:#3c3c45;
+    cursor:ew-resize; user-select:none; -webkit-user-select:none;
+  }
+  .flabel svg { flex:none; }
+  .colhead { font-size:10.5px; font-weight:700; letter-spacing:.1em; color:#9a9aa4; margin:10px 0 2px; }
+  .inpwrap {
+    display:flex; align-items:center; background:#f4f4f7; border:1px solid #e3e3ea;
+    border-radius:9px; padding:0 9px 0 4px; width:96px; flex:none;
+  }
+  .inpwrap:focus-within { border-color:#5460f2; background:#fff; }
+  .inpwrap input {
+    width:100%; border:0; background:transparent; font:inherit; font-size:13px; font-weight:600;
+    color:#26262c; text-align:right; padding:7px 5px 7px 0; outline:none;
+  }
+  .inpwrap .unit { font-size:11px; color:#a2a2ac; font-weight:600; flex:none; }
+
+  .linkbtn {
+    width:30px; height:30px; border-radius:9px; border:1px solid #e3e3ea; background:#fff;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; color:#9a9aa4; flex:none;
+  }
+  .linkbtn.on { background:#eef0fe; border-color:#5460f2; color:#5460f2; }
+
+  /* orb surface controls */
+  .orow { display:flex; align-items:center; gap:10px; margin-top:8px; }
+  .orow label { font-size:12.5px; color:#3c3c45; font-weight:600; width:108px; flex:none; }
+  .orow input[type=range] { flex:1; accent-color:#5460f2; min-width:0; }
+  .orow .val { font-size:12px; color:#4550e6; font-weight:700; width:44px; text-align:right; }
+  .crow { display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .crow input[type=color] {
+    width:44px; height:30px; border:1px solid #e3e3ea; border-radius:8px;
+    background:#fff; padding:2px; cursor:pointer; flex:none;
+  }
+  .crow input[type=text] {
+    width:92px; font:12px ui-monospace, Menlo, monospace; padding:6px 7px;
+    border:1px solid #e3e3ea; border-radius:7px; color:#26262c; background:#f4f4f7; outline:none;
+  }
+  .crow .cdel {
+    margin-left:auto; width:20px; height:20px; border-radius:50%; border:none;
+    background:#ececf1; color:#71717c; font-size:11px; line-height:1; cursor:pointer; padding:0;
+  }
+  #addColor {
+    width:44px; height:30px; border-radius:8px; border:1px dashed #c4c4cf; background:none;
+    color:#8b8b96; font-size:15px; cursor:pointer; margin-top:8px;
+  }
+
+  /* expressions */
+  .exprgrid { display:grid; grid-template-columns:repeat(5, 1fr); gap:9px; }
+  .exprcard {
+    position:relative; border:1.5px solid #e8e8ee; background:#f6f6f9; border-radius:13px;
+    cursor:pointer; padding:5px; aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
+  }
+  .exprcard:hover { border-color:#cfd0da; }
+  .exprcard.sel { border-color:#5460f2; box-shadow:0 0 0 3px #dfe3fd; background:#fff; }
+  .exprcard svg { width:100%; height:100%; display:block; }
+  .exprcard .num {
+    position:absolute; right:5px; bottom:5px; background:#fff; border-radius:999px;
+    font-size:9.5px; font-weight:800; color:#26262c; padding:2px 6px;
+    box-shadow:0 1px 3px rgba(20,20,40,.14);
+  }
+  .btnrow { display:flex; gap:9px; margin-top:14px; }
+  .btn {
+    border:1px solid #e3e3ea; background:#f4f4f7; font:inherit; font-size:12.5px; font-weight:700;
+    color:#3c3c45; border-radius:10px; padding:8px 15px; cursor:pointer;
+  }
+  .btn:hover { background:#ececf1; }
+  .btn.primary { background:#5460f2; border-color:#5460f2; color:#fff; }
+  .btn.primary:hover { background:#4550e6; }
+  .sliderrow { display:flex; align-items:center; gap:12px; margin-top:6px; }
+  .sliderrow input[type=range] { flex:1; accent-color:#5460f2; }
+  .sliderrow .val { font-size:13px; font-weight:700; color:#4550e6; width:34px; text-align:right; }
+
+  /* states */
+  .staterow {
+    display:flex; align-items:center; gap:12px; border:1.5px solid #e8e8ee; background:#fff;
+    border-radius:13px; padding:12px 14px; margin-top:9px; cursor:pointer;
+  }
+  .staterow:hover { border-color:#cfd0da; }
+  .staterow.sel { border-color:#5460f2; background:#f6f7ff; }
+  .staterow .sname { font-size:13.5px; font-weight:750; width:84px; flex:none; }
+  .staterow.sel .sname { color:#4550e6; }
+  .staterow .sdesc { font-size:12px; color:#8b8b96; }
+
+  /* ---------- monochrome Scandinavian UI ---------- */
+  :root {
+    --ink:#11110f;
+    --paper:#f4f4f0;
+    --surface:#ffffff;
+    --stage:#d9d9d3;
+    --line:#b9b9b2;
+    --muted:#6f6f69;
+    --quiet:#e5e5df;
+  }
+  body {
+    font-family:"ABC Diatype", Arial, sans-serif;
+    background:var(--stage);
+    color:var(--ink);
+    letter-spacing:-.01em;
+  }
+  #stagewrap { background:var(--stage); }
+  #brand {
+    top:24px; left:26px; color:var(--ink); font-size:12px; font-weight:700;
+    letter-spacing:.08em; text-transform:uppercase;
+  }
+  #brand:hover { text-decoration:underline; text-underline-offset:3px; }
+  #brand .back { font-size:15px; font-weight:400; transform:translateY(-1px); }
+  #caption { bottom:20px; color:#65655f; font-size:11px; letter-spacing:.01em; }
+  #panel {
+    width:460px; background:var(--paper); padding:26px 24px 44px;
+    border-left:1px solid var(--ink);
+  }
+  #panel * { border-radius:0 !important; }
+  #panel::-webkit-scrollbar { width:8px; }
+  #panel::-webkit-scrollbar-track { background:var(--paper); }
+  #panel::-webkit-scrollbar-thumb { background:#aaa9a2; border:2px solid var(--paper); border-radius:0; }
+
+  .eyebrow {
+    color:var(--muted); font-size:10px; font-weight:700; letter-spacing:.15em;
+    text-transform:uppercase; margin-bottom:8px;
+  }
+  .eyebrow.phead-credit { text-transform:none; letter-spacing:.04em; }
+  .phead { margin-bottom:20px; }
+  .phead h1 {
+    display:flex; gap:.16em; font-size:30px; line-height:1;
+    font-weight:700; letter-spacing:-.04em;
+  }
+  .tabs {
+    background:transparent; border:1px solid var(--ink); padding:0; margin-bottom:18px;
+    box-shadow:none;
+  }
+  .tabs button {
+    color:var(--ink); padding:10px 0; font-size:12px; font-weight:400;
+    border-right:1px solid var(--ink); letter-spacing:.01em;
+  }
+  .tabs button:last-child { border-right:0; }
+  .tabs button.active { background:var(--ink); color:var(--paper); }
+
+  .card {
+    background:transparent; border:1px solid var(--line); padding:18px;
+    margin-bottom:12px; box-shadow:none;
+  }
+  .card h3 { font-size:14px; font-weight:700; letter-spacing:-.01em; }
+  .card .sub { color:var(--muted); font-size:11.5px; }
+  .shapegrid { gap:7px; }
+  .shapegrid button {
+    border:1px solid var(--line); background:var(--surface); color:var(--muted);
+    padding:10px 2px 9px; font-size:10px; font-weight:400;
+  }
+  .shapegrid button:hover { border-color:var(--ink); }
+  .shapegrid button .ic { stroke:#85857f; fill:#85857f; }
+  .shapegrid button.sel { border-color:var(--ink); background:var(--ink); color:#fff; }
+  .shapegrid button.sel .ic { stroke:#fff; fill:#fff; }
+
+  .flabel { color:#343430; font-size:12px; font-weight:400; }
+  .colhead { color:var(--muted); font-size:9px; letter-spacing:.13em; }
+  .inpwrap {
+    background:var(--surface); border:1px solid var(--line); padding-right:8px; width:94px;
+  }
+  .inpwrap:focus-within { border-color:var(--ink); background:var(--surface); }
+  .inpwrap input { color:var(--ink); font-size:12px; font-weight:400; }
+  .inpwrap .unit { color:var(--muted); font-size:10px; font-weight:400; }
+  .dimension-editor {
+    display:grid; grid-template-columns:138px 1fr; gap:18px; align-items:center;
+    border-top:1px solid var(--line); padding-top:16px;
+  }
+  .dim-mini {
+    width:138px; height:138px; display:block; color:var(--ink); overflow:visible;
+  }
+  .dim-mini .body { fill:#e2e2dc; stroke:currentColor; stroke-width:1; }
+  .dim-mini .back, .dim-mini .join { fill:none; stroke:currentColor; stroke-width:1; stroke-opacity:.42; }
+  .dim-mini .measure { stroke:currentColor; stroke-width:1; }
+  .dim-mini text { fill:currentColor; font:700 8px "ABC Diatype", Arial, sans-serif; letter-spacing:.08em; }
+  .dim-fields { display:flex; flex-direction:column; }
+  .dim-fields .frow { margin:0; padding:8px 0; border-bottom:1px solid var(--quiet); }
+  .dim-fields .frow:first-child { padding-top:0; }
+  .dim-fields .frow:last-child { padding-bottom:0; border-bottom:0; }
+  .dim-fields .flabel { gap:6px; }
+  .dim-axis {
+    width:18px; height:18px; display:inline-flex; align-items:center; justify-content:center;
+    background:var(--ink); color:#fff; font-size:9px; font-weight:700;
+  }
+  .plane-lift-control { border-top:1px solid var(--line); margin-top:16px; padding-top:14px; }
+  .plane-lift-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; }
+  .plane-lift-head label { font-size:12px; color:var(--ink); }
+  .plane-lift-head span { font-size:11px; color:var(--muted); font-weight:700; }
+  .linkbtn { border-color:var(--line); background:transparent; color:var(--muted); }
+  .linkbtn.on { background:var(--ink); border-color:var(--ink); color:#fff; }
+
+  .orow label { color:#343430; font-size:12px; font-weight:400; }
+  .orow input[type=range], .sliderrow input[type=range] {
+    appearance:none; -webkit-appearance:none; height:18px; background:transparent; accent-color:var(--ink);
+  }
+  input[type=range]::-webkit-slider-runnable-track { height:2px; background:var(--line); }
+  input[type=range]::-webkit-slider-thumb {
+    appearance:none; -webkit-appearance:none; width:10px; height:10px; margin-top:-4px;
+    border:0; border-radius:0; background:var(--ink);
+  }
+  input[type=range]::-moz-range-track { height:2px; background:var(--line); }
+  input[type=range]::-moz-range-thumb { width:10px; height:10px; border:0; border-radius:0; background:var(--ink); }
+  .orow .val, .sliderrow .val { color:var(--ink); font-weight:700; }
+  .crow input[type=color], .crow input[type=text] { border-color:var(--line); background:#fff; color:var(--ink); }
+  .crow input[type=color]::-webkit-color-swatch-wrapper { padding:2px; }
+  .crow input[type=color]::-webkit-color-swatch { border:0; border-radius:0; }
+  .crow .cdel { background:var(--quiet); color:var(--ink); }
+  #addColor { border-color:var(--line); color:var(--ink); }
+
+  .exprgrid { grid-template-columns:repeat(4, 1fr); gap:8px; }
+  .exprcard { border:1px solid var(--line); background:var(--quiet); padding:5px; }
+  .exprcard:hover { border-color:var(--ink); }
+  .exprcard.sel { border-color:var(--ink); box-shadow:inset 0 0 0 2px var(--ink); background:#fff; }
+  .exprcard .num {
+    right:5px; bottom:5px; background:var(--ink); color:#fff; padding:2px 5px;
+    font-size:9px; font-weight:700; box-shadow:none;
+  }
+  .exprcard .tag {
+    position:absolute; left:5px; top:5px; color:var(--ink); font-size:8px;
+    font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+  }
+  .btn { border-color:var(--line); background:transparent; color:var(--ink); font-weight:400; }
+  .btn:hover { background:var(--quiet); }
+  .btn.primary, .btn.primary:hover { background:var(--ink); border-color:var(--ink); color:#fff; }
+  .staterow { border:1px solid var(--line); background:transparent; padding:12px; }
+  .staterow:hover { border-color:var(--ink); }
+  .staterow.sel { border-color:var(--ink); background:var(--ink); }
+  .staterow .sname { color:var(--ink); font-size:13px; font-weight:700; }
+  .staterow .sdesc { color:var(--muted); font-size:11.5px; }
+  .staterow.sel .sname, .staterow.sel .sdesc { color:#fff; }
+  .statebody { flex:1; min-width:0; }
+  .state-colors { display:none; gap:12px; margin-top:11px; padding-top:11px; border-top:1px solid #55554f; }
+  .staterow.sel .state-colors { display:flex; }
+  .state-color { flex:1; min-width:0; }
+  .state-color label {
+    display:block; margin-bottom:5px; color:#bdbdb6; font-size:8px;
+    font-weight:700; letter-spacing:.12em; text-transform:uppercase;
+  }
+  .state-color-fields { display:flex; align-items:stretch; min-width:0; }
+  .state-color input[type=color] {
+    width:28px; height:26px; flex:none; padding:2px; border:1px solid #777770;
+    background:#fff; cursor:pointer;
+  }
+  .state-color input[type=color]::-webkit-color-swatch-wrapper { padding:0; }
+  .state-color input[type=color]::-webkit-color-swatch { border:0; border-radius:0; }
+  .state-color input[type=text] {
+    width:100%; min-width:0; height:26px; padding:5px 6px; border:1px solid #777770;
+    border-left:0; outline:0; background:transparent; color:#fff;
+    font:9.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .state-color input[type=text]:focus { background:#292925; border-color:#fff; }
+
+  /* ---------- iOS developer handoff ---------- */
+  #devInspector {
+    position:absolute; z-index:20; inset:76px 22px 22px;
+    display:none; overflow:auto; background:rgba(244,244,240,.98);
+    border:1px solid var(--ink); box-shadow:8px 8px 0 rgba(17,17,15,.16);
+    color:var(--ink);
+  }
+  #devInspector.open { display:block; }
+  #devInspector * { border-radius:0 !important; }
+  .dev-head {
+    position:sticky; top:0; z-index:2; display:flex; align-items:center;
+    justify-content:space-between; gap:20px; padding:15px 17px;
+    background:var(--ink); color:#fff;
+  }
+  .dev-title { display:flex; align-items:baseline; gap:12px; min-width:0; }
+  .dev-title h2 { font-size:16px; font-weight:700; letter-spacing:-.02em; white-space:nowrap; }
+  .dev-title span { font-size:10px; color:#bdbdb6; letter-spacing:.1em; text-transform:uppercase; }
+  .dev-close {
+    width:28px; height:28px; flex:none; border:1px solid #686862; background:transparent;
+    color:#fff; font:16px "ABC Diatype", Arial, sans-serif; cursor:pointer;
+  }
+  .dev-close:hover { background:#fff; color:var(--ink); }
+  .dev-intro {
+    display:flex; justify-content:space-between; align-items:flex-start; gap:22px;
+    padding:17px; border-bottom:1px solid var(--line);
+  }
+  .dev-intro p { max-width:670px; color:#4d4d48; font-size:12px; line-height:1.45; }
+  .dev-actions { display:flex; gap:7px; flex:none; }
+  .dev-btn {
+    border:1px solid var(--ink); background:transparent; color:var(--ink);
+    padding:8px 10px; font:700 10px "ABC Diatype", Arial, sans-serif;
+    letter-spacing:.06em; text-transform:uppercase; cursor:pointer;
+  }
+  .dev-btn:hover, .dev-btn.primary { background:var(--ink); color:#fff; }
+  .dev-copy-status { min-height:16px; padding:0 17px; color:var(--muted); font-size:10px; }
+  .dev-grid { display:grid; grid-template-columns:minmax(250px,.72fr) minmax(340px,1.28fr); }
+  .dev-col { min-width:0; }
+  .dev-col + .dev-col { border-left:1px solid var(--line); }
+  .dev-section { padding:17px; border-bottom:1px solid var(--line); }
+  .dev-section:last-child { border-bottom:0; }
+  .dev-section h3 {
+    margin-bottom:11px; font-size:10px; letter-spacing:.13em;
+    text-transform:uppercase; color:var(--muted);
+  }
+  .dev-kv { display:grid; grid-template-columns:118px 1fr; border-top:1px solid var(--quiet); }
+  .dev-kv dt, .dev-kv dd { padding:6px 0; border-bottom:1px solid var(--quiet); font-size:11px; }
+  .dev-kv dt { color:var(--muted); }
+  .dev-kv dd { color:var(--ink); font-weight:700; text-align:right; overflow-wrap:anywhere; }
+  .dev-rule { display:grid; grid-template-columns:18px 1fr; gap:9px; margin-top:9px; }
+  .dev-rule:first-of-type { margin-top:0; }
+  .dev-rule b {
+    display:flex; align-items:center; justify-content:center; width:18px; height:18px;
+    background:var(--ink); color:#fff; font-size:9px;
+  }
+  .dev-rule p { color:#454540; font-size:11px; line-height:1.4; }
+  .dev-code {
+    max-height:300px; overflow:auto; padding:13px; background:#e6e6e0;
+    border:1px solid var(--line); color:#242420;
+    font:10.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space:pre; tab-size:2;
+  }
+  .dev-section-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+  .dev-section-head h3 { margin:0; }
+  .dev-section-head .dev-btn { padding:5px 7px; font-size:9px; }
+
+  @media (max-width: 940px) {
+    #app { flex-direction:column; }
+    #stagewrap { height:52vh; flex:none; }
+    #panel { width:100%; flex:1; }
+    #devInspector { position:fixed; inset:14px; }
+    .dev-grid { grid-template-columns:1fr; }
+    .dev-col + .dev-col { border-left:0; }
+    .dev-intro { flex-direction:column; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stagewrap">
+    <a id="brand" href="../index.html" aria-label="Back to KOZI Playground overview"><span class="back">←</span>Playground overview</a>
+    <canvas id="orbCanvas"></canvas>
+    <svg id="stage"></svg>
+    <div id="caption"><b>E</b> Mouse follow <span id="mouseFollowStatus">ON</span> · Drag rotate · Click blink · <b>/</b> iOS handoff · <b>R</b> reset</div>
+    <section id="devInspector" aria-hidden="true" inert aria-label="iOS implementation handoff">
+      <header class="dev-head">
+        <div class="dev-title"><h2>iOS implementation handoff</h2><span>Live source of truth</span></div>
+        <button class="dev-close" id="devClose" aria-label="Close developer handoff">×</button>
+      </header>
+      <div class="dev-intro">
+        <p>This inspector describes behavior, authored presets and the currently rendered pose. Values use degrees and avatar units. The iOS renderer should normalize positions against head width and height, then animate from its current presentation values whenever a state is interrupted.</p>
+        <div class="dev-actions">
+          <button class="dev-btn" id="copyLivePose">Copy live pose</button>
+          <button class="dev-btn primary" id="copyImplementation">Copy full spec</button>
+        </div>
+      </div>
+      <div class="dev-copy-status" id="devCopyStatus" role="status"></div>
+      <div class="dev-grid">
+        <div class="dev-col">
+          <section class="dev-section">
+            <h3>Current runtime</h3>
+            <dl class="dev-kv" id="devRuntime"></dl>
+          </section>
+          <section class="dev-section">
+            <h3>Transition contract</h3>
+            <div class="dev-rule"><b>1</b><p>Read the current rendered pose when a new state arrives. Never jump back to a preset’s authored start.</p></div>
+            <div class="dev-rule"><b>2</b><p>Set new expression, gaze and head-motion targets. Springs remain interruptible at every frame.</p></div>
+            <div class="dev-rule"><b>3</b><p>Run orbit as a continuous phase layer. Entry begins at each eye’s visible anchor.</p></div>
+            <div class="dev-rule"><b>4</b><p>Apply shape projection and clipping after pose interpolation; plane eyes intentionally render above the surface.</p></div>
+          </section>
+          <section class="dev-section">
+            <h3>iOS-facing events</h3>
+            <pre class="dev-code">setState(id, animated: true)
+setExpression(id, animated: true)
+setShape(id)
+setMouseFollow(enabled)
+setMousePosition(x: -1...1, y: -1...1)
+setDimensions(width, height, depth)
+setPlaneEyeDistance(value)
+blink()</pre>
+          </section>
+        </div>
+        <div class="dev-col">
+          <section class="dev-section">
+            <div class="dev-section-head"><h3>Live presentation pose</h3><button class="dev-btn" id="copyLivePoseInline">Copy JSON</button></div>
+            <pre class="dev-code" id="devLivePose"></pre>
+          </section>
+          <section class="dev-section">
+            <div class="dev-section-head"><h3>Authored implementation spec</h3><button class="dev-btn" id="copyImplementationInline">Copy JSON</button></div>
+            <pre class="dev-code" id="devImplementation"></pre>
+          </section>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div id="panel">
+    <div class="eyebrow phead-credit">KOZI x Blunt for Take Take Take</div>
+    <div class="phead">
+      <h1><span>2D/3D</span><span>Avatar</span></h1>
+    </div>
+    <div class="tabs">
+      <button data-tab="manual" class="active">Manual</button>
+      <button data-tab="expr">Expressions</button>
+      <button data-tab="states">States</button>
+      <button data-tab="surface">Surface</button>
+    </div>
+    <div id="pane-manual"></div>
+    <div id="pane-expr" style="display:none"></div>
+    <div id="pane-states" style="display:none"></div>
+    <div id="pane-surface" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* =============================================================
+   Avatar Studio — procedural 3D rendered as flat 2D SVG.
+   Orthographic projection, spring-driven motion, no libraries.
+   ============================================================= */
+
+const TAU = Math.PI * 2, D2R = Math.PI / 180;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const rnd = (a, b) => a + Math.random() * (b - a);
+const F1 = v => (Math.round(v * 10) / 10).toString();
+
+/* ---------- 3D math ---------- */
+function mul3(A, B) {
+  const o = new Array(9);
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++)
+    o[r * 3 + c] = A[r * 3] * B[c] + A[r * 3 + 1] * B[3 + c] + A[r * 3 + 2] * B[6 + c];
+  return o;
+}
+function apply(m, v) {
+  return {
+    x: m[0] * v.x + m[1] * v.y + m[2] * v.z,
+    y: m[3] * v.x + m[4] * v.y + m[5] * v.z,
+    z: m[6] * v.x + m[7] * v.y + m[8] * v.z
+  };
+}
+function rotMat(rx, ry, rz) {
+  const cx = Math.cos(rx), sx = Math.sin(rx), cy = Math.cos(ry), sy = Math.sin(ry),
+        cz = Math.cos(rz), sz = Math.sin(rz);
+  const RX = [1,0,0, 0,cx,-sx, 0,sx,cx];
+  const RY = [cy,0,sy, 0,1,0, -sy,0,cy];
+  const RZ = [cz,-sz,0, sz,cz,0, 0,0,1];
+  return mul3(RZ, mul3(RY, RX));
+}
+const norm3 = v => { const l = Math.hypot(v.x, v.y, v.z) || 1; return { x: v.x / l, y: v.y / l, z: v.z / l }; };
+
+/* ---------- 2D geometry ---------- */
+function hull(pts) { // Andrew monotone chain
+  const p = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+  if (p.length < 3) return p;
+  const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lo = [], up = [];
+  for (const q of p) {
+    while (lo.length > 1 && cross(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop();
+    lo.push(q);
+  }
+  for (let i = p.length - 1; i >= 0; i--) {
+    const q = p[i];
+    while (up.length > 1 && cross(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop();
+    up.push(q);
+  }
+  lo.pop(); up.pop();
+  return lo.concat(up);
+}
+function roundedPolyPath(pts, r) {
+  const n = pts.length;
+  if (n < 3) return '';
+  let d = '';
+  for (let i = 0; i < n; i++) {
+    const p = pts[(i - 1 + n) % n], v = pts[i], q = pts[(i + 1) % n];
+    const l1 = Math.hypot(v.x - p.x, v.y - p.y), l2 = Math.hypot(q.x - v.x, q.y - v.y);
+    const rr = Math.min(r, l1 * 0.45, l2 * 0.45);
+    const ax = v.x - (v.x - p.x) / (l1 || 1) * rr, ay = v.y - (v.y - p.y) / (l1 || 1) * rr;
+    const bx = v.x + (q.x - v.x) / (l2 || 1) * rr, by = v.y + (q.y - v.y) / (l2 || 1) * rr;
+    d += (i === 0 ? `M${ax.toFixed(2)} ${ay.toFixed(2)}` : `L${ax.toFixed(2)} ${ay.toFixed(2)}`);
+    d += `Q${v.x.toFixed(2)} ${v.y.toFixed(2)} ${bx.toFixed(2)} ${by.toFixed(2)}`;
+  }
+  return d + 'Z';
+}
+function polyPath(pts) {
+  return 'M' + pts.map(p => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join('L') + 'Z';
+}
+function ellipsePathD(cx, cy, rx, ry, th) {
+  const deg = th / D2R, ux = Math.cos(th) * rx, uy = Math.sin(th) * rx;
+  const x1 = cx + ux, y1 = cy + uy, x2 = cx - ux, y2 = cy - uy;
+  return `M${x1.toFixed(2)} ${y1.toFixed(2)}A${rx.toFixed(2)} ${ry.toFixed(2)} ${deg.toFixed(2)} 1 1 ${x2.toFixed(2)} ${y2.toFixed(2)}A${rx.toFixed(2)} ${ry.toFixed(2)} ${deg.toFixed(2)} 1 1 ${x1.toFixed(2)} ${y1.toFixed(2)}Z`;
+}
+function ellipseSamples(cx, cy, rx, ry, th, N) {
+  const c = Math.cos(th), s = Math.sin(th), out = [];
+  for (let i = 0; i < N; i++) {
+    const a = i / N * TAU, ex = Math.cos(a) * rx, ey = Math.sin(a) * ry;
+    out.push({ x: cx + ex * c - ey * s, y: cy + ex * s + ey * c });
+  }
+  return out;
+}
+/* exact orthographic silhouette of a rotated ellipsoid diag(a,b,c) */
+function ellipsoidSilhouette(m, a, b, c) {
+  const r1 = [m[0] * a, m[1] * b, m[2] * c];
+  const r2 = [-m[3] * a, -m[4] * b, -m[5] * c]; // screen y flip
+  const S00 = r1[0] * r1[0] + r1[1] * r1[1] + r1[2] * r1[2];
+  const S11 = r2[0] * r2[0] + r2[1] * r2[1] + r2[2] * r2[2];
+  const S01 = r1[0] * r2[0] + r1[1] * r2[1] + r1[2] * r2[2];
+  const mid = (S00 + S11) / 2, dif = Math.sqrt(Math.max(0, ((S00 - S11) / 2) ** 2 + S01 * S01));
+  // near-circular silhouette: the axis angle is numerically meaningless — pin it
+  const th = dif < 1e-5 * mid ? 0 : 0.5 * Math.atan2(2 * S01, S00 - S11);
+  return { rx: Math.sqrt(Math.max(0, mid + dif)), ry: Math.sqrt(Math.max(0, mid - dif)), th };
+}
+function catmullClosed(pts) {
+  const n = pts.length;
+  let d = `M${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)}`;
+  for (let i = 0; i < n; i++) {
+    const p0 = pts[(i - 1 + n) % n], p1 = pts[i], p2 = pts[(i + 1) % n], p3 = pts[(i + 2) % n];
+    const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
+    d += `C${c1x.toFixed(2)} ${c1y.toFixed(2)} ${c2x.toFixed(2)} ${c2y.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+  }
+  return d + 'Z';
+}
+
+/* ---------- springs ---------- */
+class Spring {
+  constructor(v) { this.x = v; this.v = 0; this.t = v; }
+  step(dt, k, damp = 0.92) {
+    const a = -k * (this.x - this.t) - 2 * Math.sqrt(k) * damp * this.v;
+    this.v += a * dt;
+    this.x += this.v * dt;
+    // settle fully at rest — endless micro-ringing reads as vibration
+    if (Math.abs(this.x - this.t) < 1e-4 && Math.abs(this.v) < 1e-3) { this.x = this.t; this.v = 0; }
+  }
+  snap(v) { this.x = v; this.t = v; this.v = 0; }
+}
+
+/* ---------- eye outline generator (local u units, y down) ---------- */
+function eyePoints(w, h, tiltRad, lid, bend, N = 44) {
+  w = Math.max(4, w); h = Math.max(4, h);
+  const swap = w > h;
+  const W = swap ? h : w, H = swap ? w : h;
+  const r = W / 2, side = Math.max(0, H / 2 - r);
+  const arc = Math.PI * r, total = 2 * arc + 4 * side || 1;
+  const pts = [];
+  for (let i = 0; i < N; i++) {
+    let p = i / N * total, x, y;
+    if (p < side) { x = r; y = -side + p; }                                   // right side, going down
+    else if ((p -= side) < arc) { const t = p / arc * Math.PI;                 // bottom arc 0..pi
+      x = r * Math.cos(t); y = side + r * Math.sin(t); }
+    else if ((p -= arc) < 2 * side) { x = -r; y = side - p; }                  // left side, going up
+    else { p -= 2 * side; const t = Math.PI + p / arc * Math.PI;               // top arc pi..2pi
+      x = r * Math.cos(t); y = -side + r * Math.sin(t); }
+    if (swap) { const tx = x; x = -y; y = tx; }                                // rotate 90°
+    pts.push({ x, y });
+  }
+  const hw = Math.max(w, 4) / 2, hh = Math.max(h, 4) / 2;
+  const ct = Math.cos(tiltRad), st = Math.sin(tiltRad);
+  lid = clamp(lid, 0, 0.92);
+  const bendEff = clamp(bend, -1.2, 1.2) * clamp((h - 5) / 10, 0, 1);        // fade bend out as the eye closes
+  const topLim = -hh + lid * 1.55 * hh;
+  for (const p of pts) {
+    if (bendEff) p.y += bendEff * hh * 0.9 * ((p.x / hw) ** 2 - 0.5);        // ∩ arc when bend > 0
+    if (tiltRad) { const x = p.x, y = p.y; p.x = x * ct - y * st; p.y = x * st + y * ct; }
+    if (lid > 0) p.y = Math.max(p.y, topLim);
+  }
+  return pts;
+}
+
+/* ---------- curated expressions ---------- */
+const E = (w, h, t = 0, dx = 0, dy = 0, lid = 0, bend = 0) => ({ w, h, t, dx, dy, lid, bend });
+const EXPRESSIONS = {
+  0:  [E(13.2, 60.7, 7),          E(13.2, 33.5, 7)],          // 00 default
+  1:  [E(11, 34),                 E(11, 34)],                  // 01
+  2:  [E(16, 70, 4),              E(16, 70, 4)],               // 02
+  3:  [E(24, 24, 0, 0, 3),        E(19, 19, 0, 1, -3)],        // 03
+  4:  [E(24, 6),                  E(24, 6)],                   // 04
+  5:  [E(10, 30),                 E(22, 6, 0, 1)],             // 05
+  7:  [E(11, 36, 25),             E(11, 36, -25)],             // 07
+  8:  [E(10, 30, -22),            E(10, 30, 22)],              // 08
+  9:  [E(26, 26),                 E(8, 8, 0, 4, -2)],          // 09
+  22: [E(11, 11),                 E(11, 11)],                  // alert dots
+  24: [E(24, 16, 0, 0, 0, 0, .9), E(24, 16, 0, 0, 0, 0, .9)], // 24 happy
+  25: [E(16, 30, 0, 0, 2, .6),    E(16, 30, 0, 0, 2, .6)],     // 25 heavy lids
+  26: [E(16, 32, -12),             E(16, 32, 12)],              // orbit
+};
+const VISIBLE_EXPRESSIONS = [0, 1, 2, 3, 4, 5, 7, 8, 9, 24, 25, 26];
+
+/* ---------- states ---------- */
+const STATES = {
+  idle:    { label: 'Idle',    desc: 'Slow drift, relaxed blinks.',                     palette: ['#3f19c8', '#ffffff'], amp: [3, 7, 2],    freq: 0.22, bias: [0, 0, 0], gaze: 4,  gItv: [2.5, 5],   blink: [3, 6.5],   expr: 1,  bounce: 0 },
+  curious: { label: 'Curious', desc: 'Asymmetric eyes, big slow looks and curious tilts.',palette: ['#5e00ff', '#ffffff'], amp: [9, 26, 11], freq: 0.4, bias: [0, 0, 0], gaze: 12, gItv: [0.7, 1.6], blink: [2.5, 5], expr: 9, bounce: 0 },
+  excited: { label: 'Excited', desc: 'Quick bounces, happy eyes.',                      palette: ['#009494', '#d6ffff'], amp: [5, 9, 11],   freq: 1.5,  bias: [0, 0, 0], gaze: 6,  gItv: [0.5, 1.0], blink: [1.8, 3.2], expr: 24, bounce: 0.022, bounceFreq: 2.2 },
+  disappointed: { label: 'Disappointed', desc: 'Heavy lids, a lowered gaze and slow sway.', palette: ['#bd0000', '#ffa047'], amp: [6, 5, 4], freq: 0.1, bias: [9, 0, 0], gaze: 2, gItv: [4, 7], blink: [5, 9], expr: 25, bounce: 0 },
+  alert:   { label: 'Alert',   desc: 'Small focused eyes with snappy gaze shifts.',     palette: ['#dbd400', '#dee147'], amp: [2, 5, 1.5], freq: 0.8, bias: [0, 0, 0], gaze: 13, gItv: [0.5, 1.2], blink: [2, 4], expr: 22, bounce: 0 },
+  shocked: { label: 'Shocked', desc: 'Wide disbelief with a small head wiggle.',         palette: ['#5e00ff', '#ffffff'], amp: [1, 2, 1.5], freq: 0.35, bias: [0, 0, 0], gaze: 3, gItv: [1.3, 2.4], blink: [3, 5], expr: 2, bounce: 0.004, wiggle: 3.2 },
+};
+
+const STATE_TRANSITION_SECONDS = 1.25;
+const motionProfile = source => ({
+  amp: [...source.amp],
+  bias: [...source.bias],
+  freq: source.freq,
+  gaze: source.gaze,
+  bounce: source.bounce || 0,
+  bounceFreq: source.bounceFreq || 2.9,
+  wiggle: source.wiggle || 0,
+});
+let stateTransition = {
+  from: motionProfile(STATES.idle),
+  to: motionProfile(STATES.idle),
+  start: 0,
+  duration: STATE_TRANSITION_SECONDS,
+};
+
+function blendedMotionProfile(at = clock) {
+  const raw = clamp((at - stateTransition.start) / stateTransition.duration, 0, 1);
+  const t = easeInOutCubic(raw);
+  const blendArray = (a, b) => a.map((value, i) => lerp(value, b[i], t));
+  return {
+    amp: blendArray(stateTransition.from.amp, stateTransition.to.amp),
+    bias: blendArray(stateTransition.from.bias, stateTransition.to.bias),
+    freq: lerp(stateTransition.from.freq, stateTransition.to.freq, t),
+    gaze: lerp(stateTransition.from.gaze, stateTransition.to.gaze, t),
+    bounce: lerp(stateTransition.from.bounce, stateTransition.to.bounce, t),
+    bounceFreq: lerp(stateTransition.from.bounceFreq, stateTransition.to.bounceFreq, t),
+    wiggle: lerp(stateTransition.from.wiggle, stateTransition.to.wiggle, t),
+  };
+}
+
+function beginStateTransition(stateID, instant = false) {
+  const current = blendedMotionProfile();
+  state.stateName = stateID;
+  stateTransition = {
+    from: instant ? motionProfile(STATES[stateID]) : current,
+    to: motionProfile(STATES[stateID]),
+    start: clock,
+    duration: instant ? 0.0001 : STATE_TRANSITION_SECONDS,
+  };
+}
+
+/* ---------- shapes ----------
+   orbR: how far the orb shader's r=1 silhouette must extend beyond the
+   projected ellipse so the gradient covers the whole clipped shape. */
+const SHAPES = {
+  sphere: { label: 'Sphere', face: { lat: 9,  scale: 1,    esc: 1 },    orbR: 1.0 },
+  mickey: { label: 'Mickey', face: { lat: 6,  scale: 1,    esc: 1 },    orbR: 1.5 },
+  cube:   { label: 'Cube',   face: { lat: 8,  scale: 0.92, esc: 0.95 }, orbR: 1.45 },
+  plane:  { label: 'Plane',  face: { lat: 8,  scale: 0.92, esc: 0.95 }, orbR: 1.45 },
+};
+const SHAPE_ICONS = {
+  sphere: '<circle cx="14" cy="14" r="10" class="ic" stroke-width="0"/>',
+  mickey: '<circle cx="7" cy="8" r="5" class="ic" stroke-width="0"/><circle cx="21" cy="8" r="5" class="ic" stroke-width="0"/><circle cx="14" cy="16" r="9" class="ic" stroke-width="0"/>',
+  cube:   '<rect x="5" y="5" width="18" height="18" class="ic" stroke-width="0"/>',
+  plane:  '<path d="M3 10 L25 6 L25 18 L3 22 Z" class="ic" stroke-width="0"/>',
+};
+
+/* ---------- app state ---------- */
+const state = {
+  shape: 'sphere',
+  dims: { w: 210, h: 210, d: 210 },
+  userRot: { x: -4, y: -14, z: -6 },
+  eyes: { pL: 50, pR: 53, xL: 0, yL: 0, xR: 0, yR: 0 },
+  links: { w: true, h: true, p: true },
+  motion: true,
+  speed: 7,
+  orbitSpeed: 220,
+  planeEyeLift: 7,
+  mouseFollow: true,
+  expr: 1,
+  stateName: 'idle',
+  surface: 'orb',
+};
+
+const S = {
+  rx: new Spring(state.userRot.x), ry: new Spring(state.userRot.y), rz: new Spring(state.userRot.z),
+  dw: new Spring(210), dh: new Spring(210), dd: new Spring(210),
+  pL: new Spring(50), pR: new Spring(53),
+  xL: new Spring(0), yL: new Spring(0), xR: new Spring(0), yR: new Spring(0),
+  gx: new Spring(0), gy: new Spring(0),
+  wx: new Spring(0), wy: new Spring(0), wz: new Spring(0),
+  fx: new Spring(0), fy: new Spring(0),
+  blink: new Spring(0),
+  pop: new Spring(1),
+  wf: new Spring(0),
+};
+const EYE_KEYS = ['w', 'h', 't', 'dx', 'dy', 'lid', 'bend'];
+const EX = { L: {}, R: {} };
+let orbitStart = 0, orbitBurstStart = -1e9, orbitAngle = 0, orbitSpeedLive = state.orbitSpeed;
+const orbitEntry = { L: { lon: -13, lat: 9 }, R: { lon: 13, lat: 9 } };
+for (const side of ['L', 'R']) for (const k of EYE_KEYS)
+  EX[side][k] = new Spring(EXPRESSIONS[state.expr][side === 'L' ? 0 : 1][k] || 0);
+
+function setExpression(i, smoothHappy = false) {
+  if (i === 26 && state.expr !== 26) {
+    orbitStart = clock;
+    orbitBurstStart = clock;
+    orbitAngle = 0;
+    state.orbitSpeed = 220;
+    orbitSpeedLive = 670;
+    const orbitSlider = document.getElementById('orbitSpeedSlider');
+    const orbitValue = document.getElementById('orbitSpeedVal');
+    if (orbitSlider) orbitSlider.value = state.orbitSpeed;
+    if (orbitValue) orbitValue.textContent = '670°/s';
+    for (const side of ['L', 'R']) {
+      const sgn = side === 'L' ? -1 : 1;
+      const posX = side === 'L' ? S.xL.x : S.xR.x;
+      const posY = side === 'L' ? S.yL.x : S.yR.x;
+      const ex = EX[side];
+      orbitEntry[side].lon = sgn * 13 + (posX + ex.dx.x) * 0.35 + S.gx.x + S.fy.x * 0.34;
+      orbitEntry[side].lat = SHAPES[state.shape].face.lat + (posY - ex.dy.x) * 0.35 + S.gy.x - S.fx.x * 0.28;
+    }
+  }
+  state.expr = i;
+  const [l, r] = EXPRESSIONS[i];
+  for (const k of EYE_KEYS) {
+    EX.L[k].t = l[k] || 0;
+    EX.R[k].t = r[k] || 0;
+    // Display card 09 (the happy preset) should never show its in-between clipped geometry.
+    if (i === 24 && !smoothHappy) {
+      EX.L[k].x = EX.L[k].t; EX.L[k].v = 0;
+      EX.R[k].x = EX.R[k].t; EX.R[k].v = 0;
+    }
+  }
+  if (i === 24 && !smoothHappy) { S.blink.x = 0; S.blink.t = 0; S.blink.v = 0; }
+  document.querySelectorAll('.exprcard').forEach(el => el.classList.toggle('sel', +el.dataset.expr === i));
+  // reflect the preset's geometry in the Manual tab fields
+  for (const [key, v] of [['eyeWL', EX.L.w.t], ['eyeWR', EX.R.w.t], ['eyeHL', EX.L.h.t], ['eyeHR', EX.R.h.t]]) {
+    const inp = document.querySelector(`input[data-key="${key}"]`);
+    if (inp && document.activeElement !== inp) inp.value = v.toFixed(1);
+  }
+}
+
+/* ---------- scheduler ---------- */
+let nextGaze = 0, nextBlink = 2.5, clock = 0, motionPhase = 0, bouncePhase = 0, wigglePhase = 0;
+function blinkNow() {
+  S.blink.t = 1;
+  setTimeout(() => { S.blink.t = 0; }, 90);
+}
+/* smooth layered-sine noise, ~[-1, 1] — head motion never jumps */
+function noise1(t, seed) {
+  return 0.62 * Math.sin(t + seed) + 0.38 * Math.sin(t * 2.17 + seed * 1.93);
+}
+function schedule(dt) {
+  clock += dt;
+  if (state.expr === 26) {
+    const burstT = clamp((clock - orbitBurstStart) / 2, 0, 1);
+    if (burstT < 1) {
+      const eased = 1 - Math.pow(1 - burstT, 3);
+      orbitSpeedLive = lerp(670, 220, eased);
+    } else {
+      orbitSpeedLive += (state.orbitSpeed - orbitSpeedLive) * (1 - Math.exp(-dt * 5));
+    }
+    orbitAngle = (orbitAngle + orbitSpeedLive * dt) % 360;
+    const orbitValue = document.getElementById('orbitSpeedVal');
+    if (orbitValue) orbitValue.textContent = `${Math.round(orbitSpeedLive)}°/s`;
+  }
+  if (!state.motion) { S.wx.t = 0; S.wy.t = 0; S.wz.t = 0; S.gx.t = 0; S.gy.t = 0; S.pop.t = 1; return; }
+  const authoredState = STATES[state.stateName];
+  const st = blendedMotionProfile();
+  motionPhase += dt * st.freq * TAU;
+  bouncePhase += dt * st.bounceFreq * TAU;
+  wigglePhase += dt * 2.35 * TAU;
+  const w = motionPhase;
+  S.wx.t = st.bias[0] + st.amp[0] * noise1(w * 0.9, 1.3);
+  S.wy.t = st.bias[1] + st.amp[1] * noise1(w * 0.7, 4.1);
+  S.wz.t = st.bias[2] + st.amp[2] * noise1(w * 0.55, 7.7);
+  if (st.wiggle) S.wz.t += st.wiggle * Math.sin(wigglePhase);
+  S.pop.t = 1 + (st.bounce ? st.bounce * Math.sin(bouncePhase) : 0);
+  if (clock >= nextGaze) {
+    S.gx.t = rnd(-st.gaze, st.gaze);
+    S.gy.t = rnd(-st.gaze * 0.55, st.gaze * 0.55);
+    nextGaze = clock + rnd(authoredState.gItv[0], authoredState.gItv[1]);
+  }
+  if (clock >= nextBlink) {
+    blinkNow();
+    nextBlink = clock + rnd(authoredState.blink[0], authoredState.blink[1]);
+  }
+}
+
+/* =============================================================
+   RENDERING
+   ============================================================= */
+const stage = document.getElementById('stage');
+const NS = 'http://www.w3.org/2000/svg';
+stage.innerHTML = `
+  <defs>
+    <clipPath id="headclip"><path id="clipPathEl"/></clipPath>
+  </defs>
+  <g id="gRoot">
+    <path id="gHead" fill="#3f19c8"/>
+    <path id="gEdge" fill="none" stroke="#11110f" stroke-opacity="0" stroke-width=".75"/>
+    <g id="gCubeEdges" fill="none" stroke="#11110f" stroke-opacity=".065" stroke-width=".65" pointer-events="none"></g>
+    <path id="gWire" fill="none" stroke="#ffffff" stroke-width="1"/>
+    <g id="gEyes" clip-path="url(#headclip)">
+      <path id="gEyeL" fill="#0e0e14"/>
+      <path id="gEyeR" fill="#0e0e14"/>
+    </g>
+    <path id="gOutline" fill="none" stroke="#f4f4f0" stroke-width="1.6"/>
+  </g>
+  <g id="gGizmo"></g>
+`;
+const el = id => document.getElementById(id);
+const gHead = el('gHead'), gWire = el('gWire'), gEyeL = el('gEyeL'), gEyeR = el('gEyeR'),
+      gEdge = el('gEdge'), gCubeEdges = el('gCubeEdges'), gEyes = el('gEyes'),
+      gOutline = el('gOutline'), gGizmo = el('gGizmo'), gRoot = el('gRoot'), clipEl = el('clipPathEl');
+
+const lerp = (a, b, t) => a + (b - a) * t;
+const easeInOutCubic = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+/* =============================================================
+   ORB SURFACE — the exact engine from the Orb Editor
+   (orb-pg.vercel.app): WebGL2, OkLab palette ramp, seamless
+   flow-field loop, premultiplied alpha. Only deviation: the orb
+   is positioned and sized by uCenter/uR so it tracks the avatar
+   head, and the canvas is clipped to the head silhouette.
+   ============================================================= */
+const orbCanvas = document.getElementById('orbCanvas');
+const ORB_VERT = `#version 300 es
+void main() {
+  vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+const ORB_FRAG = `#version 300 es
+precision highp float;
+precision highp int;      // the hash needs full 32-bit ints; mediump would break it
+
+uniform vec2  uRes;
+uniform vec2  uCenter;    // head centre in device px (gl_FragCoord space)
+uniform float uR;         // head radius in device px — r = 1 at the silhouette
+uniform float uSpherical; // sphere owns its alpha; other shapes are clipped externally
+uniform float uPhase;     // 0..TAU, wraps exactly once per loop
+uniform vec3  uLab[4];    // palette stops, already in OkLab
+uniform float uCount;
+uniform float uScaleN;    // noise frequency
+uniform float uFlow;      // how far the flow field carries the field per loop
+uniform float uTurb;      // strength of the second, nested warp
+uniform float uWobble;    // silhouette deformation
+uniform float uIrid;      // fresnel-driven hue rotation
+uniform float uShift;     // palette shift
+uniform float uBalance;   // colour dominance exponent
+uniform float uChroma;    // hue ripple amount
+uniform float uContrast;  // lightness contrast around mid
+uniform float uSoft;
+uniform float uGlow;
+uniform float uShading;
+uniform float uSpec;
+uniform float uRim;
+uniform float uRefract;
+uniform float uInner;     // internal scatter (fake subsurface)
+uniform float uAberr;     // rim dispersion
+uniform float uGrain;
+uniform vec3  uLight;
+
+out vec4 fragColor;
+
+const float TAU = 6.28318530718;
+const float RAD = 0.86;             // sphere radius in uv units, rest is glow room
+const float RMAX = 1.0 / RAD;       // radius reached at the nearest canvas edge
+
+/* Integer hash built from the MurmurHash3 finalizer, which Austin Appleby
+   placed in the public domain. Exact at any lattice coordinate, so unlike a
+   fract(sin(...)) hash it never bands or repeats as coordinates grow — which
+   matters for the grain, whose input runs into the thousands. */
+uint hashU(uint x) {
+  x ^= x >> 16; x *= 0x85EBCA6Bu;
+  x ^= x >> 13; x *= 0xC2B2AE35u;
+  x ^= x >> 16;
+  return x;
+}
+uint hashU2(uvec2 p) { return hashU(p.x * 0x9E3779B9u ^ hashU(p.y)); }
+uint hashU3(uvec3 p) { return hashU(p.x * 0x9E3779B9u ^ hashU(p.y) ^ hashU(p.z) * 0x27D4EB2Fu); }
+float rand2(ivec2 p) { return float(hashU2(uvec2(p + 4096)) >> 8) / 16777216.0; }
+float rand3(ivec3 p) { return float(hashU3(uvec3(p + 4096)) >> 8) / 16777216.0; }
+
+// Value noise, smoothstep-interpolated. Four hashes per octave.
+float vnoise(vec2 p) {
+  ivec2 i = ivec2(floor(p));
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(rand2(i),                 rand2(i + ivec2(1, 0)), u.x),
+             mix(rand2(i + ivec2(0, 1)),   rand2(i + ivec2(1, 1)), u.x), u.y);
+}
+
+float fbm(vec2 p) {
+  float s = 0.0, a = 0.5;
+  for (int k = 0; k < 3; k++) { s += a * vnoise(p); p *= 2.03; a *= 0.5; }
+  return s / 0.875;
+}
+
+/* The flow field is where all the motion lives. Every point walks a circle
+   whose angle advances by exactly TAU over one loop, so the displacement
+   returns to its start and the loop is seamless by construction rather than by
+   a trick specific to one noise type. Neighbouring points start at different
+   angles, which is what reads as swirling instead of pulsing. */
+vec2 flowField(vec2 p) {
+  float ang = TAU * vnoise(p + 11.3) + uPhase;
+  float mag = 0.35 + 0.65 * vnoise(p + 27.9);
+  return vec2(cos(ang), sin(ang)) * mag;
+}
+
+/* Fresnel-driven hue rotation in the OkLab a/b plane — thin-film sheen. */
+vec3 iridesce(vec3 lab, float f) {
+  float a = uIrid * f * -2.2;
+  float c = cos(a), s = sin(a);
+  return vec3(lab.x, c * lab.y - s * lab.z, s * lab.y + c * lab.z);
+}
+
+vec3 labRamp(float x) {
+  float xx = clamp(x, 0.0, 1.0) * (uCount - 1.0);
+  vec3 c = mix(uLab[0], uLab[1], clamp(xx, 0.0, 1.0));
+  c = mix(c, uLab[2], clamp(xx - 1.0, 0.0, 1.0));
+  c = mix(c, uLab[3], clamp(xx - 2.0, 0.0, 1.0));
+  return c;
+}
+
+/* Palette in OkLab: perceptually even lightness, no muddy midpoint, and the
+   picked hex reproduces exactly at its own stop. */
+vec3 paletteLab(float t) {
+  float x = pow(clamp(0.5 + 0.5 * cos(TAU * t), 0.0, 1.0), uBalance);
+  vec3 lab = labRamp(x);
+  float ang = TAU * (t * 2.0 + 0.123);
+  float amp = 0.17 * uChroma * length(lab.yz);
+  lab.yz += amp * vec2(sin(ang), cos(ang * 1.37 + 1.1));
+  float ch = length(lab.yz);
+  if (ch > 0.33) lab.yz *= 0.33 / ch;
+  lab.x = clamp(0.5 + (lab.x - 0.5) * uContrast, 0.0, 1.0);
+  return lab;
+}
+
+/* OkLab transform matrices as published by Björn Ottosson. */
+vec3 oklabToLinear(vec3 c) {
+  float l_ = c.x + 0.3963377774 * c.y + 0.2158037573 * c.z;
+  float m_ = c.x - 0.1055613458 * c.y - 0.0638541728 * c.z;
+  float s_ = c.x - 0.0894841775 * c.y - 1.2914855480 * c.z;
+  vec3 lms = vec3(l_ * l_ * l_, m_ * m_ * m_, s_ * s_ * s_);
+  return mat3( 4.0767416621, -1.2684380046, -0.0041960863,
+              -3.3077115913,  2.6097574011, -0.7034186147,
+               0.2309699292, -0.3413193965,  1.7076147010) * lms;
+}
+
+vec3 linearToSrgb(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  vec3 lo = c * 12.92;
+  vec3 hi = 1.055 * pow(max(c, 1e-5), vec3(1.0 / 2.4)) - 0.055;
+  return mix(lo, hi, step(0.0031308, c));
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy - uCenter) / uR;
+
+  /* Silhouette wobble. Integer harmonics in the angle keep it continuous around
+     the circle, integer multiples of the phase keep it periodic in time. */
+  if (uWobble > 0.0) {
+    float r0 = length(uv);
+    float th = atan(uv.y, uv.x + 1e-6);
+    float wob = 0.60 * sin(3.0 * th + uPhase)
+              + 0.40 * sin(5.0 * th - 2.0 * uPhase)
+              + 0.25 * sin(7.0 * th + 3.0 * uPhase);
+    uv *= 1.0 - uWobble * 0.055 * wob * smoothstep(0.0, 0.5, r0);
+  }
+
+  float r = length(uv);
+  vec2 pd = uv / max(r, 1.0);       // clamp to unit disc so glow keeps rim colour
+  float z = sqrt(max(1.0 - dot(pd, pd), 0.0));
+  vec3 sphereN = vec3(pd, z);       // analytic sphere normal
+  vec3 n = mix(vec3(0.0, 0.0, 1.0), sphereN, uSpherical);
+
+  /* Domain warping: the base fBm is static and cheap, and the animation comes
+     entirely from warping its input through the looping flow field. */
+  vec2 p0 = (pd - n.xy * uRefract) * uScaleN;
+  vec2 p1 = p0 + uFlow * flowField(p0);
+  vec2 p2 = p1 + uTurb * flowField(p1 * 1.7 + 5.2);
+  float noise = mix(0.5, fbm(p2 + 3.7), 1.35);
+  float t = noise + uShift;
+
+  float fres3 = pow(1.0 - n.z, 3.0);
+  vec3 lab = iridesce(paletteLab(t), fres3);
+  vec3 base;
+  if (uAberr > 0.001) {
+    // Dispersion: shift the palette lookup per channel, strongest at the rim.
+    float d = uAberr * 0.05 * r * r;
+    base = vec3(oklabToLinear(iridesce(paletteLab(t - d), fres3)).r,
+                oklabToLinear(lab).g,
+                oklabToLinear(iridesce(paletteLab(t + d), fres3)).b);
+  } else {
+    base = oklabToLinear(lab);
+  }
+  base = max(base, 0.0);
+
+  // Lighting is added in linear light, which is where it physically belongs.
+  vec3 L = normalize(uLight);
+  float diffD = clamp(dot(n, L), 0.0, 1.0);
+  vec3 col = mix(base, vec3(diffD), uShading);
+
+  // Internal scatter: a soft core offset away from the highlight.
+  vec2 op = pd + L.xy * 0.45;
+  col += uInner * exp(-dot(op, op) * 2.2) * base;
+
+  float fres = pow(1.0 - n.z, 8.0) * uRim;
+  vec3 half_ = normalize(L + vec3(0.0, 0.0, 1.0));
+  float spec = pow(max(dot(n, half_), 0.0), 24.3) * uSpec;
+  col += fres + spec;
+
+  vec3 lit = linearToSrgb(col);
+  vec3 flat_ = linearToSrgb(base);
+
+  // Edge width never drops below ~1.5 device px, so the rim stays smooth.
+  float w = max(uSoft, 1.5 * fwidth(r));
+  float body = 1.0 - smoothstep(1.0 - w, 1.0, r);
+  float glowF = uGlow * exp(-max(r - 1.0, 0.0) * 20.0);
+  glowF *= 1.0 - smoothstep(0.45, 1.0, (r - 1.0) / (RMAX - 1.0));
+  float sphereA = clamp(body + glowF * (1.0 - body), 0.0, 1.0);
+  float a = mix(1.0, sphereA, uSpherical);
+  float surfaceBody = mix(1.0, body, uSpherical);
+  vec3 outCol = mix(flat_, lit, surfaceBody);
+
+  // Grain + always-on deband dither, in display space. Stepped to 24 frames
+  // per loop so the noise animates without breaking the seamless loop.
+  int frame = int(uPhase / TAU * 24.0);
+  float gn = rand3(ivec3(ivec2(gl_FragCoord.xy), frame)) - 0.5;
+  outCol += gn * (uGrain * 0.1 + 1.0 / 255.0);
+
+  outCol = clamp(outCol, 0.0, 1.0);
+  fragColor = vec4(outCol * a, a);   // premultiplied
+}`;
+
+function orbHexToRGB(hex) {
+  let h = String(hex || '').replace('#', '');
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  let v = parseInt(h, 16);
+  if (isNaN(v)) v = 0;
+  return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];
+}
+function srgbToOklab(hex) {
+  const c = orbHexToRGB(hex).map(u => u <= 0.04045 ? u / 12.92 : Math.pow((u + 0.055) / 1.055, 2.4));
+  const l = 0.4122214708 * c[0] + 0.5363325363 * c[1] + 0.0514459929 * c[2];
+  const m = 0.2119034982 * c[0] + 0.6806995451 * c[1] + 0.1073969566 * c[2];
+  const s = 0.0883024619 * c[0] + 0.2817188376 * c[1] + 0.6299787005 * c[2];
+  const l_ = Math.cbrt(l), m_ = Math.cbrt(m), s_ = Math.cbrt(s);
+  return [
+    0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+    1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+    0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
+  ];
+}
+
+/* the editor's exact default state */
+const orbCfg = {
+  colors:     ['#3f19c8', '#ffffff'],
+  duration:   7,
+  blobScale:  3,
+  flow:       0.6,
+  turbulence: 0.4,
+  shift:      0.23,
+  balance:    0.5,
+  chroma:     1,
+  contrast:   1,
+  rim:        1.3,
+  specular:   0.2,
+  inner:      0.38,
+  wobble:     0,
+  iridescence: 0,
+  shading:    0.05,
+  refraction: 0.25,
+  lightX:     -0.6,
+  lightY:     -1,
+  aberration: 0.8,
+  grain:      0.6,
+  softness:   0.005,
+  glow:       0
+};
+
+const PALETTE_TRANSITION_MS = 1400;
+function paletteLabs(colors) {
+  const source = colors.slice(0, 4);
+  while (source.length < 4) source.push(source[source.length - 1]);
+  return source.map(srgbToOklab);
+}
+let paletteTransition = {
+  from: paletteLabs(orbCfg.colors),
+  to: paletteLabs(orbCfg.colors),
+  start: -1e9,
+  duration: PALETTE_TRANSITION_MS,
+  active: false,
+  count: orbCfg.colors.length,
+};
+
+function presentedPaletteLabs(now = performance.now()) {
+  if (!paletteTransition.active) return paletteTransition.to.map(color => [...color]);
+  const raw = clamp((now - paletteTransition.start) / paletteTransition.duration, 0, 1);
+  const t = easeInOutCubic(raw);
+  const colors = paletteTransition.from.map((from, index) =>
+    from.map((component, channel) => lerp(component, paletteTransition.to[index][channel], t)));
+  if (raw >= 1) {
+    paletteTransition.active = false;
+    paletteTransition.from = colors.map(color => [...color]);
+  }
+  return colors;
+}
+
+function beginPaletteTransition(colors) {
+  const now = performance.now();
+  const current = presentedPaletteLabs(now);
+  orbCfg.colors = [...colors];
+  paletteTransition = {
+    from: current,
+    to: paletteLabs(colors),
+    start: now,
+    duration: PALETTE_TRANSITION_MS,
+    active: true,
+    count: colors.length,
+  };
+  renderOrbColors();
+  updatePaletteTransition(now);
+}
+
+function updatePaletteTransition(now) {
+  if (!paletteTransition.active) return;
+  orbUpdate(presentedPaletteLabs(now), paletteTransition.count);
+}
+
+const ORB = (() => {
+  let gl = null;
+  try {
+    gl = orbCanvas.getContext('webgl2', {
+      alpha: true, premultipliedAlpha: true, antialias: false,
+      depth: false, stencil: false, powerPreference: 'low-power'
+    });
+  } catch (e) { gl = null; }
+  if (!gl) return null;
+  const compile = (type, src) => {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) { console.warn(gl.getShaderInfoLog(sh)); return null; }
+    return sh;
+  };
+  const vs = compile(gl.VERTEX_SHADER, ORB_VERT), fs = compile(gl.FRAGMENT_SHADER, ORB_FRAG);
+  if (!vs || !fs) return null;
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.warn(gl.getProgramInfoLog(prog)); return null; }
+  const loc = {};
+  const n = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) {
+    const name = gl.getActiveUniform(prog, i).name.replace(/\[0\]$/, '');
+    loc[name] = gl.getUniformLocation(prog, name);
+  }
+  gl.useProgram(prog);
+  gl.disable(gl.DEPTH_TEST);
+  gl.disable(gl.BLEND);   // shader writes premultiplied RGBA straight out
+  return { gl, prog, loc, w: 0, h: 0 };
+})();
+
+/* exact uniform mapping from the editor's update() */
+function orbUpdate(presentationLabs = null, presentationCount = null) {
+  if (!ORB) return;
+  const { gl, loc } = ORB;
+  gl.useProgram(ORB.prog);
+  if (!presentationLabs) {
+    paletteTransition.active = false;
+    paletteTransition.from = paletteLabs(orbCfg.colors);
+    paletteTransition.to = paletteLabs(orbCfg.colors);
+    paletteTransition.count = orbCfg.colors.length;
+  }
+  const colors = presentationLabs || paletteTransition.to;
+  const lab = new Float32Array(12);
+  for (let i = 0; i < 4; i++) {
+    const v = colors[i];
+    lab[i * 3] = v[0]; lab[i * 3 + 1] = v[1]; lab[i * 3 + 2] = v[2];
+  }
+  gl.uniform3fv(loc.uLab, lab);
+  gl.uniform1f(loc.uCount, Math.max(2, Math.min(presentationCount ?? orbCfg.colors.length, 4)));
+  gl.uniform1f(loc.uScaleN, 1.45 / Math.max(orbCfg.blobScale, 0.05));
+  gl.uniform1f(loc.uFlow, orbCfg.flow);
+  gl.uniform1f(loc.uTurb, orbCfg.turbulence);
+  gl.uniform1f(loc.uWobble, orbCfg.wobble);
+  gl.uniform1f(loc.uIrid, orbCfg.iridescence);
+  gl.uniform1f(loc.uShift, orbCfg.shift);
+  gl.uniform1f(loc.uBalance, Math.pow(5, (0.5 - orbCfg.balance) * 2));
+  gl.uniform1f(loc.uChroma, orbCfg.chroma);
+  gl.uniform1f(loc.uContrast, orbCfg.contrast);
+  gl.uniform1f(loc.uSoft, orbCfg.softness);
+  gl.uniform1f(loc.uGlow, orbCfg.glow);
+  gl.uniform1f(loc.uShading, orbCfg.shading);
+  gl.uniform1f(loc.uSpec, orbCfg.specular);
+  gl.uniform1f(loc.uRim, orbCfg.rim);
+  gl.uniform1f(loc.uRefract, orbCfg.refraction);
+  gl.uniform1f(loc.uInner, orbCfg.inner);
+  gl.uniform1f(loc.uAberr, orbCfg.aberration);
+  gl.uniform1f(loc.uGrain, orbCfg.grain);
+  gl.uniform3f(loc.uLight, orbCfg.lightX, orbCfg.lightY, 0.65);
+}
+
+let orbPhase = 0;
+function orbRender(dt, cx, cy, rPx) {
+  const { gl, loc } = ORB;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(2, Math.floor(CW * dpr)), h = Math.max(2, Math.floor(CH * dpr));
+  gl.useProgram(ORB.prog);
+  if (w !== ORB.w || h !== ORB.h) {
+    orbCanvas.width = w;
+    orbCanvas.height = h;
+    ORB.w = w; ORB.h = h;
+    gl.viewport(0, 0, w, h);
+    gl.uniform2f(loc.uRes, w, h);
+  }
+  orbPhase = (orbPhase + dt / Math.max(orbCfg.duration, 0.5)) % 1;
+  gl.uniform1f(loc.uPhase, orbPhase * TAU);
+  gl.uniform2f(loc.uCenter, cx * dpr, h - cy * dpr);
+  gl.uniform1f(loc.uR, rPx * dpr);
+  gl.uniform1f(loc.uSpherical, state.shape === 'sphere' ? 1 : 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+/* flat <-> orb crossfade */
+const orbMix = { live: 1, from: 1, to: 1, start: -1e9 };
+function setSurfaceMode(orbOn) {
+  orbMix.from = orbMix.live;
+  orbMix.to = orbOn ? 1 : 0;
+  orbMix.start = performance.now();
+  state.surface = orbOn ? 'orb' : 'flat';
+  const bF = document.getElementById('modeFlat'), bO = document.getElementById('modeOrb');
+  if (bF) {
+    bF.classList.toggle('primary', !orbOn);
+    bO.classList.toggle('primary', orbOn);
+  }
+}
+function updateSurface(now) {
+  updatePaletteTransition(now);
+  const p = easeInOutCubic(clamp((now - orbMix.start) / 900, 0, 1));
+  orbMix.live = lerp(orbMix.from, orbMix.to, p);
+  const a = ORB ? orbMix.live : 0;
+  orbCanvas.style.opacity = a.toFixed(3);
+  orbCanvas.style.display = a > 0.004 ? 'block' : 'none';
+  gHead.setAttribute('fill-opacity', (1 - a).toFixed(3));
+  return a;
+}
+
+let CW = 800, CH = 600;
+new ResizeObserver(entries => {
+  const r = entries[0].contentRect;
+  CW = Math.max(50, r.width); CH = Math.max(50, r.height);
+  stage.setAttribute('viewBox', `0 0 ${CW} ${CH}`);
+}).observe(document.getElementById('stagewrap'));
+
+/* per-frame projection context */
+let PX = 1, CX = 0, CY = 0;
+const P = v => ({ x: CX + v.x * PX, y: CY - v.y * PX });
+
+/* silhouette builders — return { d, outline (bool), extra } */
+function buildSilhouette(m) {
+  const a = S.dw.x / 2, b = S.dh.x / 2, c = S.dd.x / 2;
+  const shape = state.shape;
+  if (shape === 'sphere') {
+    const e = ellipsoidSilhouette(m, a, b, c);
+    return { d: ellipsePathD(CX, CY, e.rx * PX, e.ry * PX, e.th), outline: true };
+  }
+  if (shape === 'mickey') {
+    const e = ellipsoidSilhouette(m, a, b, c);
+    let d = ellipsePathD(CX, CY, e.rx * PX, e.ry * PX, e.th);
+    const re = 0.52 * Math.min(a, b);
+    for (const sx of [-1, 1]) {
+      const ctr = P(apply(m, { x: sx * 0.72 * a, y: 0.74 * b, z: 0 }));
+      d += ellipsePathD(ctr.x, ctr.y, re * PX, re * PX, 0);
+    }
+    return { d, outline: false };
+  }
+  if (shape === 'cube') {
+    const pts = [];
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1])
+      pts.push(P(apply(m, { x: sx * a, y: sy * b, z: sz * c })));
+    return { d: polyPath(hull(pts)), outline: true };
+  }
+  if (shape === 'plane') {
+    const pts = [];
+    const thin = Math.min(Math.max(c, 0.5), 2);
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1])
+      pts.push(P(apply(m, { x: sx * a, y: sy * b, z: sz * thin })));
+    return { d: polyPath(hull(pts)), outline: true };
+  }
+}
+
+function buildCubeEdges(m) {
+  if (state.shape !== 'cube') return '';
+  const a = S.dw.x / 2, b = S.dh.x / 2, c = S.dd.x / 2;
+  const faces = [
+    { n:{x:1,y:0,z:0},  p:[{x:a,y:-b,z:-c},{x:a,y:b,z:-c},{x:a,y:b,z:c},{x:a,y:-b,z:c}] },
+    { n:{x:-1,y:0,z:0}, p:[{x:-a,y:-b,z:c},{x:-a,y:b,z:c},{x:-a,y:b,z:-c},{x:-a,y:-b,z:-c}] },
+    { n:{x:0,y:1,z:0},  p:[{x:-a,y:b,z:-c},{x:-a,y:b,z:c},{x:a,y:b,z:c},{x:a,y:b,z:-c}] },
+    { n:{x:0,y:-1,z:0}, p:[{x:-a,y:-b,z:c},{x:-a,y:-b,z:-c},{x:a,y:-b,z:-c},{x:a,y:-b,z:c}] },
+    { n:{x:0,y:0,z:1},  p:[{x:-a,y:-b,z:c},{x:a,y:-b,z:c},{x:a,y:b,z:c},{x:-a,y:b,z:c}] },
+    { n:{x:0,y:0,z:-1}, p:[{x:a,y:-b,z:-c},{x:-a,y:-b,z:-c},{x:-a,y:b,z:-c},{x:a,y:b,z:-c}] },
+  ];
+  return faces.map(face => apply(m, face.n).z > 0.001
+    ? `<path d="${polyPath(face.p.map(p => P(apply(m, p))))}"/>` : '').join('');
+}
+
+/* face placement: local eye anchor -> screen pos + tangent basis + visibility */
+function placeEye(m, lonDeg, latDeg, smoothSurface = false) {
+  const cfg = SHAPES[state.shape];
+  const fs = cfg.face.scale;
+  const a = S.dw.x / 2 * fs, b = S.dh.x / 2 * fs;
+  let c = S.dd.x / 2 * Math.max(fs, 0.9);
+  if (state.shape === 'plane') c = Math.min(c, 2);
+  const lon = lonDeg * D2R, lat = latDeg * D2R;
+  const u = { x: Math.cos(lat) * Math.sin(lon), y: Math.sin(lat), z: Math.cos(lat) * Math.cos(lon) };
+  const east = { x: Math.cos(lon), y: 0, z: -Math.sin(lon) };
+  const north = { x: -Math.sin(lat) * Math.sin(lon), y: Math.cos(lat), z: -Math.sin(lat) * Math.cos(lon) };
+  let pos, n, t1, t2;
+  if ((state.shape === 'cube' || state.shape === 'plane') && !smoothSurface) {
+    // A normalized virtual face keeps eye placement and scale independent of cube depth.
+    const nx = clamp(Math.tan(lon) * 0.9, -0.78, 0.78);
+    const ny = clamp(Math.tan(lat) * 0.9, -0.72, 0.72);
+    const surfaceLift = state.shape === 'plane' ? state.planeEyeLift : 0;
+    pos = apply(m, { x: a * nx, y: b * ny, z: surfaceLift });
+    n = norm3(apply(m, { x: 0, y: 0, z: 1 }));
+    t1 = norm3(apply(m, { x: 1, y: 0, z: 0 }));
+    t2 = norm3(apply(m, { x: 0, y: 1, z: 0 }));
+  } else {
+    const planeOrbitLift = state.shape === 'plane' ? Math.sign(u.z || 1) * state.planeEyeLift : 0;
+    pos = apply(m, { x: a * u.x, y: b * u.y, z: c * u.z + planeOrbitLift });
+    n = norm3(apply(m, { x: u.x / a, y: u.y / b, z: u.z / c }));
+    t1 = norm3(apply(m, { x: a * east.x, y: b * east.y, z: c * east.z }));
+    t2 = norm3(apply(m, { x: a * north.x, y: b * north.y, z: c * north.z }));
+  }
+  const p2 = P(pos);
+  return {
+    px: p2.x, py: p2.y,
+    c1: { x: t1.x, y: -t1.y },
+    c2: { x: -t2.x, y: t2.y },   // local y-down maps against surface "north"
+    alpha: clamp((n.z - 0.02) / 0.14, 0, 1)
+  };
+}
+
+function eyePathD(side, m) {
+  const sgn = side === 'L' ? -1 : 1;
+  const ex = EX[side];
+  const cfg = SHAPES[state.shape];
+  const baseLat = cfg.face.lat;
+  const posX = side === 'L' ? S.xL.x : S.xR.x, posY = side === 'L' ? S.yL.x : S.yR.x;
+  let lon = sgn * 13 + (posX + ex.dx.x) * 0.35 + S.gx.x;
+  let lat = baseLat + (posY - ex.dy.x) * 0.35 + S.gy.x;
+  let pl;
+  if (state.expr === 26) {
+    // Start from the eyes' current visible anchors, then enter the original dizzy orbit.
+    const elapsed = clock - orbitStart;
+    const phase = side === 'L' ? 0 : 1.25;
+    lon = orbitEntry[side].lon + orbitAngle;
+    lat = orbitEntry[side].lat + (Math.sin(elapsed * 1.9 + phase) - Math.sin(phase)) * 18;
+    pl = placeEye(m, lon, lat, true);
+  } else {
+    // The farther the cursor is from center, the farther the eyes travel toward the edge.
+    lon += S.fy.x * 0.34;
+    lat -= S.fx.x * 0.28;
+    pl = placeEye(m, lon, lat);
+  }
+  if (pl.alpha <= 0.01) return { d: '', alpha: 0 };
+  const prop = (side === 'L' ? S.pL.x : S.pR.x) / 50;
+  const esc = cfg.face.esc || 1;
+  const w = Math.max(3, ex.w.x * prop * esc);
+  let h = Math.max(3, ex.h.x * prop * esc);
+  h = Math.max(3.5, h * (1 - 0.93 * clamp(S.blink.x, 0, 1)));
+  const pts = eyePoints(w, h, ex.t.x * D2R, clamp(ex.lid.x, 0, 1), ex.bend.x);
+  const { c1, c2 } = pl;
+  const out = pts.map(p => ({
+    x: pl.px + (c1.x * p.x + c2.x * p.y) * PX,
+    y: pl.py + (c1.y * p.x + c2.y * p.y) * PX
+  }));
+  return { d: polyPath(out), alpha: pl.alpha };
+}
+
+/* wireframe (sphere / mickey main body) */
+function buildWire(m) {
+  const fs = 1.0;
+  const a = S.dw.x / 2 * fs, b = S.dh.x / 2 * fs, c = S.dd.x / 2 * fs;
+  let d = '';
+  const emit = pts => {
+    let open = false;
+    for (const q of pts) {
+      if (q) { d += (open ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); open = true; }
+      else open = false;
+    }
+  };
+  const project = u => {
+    const n = apply(m, { x: u.x / a, y: u.y / b, z: u.z / c });
+    if (n.z <= 0) return null;
+    return P(apply(m, { x: a * u.x, y: b * u.y, z: c * u.z }));
+  };
+  for (let la = -60; la <= 60; la += 30) {
+    const cl = Math.cos(la * D2R), sl = Math.sin(la * D2R), pts = [];
+    for (let i = 0; i <= 64; i++) {
+      const t = i / 64 * TAU;
+      pts.push(project({ x: cl * Math.sin(t), y: sl, z: cl * Math.cos(t) }));
+    }
+    emit(pts);
+  }
+  for (let lo = 0; lo < 180; lo += 30) {
+    const cL = Math.cos(lo * D2R), sL = Math.sin(lo * D2R), pts = [];
+    for (let i = 0; i <= 64; i++) {
+      const t = i / 64 * TAU, y = Math.sin(t), r = Math.cos(t);
+      pts.push(project({ x: r * sL, y, z: r * cL }));
+    }
+    emit(pts);
+  }
+  return d;
+}
+
+/* gizmo */
+const GIZ = { r: 36, pts: { x: [], y: [], z: [] } };
+function buildGizmo(m) {
+  const gx = CW - 78, gy = 78, R = GIZ.r;
+  const rings = {
+    x: { col: '#f4f4f0', fn: t => ({ x: 0, y: Math.cos(t), z: Math.sin(t) }) },
+    y: { col: '#9a9a94', fn: t => ({ x: Math.sin(t), y: 0, z: Math.cos(t) }) },
+    z: { col: '#3d3d39', fn: t => ({ x: Math.cos(t), y: Math.sin(t), z: 0 }) },
+  };
+  let html = `<circle cx="${gx}" cy="${gy}" r="${R + 9}" fill="none" stroke="#6f6f69" stroke-opacity=".55" stroke-width="1.3"/>`;
+  for (const ax of ['x', 'y', 'z']) {
+    const ring = rings[ax], N = 40, front = [], back = [], cache = [];
+    for (let i = 0; i <= N; i++) {
+      const v = apply(m, ring.fn(i / N * TAU));
+      const q = { x: gx + v.x * R, y: gy - v.y * R, z: v.z };
+      cache.push(q);
+      (v.z >= 0 ? front : back).push(i);
+    }
+    GIZ.pts[ax] = cache;
+    let dF = '', dB = '', openF = false, openB = false;
+    for (let i = 0; i <= N; i++) {
+      const q = cache[i], seg = q.z >= 0;
+      if (seg) { dF += (openF ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); openF = true; openB = false; }
+      else { dB += (openB ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); openB = true; openF = false; }
+    }
+    html += `<path d="${dB}" fill="none" stroke="${ring.col}" stroke-opacity=".28" stroke-width="1.5"/>`;
+    html += `<path d="${dF}" fill="none" stroke="${ring.col}" stroke-opacity=".95" stroke-width="1.8"/>`;
+  }
+  GIZ.cx = gx; GIZ.cy = gy;
+  gGizmo.innerHTML = html;
+}
+
+/* ---------- main loop ---------- */
+let lastT = performance.now();
+function frame(now) {
+  const dt = clamp((now - lastT) / 1000, 0.001, 1 / 30);
+  lastT = now;
+  schedule(dt);
+
+  const k = Math.pow(state.speed * 1.85, 2);
+  S.rx.t = state.userRot.x + S.wx.x + S.fx.x;
+  S.ry.t = state.userRot.y + S.wy.x + S.fy.x;
+  S.rz.t = state.userRot.z + S.wz.x;
+  for (const key in S) {
+    const sp = S[key];
+    if (key === 'blink') sp.step(dt, 620, 1);
+    else if (key === 'wx' || key === 'wy' || key === 'wz' || key === 'gx' || key === 'gy' ||
+             key === 'fx' || key === 'fy') sp.step(dt, k * 0.35, 0.95);
+    else sp.step(dt, k, 0.9);
+  }
+  // Critically damp eye morphs so wide presets never overshoot into the head clip.
+  for (const side of ['L', 'R']) for (const kk of EYE_KEYS) EX[side][kk].step(dt, k, 1.0);
+
+  PX = Math.min(CW, CH) / 560;
+  CX = CW / 2; CY = CH / 2;
+
+  const m = rotMat(S.rx.x * D2R, S.ry.x * D2R, S.rz.x * D2R);
+  const sil = buildSilhouette(m);
+  gHead.setAttribute('d', sil.d);
+  gEdge.setAttribute('d', sil.d);
+  gEdge.setAttribute('stroke-opacity', state.shape === 'cube' ? '.14' : state.shape === 'plane' ? '.07' : '0');
+  gCubeEdges.innerHTML = buildCubeEdges(m);
+  gEyes.setAttribute('clip-path', state.shape === 'plane' ? 'none' : 'url(#headclip)');
+  clipEl.setAttribute('d', sil.d);
+  const pop = S.pop.x;
+  const orbAlpha = updateSurface(now);
+  if (orbAlpha > 0.004 && ORB) {
+    const e = ellipsoidSilhouette(m, S.dw.x / 2, S.dh.x / 2, S.dd.x / 2);
+    const rPx = Math.max(e.rx, e.ry) * PX * (SHAPES[state.shape].orbR || 1);
+    orbRender(dt, CX, CY, rPx);
+    orbCanvas.style.clipPath = `path("${sil.d}")`;
+    orbCanvas.style.transformOrigin = `${CX}px ${CY}px`;
+    orbCanvas.style.transform = `scale(${pop.toFixed(4)})`;
+  }
+
+  const wfA = S.wf.x;
+  if (wfA > 0.02 && (state.shape === 'sphere' || state.shape === 'mickey')) {
+    gWire.setAttribute('d', buildWire(m));
+    gWire.setAttribute('stroke-opacity', (wfA * 0.3).toFixed(3));
+  } else gWire.setAttribute('d', '');
+  if (wfA > 0.02 && sil.outline) {
+    gOutline.setAttribute('d', sil.d);
+    const edgeStrength = state.shape === 'cube' ? 0.08 : state.shape === 'plane' ? 0.12 : 0.35;
+    gOutline.setAttribute('stroke-opacity', (wfA * edgeStrength).toFixed(3));
+  } else gOutline.setAttribute('d', '');
+
+  const eL = eyePathD('L', m), eR = eyePathD('R', m);
+  gEyeL.setAttribute('d', eL.d); gEyeL.setAttribute('fill-opacity', eL.alpha.toFixed(3));
+  gEyeR.setAttribute('d', eR.d); gEyeR.setAttribute('fill-opacity', eR.alpha.toFixed(3));
+
+  gRoot.setAttribute('transform', `translate(${CX} ${CY}) scale(${pop.toFixed(4)}) translate(${-CX} ${-CY})`);
+
+  buildGizmo(m);
+  syncRotInputs();
+  if (devInspector.classList.contains('open') && now - lastDevUpdate > 100) {
+    updateDevInspector();
+    lastDevUpdate = now;
+  }
+  requestAnimationFrame(frame);
+}
+
+/* =============================================================
+   INTERACTION
+   ============================================================= */
+let drag = null;
+stage.addEventListener('pointerdown', e => {
+  const r = stage.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const gd = Math.hypot(x - GIZ.cx, y - GIZ.cy);
+  if (gd < GIZ.r + 16) {
+    let best = null;
+    for (const ax of ['x', 'y', 'z']) {
+      GIZ.pts[ax].forEach((q, i) => {
+        const d = Math.hypot(q.x - x, q.y - y);
+        if (!best || d < best.d) best = { d, ax, i };
+      });
+    }
+    if (best && best.d < 14) {
+      const pts = GIZ.pts[best.ax];
+      const p0 = pts[Math.max(0, best.i - 1)], p1 = pts[Math.min(pts.length - 1, best.i + 1)];
+      const tl = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
+      drag = { kind: 'gizmo', ax: best.ax, tx: (p1.x - p0.x) / tl, ty: (p1.y - p0.y) / tl, lx: x, ly: y, moved: 0 };
+      stage.setPointerCapture(e.pointerId);
+      return;
+    }
+  }
+  drag = { kind: 'head', lx: x, ly: y, moved: 0 };
+  stage.setPointerCapture(e.pointerId);
+  S.wf.t = 1;
+  stage.style.cursor = 'grabbing';
+});
+stage.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const r = stage.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const dx = x - drag.lx, dy = y - drag.ly;
+  drag.lx = x; drag.ly = y;
+  drag.moved += Math.abs(dx) + Math.abs(dy);
+  if (drag.kind === 'head') {
+    state.userRot.y += dx * 0.4;
+    state.userRot.x += dy * 0.4;
+  } else {
+    const along = dx * drag.tx + dy * drag.ty;
+    state.userRot[drag.ax] += along * 0.8;
+  }
+});
+stage.addEventListener('pointerup', e => {
+  if (drag && drag.moved < 5) blinkNow();
+  drag = null;
+  S.wf.t = 0;
+  stage.style.cursor = 'grab';
+});
+stage.style.cursor = 'grab';
+
+/* Head and eyes follow the cursor across both stage and UI. */
+const stagewrap = document.getElementById('stagewrap');
+const controlPanel = document.getElementById('panel');
+const devInspector = document.getElementById('devInspector');
+
+function setDevInspectorOpen(open) {
+  devInspector.classList.toggle('open', open);
+  devInspector.setAttribute('aria-hidden', String(!open));
+  devInspector.inert = !open;
+  if (open) updateDevInspector(true);
+  else if (devInspector.contains(document.activeElement)) document.activeElement.blur();
+}
+
+function setMouseFollow(enabled) {
+  state.mouseFollow = enabled;
+  document.getElementById('mouseFollowStatus').textContent = enabled ? 'ON' : 'OFF';
+  if (!enabled) {
+    S.fx.t = 0;
+    S.fy.t = 0;
+  }
+  if (devInspector.classList.contains('open')) updateDevInspector(true);
+}
+
+document.addEventListener('keydown', e => {
+  const target = e.target;
+  const isEditing = target instanceof HTMLElement && (
+    target.matches('input, textarea, select') || target.isContentEditable
+  );
+
+  if (e.key === 'Escape' && devInspector.classList.contains('open')) {
+    e.preventDefault();
+    setDevInspectorOpen(false);
+    return;
+  }
+
+  if ((e.key === '/' || e.code === 'Slash') && !isEditing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) {
+    e.preventDefault();
+    setDevInspectorOpen(!devInspector.classList.contains('open'));
+    return;
+  }
+
+  if (e.key.toLowerCase() === 'r' && !isEditing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) {
+    e.preventDefault();
+    resetAvatar();
+    return;
+  }
+
+  if (e.key.toLowerCase() === 'e' && !isEditing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) {
+    e.preventDefault();
+    setMouseFollow(!state.mouseFollow);
+  }
+});
+document.getElementById('devClose').addEventListener('click', () => setDevInspectorOpen(false));
+
+function updatePointerFocus(e) {
+  if (!state.mouseFollow) return;
+  const r = stage.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  if (!drag) {
+    S.fy.t = clamp((x - r.width / 2) / (r.width / 2), -1, 1) * 42;
+    S.fx.t = clamp((y - r.height / 2) / (r.height / 2), -1, 1) * 28;
+  }
+}
+stagewrap.addEventListener('pointermove', updatePointerFocus);
+controlPanel.addEventListener('pointermove', updatePointerFocus);
+devInspector.addEventListener('pointermove', updatePointerFocus);
+document.getElementById('app').addEventListener('pointerleave', () => {
+  S.fx.t = 0; S.fy.t = 0;
+});
+
+/* =============================================================
+   PANEL UI
+   ============================================================= */
+const scrubIcon = '<svg width="13" height="9" viewBox="0 0 13 9" fill="none"><path d="M3.5 1 L1 4.5 L3.5 8 M9.5 1 L12 4.5 L9.5 8" stroke="#b6b6c0" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const linkIcon = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5.8 8.2 L8.2 5.8 M4.6 6.4 L3 8 a2.4 2.4 0 0 0 3.4 3.4 L8 9.8 M9.4 7.6 L11 6 A2.4 2.4 0 0 0 7.6 2.6 L6 4.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+
+const FIELDS = {
+  dimW: { label: 'Width',  unit: 'u', step: 1,  dec: 0, min: 60,  max: 420, get: () => state.dims.w, set: v => { state.dims.w = v; S.dw.t = v; } },
+  dimH: { label: 'Height', unit: 'u', step: 1,  dec: 0, min: 60,  max: 420, get: () => state.dims.h, set: v => { state.dims.h = v; S.dh.t = v; } },
+  dimD: { label: 'Depth',  unit: 'u', step: 1,  dec: 0, min: 1,   max: 420, get: () => state.dims.d, set: v => { state.dims.d = v; S.dd.t = v; } },
+  rotX: { label: 'Rotation X', unit: '°', step: 0.5, dec: 1, min: -180, max: 180, get: () => state.userRot.x, set: v => state.userRot.x = v },
+  rotY: { label: 'Rotation Y', unit: '°', step: 0.5, dec: 1, min: -180, max: 180, get: () => state.userRot.y, set: v => state.userRot.y = v },
+  rotZ: { label: 'Rotation Z', unit: '°', step: 0.5, dec: 1, min: -180, max: 180, get: () => state.userRot.z, set: v => state.userRot.z = v },
+  eyeWL: { label: 'Left eye',  unit: 'u', step: 0.2, dec: 1, min: 3, max: 80,  link: 'w', get: () => EX.L.w.t, set: v => { EX.L.w.t = v; } },
+  eyeWR: { label: 'Right eye', unit: 'u', step: 0.2, dec: 1, min: 3, max: 80,  link: 'w', get: () => EX.R.w.t, set: v => { EX.R.w.t = v; } },
+  eyeHL: { label: 'Left eye',  unit: 'u', step: 0.5, dec: 1, min: 3, max: 160, link: 'h', get: () => EX.L.h.t, set: v => { EX.L.h.t = v; } },
+  eyeHR: { label: 'Right eye', unit: 'u', step: 0.5, dec: 1, min: 3, max: 160, link: 'h', get: () => EX.R.h.t, set: v => { EX.R.h.t = v; } },
+  propL: { label: 'Left eye',  unit: 'u', step: 0.5, dec: 0, min: 10, max: 150, link: 'p', get: () => state.eyes.pL, set: v => { state.eyes.pL = v; S.pL.t = v; } },
+  propR: { label: 'Right eye', unit: 'u', step: 0.5, dec: 0, min: 10, max: 150, link: 'p', get: () => state.eyes.pR, set: v => { state.eyes.pR = v; S.pR.t = v; } },
+  posXL: { label: 'Horizontal', unit: 'u', step: 0.5, dec: 0, min: -80, max: 80, get: () => state.eyes.xL, set: v => { state.eyes.xL = v; S.xL.t = v; } },
+  posYL: { label: 'Vertical',   unit: 'u', step: 0.5, dec: 0, min: -80, max: 80, get: () => state.eyes.yL, set: v => { state.eyes.yL = v; S.yL.t = v; } },
+  posXR: { label: 'Horizontal', unit: 'u', step: 0.5, dec: 0, min: -80, max: 80, get: () => state.eyes.xR, set: v => { state.eyes.xR = v; S.xR.t = v; } },
+  posYR: { label: 'Vertical',   unit: 'u', step: 0.5, dec: 0, min: -80, max: 80, get: () => state.eyes.yR, set: v => { state.eyes.yR = v; S.yR.t = v; } },
+};
+const LINK_PAIRS = { w: ['eyeWL', 'eyeWR'], h: ['eyeHL', 'eyeHR'], p: ['propL', 'propR'] };
+
+function fieldHTML(key) {
+  const f = FIELDS[key];
+  return `<div class="frow">
+    <span class="flabel" data-scrub="${key}">${f.label} ${scrubIcon}</span>
+    <span class="inpwrap"><input data-key="${key}" value="${f.get().toFixed(f.dec)}">${f.unit === 'u' ? '' : `<span class="unit">${f.unit}</span>`}</span>
+  </div>`;
+}
+
+function dimensionFieldHTML(key, axis) {
+  const f = FIELDS[key];
+  return `<div class="frow">
+    <span class="flabel" data-scrub="${key}"><span class="dim-axis">${axis}</span>${f.label}</span>
+    <span class="inpwrap"><input data-key="${key}" value="${f.get().toFixed(f.dec)}">${f.unit === 'u' ? '' : `<span class="unit">${f.unit}</span>`}</span>
+  </div>`;
+}
+
+function updateDimensionMiniature() {
+  const g = document.getElementById('dimGeometry');
+  if (!g) return;
+  const scale = v => clamp((v - 1) / 419, 0, 1);
+  const w = 48 + scale(state.dims.w) * 35;
+  const h = 48 + scale(state.dims.h) * 35;
+  const d = 5 + scale(state.dims.d) * 22;
+  const x = 65 - w / 2, y = 69 - h / 2;
+  const front = `${x},${y} ${x+w},${y} ${x+w},${y+h} ${x},${y+h}`;
+  const back = `${x+d},${y-d} ${x+w+d},${y-d} ${x+w+d},${y+h-d} ${x+d},${y+h-d}`;
+  g.innerHTML = `
+    <polygon class="back" points="${back}"/>
+    <line class="join" x1="${x}" y1="${y}" x2="${x+d}" y2="${y-d}"/>
+    <line class="join" x1="${x+w}" y1="${y}" x2="${x+w+d}" y2="${y-d}"/>
+    <line class="join" x1="${x+w}" y1="${y+h}" x2="${x+w+d}" y2="${y+h-d}"/>
+    <polygon class="body" points="${front}"/>
+    <line class="measure" x1="${x}" y1="${y+h+10}" x2="${x+w}" y2="${y+h+10}"/>
+    <text x="${x+w/2}" y="${y+h+22}" text-anchor="middle">W</text>
+    <line class="measure" x1="${x-10}" y1="${y}" x2="${x-10}" y2="${y+h}"/>
+    <text x="${x-15}" y="${y+h/2+3}" text-anchor="middle">H</text>
+    <line class="measure" x1="${x+w+5}" y1="${y-3}" x2="${x+w+d+5}" y2="${y-d-3}"/>
+    <text x="${x+w+d+12}" y="${y-d-5}">D</text>`;
+}
+
+function shapeButtonsHTML() {
+  return Object.keys(SHAPES).map(k => `
+    <button data-shape="${k}" class="${k === state.shape ? 'sel' : ''}">
+      <svg width="28" height="28" viewBox="0 0 28 28">${SHAPE_ICONS[k]}</svg>${SHAPES[k].label}
+    </button>`).join('');
+}
+
+document.getElementById('pane-manual').innerHTML = `
+  <div class="card">
+    <h3>Head shape</h3>
+    <div class="sub">The surface changes — expressions and states stay compatible.</div>
+    <div class="shapegrid">${shapeButtonsHTML()}</div>
+    <div class="dimension-editor">
+      <svg class="dim-mini" viewBox="0 0 138 138" aria-label="Width, height and depth preview"><g id="dimGeometry"></g></svg>
+      <div class="dim-fields">
+        ${dimensionFieldHTML('dimW', 'W')}
+        ${dimensionFieldHTML('dimH', 'H')}
+        ${dimensionFieldHTML('dimD', 'D')}
+      </div>
+    </div>
+    <div class="plane-lift-control" id="planeLiftControl" style="display:${state.shape === 'plane' ? 'block' : 'none'}">
+      <div class="plane-lift-head"><label for="planeEyeLiftSlider">Eye distance</label><span id="planeEyeLiftVal">${state.planeEyeLift}</span></div>
+      <div class="sliderrow">
+        <input type="range" id="planeEyeLiftSlider" min="0" max="50" step="1" value="${state.planeEyeLift}">
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Head rotation</h3>
+    <div class="sub">The ↔ labels are scrubbable, like in Figma. Or drag the avatar directly.</div>
+    ${fieldHTML('rotX')}${fieldHTML('rotY')}${fieldHTML('rotZ')}
+  </div>
+  <div class="card">
+    <div class="cardtop"><h3>Width</h3><button class="linkbtn on" data-link="w">${linkIcon}</button></div>
+    <div class="fgrid2">${fieldHTML('eyeWL')}${fieldHTML('eyeWR')}</div>
+  </div>
+  <div class="card">
+    <div class="cardtop"><h3>Height</h3><button class="linkbtn on" data-link="h">${linkIcon}</button></div>
+    <div class="fgrid2">${fieldHTML('eyeHL')}${fieldHTML('eyeHR')}</div>
+  </div>
+  <div class="card">
+    <div class="cardtop"><h3>Proportional size</h3><button class="linkbtn on" data-link="p">${linkIcon}</button></div>
+    <div class="fgrid2">${fieldHTML('propL')}${fieldHTML('propR')}</div>
+  </div>
+  <div class="card">
+    <h3>Eye position</h3>
+    <div class="sub">Independent local coordinates on the sphere.</div>
+    <div class="fgrid2">
+      <div><div class="colhead">LEFT EYE</div>${fieldHTML('posXL')}${fieldHTML('posYL')}</div>
+      <div><div class="colhead">RIGHT EYE</div>${fieldHTML('posXR')}${fieldHTML('posYR')}</div>
+    </div>
+  </div>
+`;
+updateDimensionMiniature();
+
+/* expression thumbnails */
+function thumbSVG(i) {
+  const [l, r] = EXPRESSIONS[i];
+  // wobbly blob, deterministic per index
+  const pts = [];
+  for (let j = 0; j < 8; j++) {
+    const a = j / 8 * TAU + i * 0.7;
+    const rad = 26 * (1 + 0.055 * Math.sin(i * 3.1 + j * 2.3) + 0.045 * Math.cos(i * 1.7 + j * 4.1));
+    pts.push({ x: 32 + rad * Math.cos(a), y: 32 + rad * Math.sin(a) });
+  }
+  let svg = `<svg viewBox="0 0 64 64"><path d="${catmullClosed(pts)}" fill="#a7a7a1"/>`;
+  const sc = 0.5;
+  for (const [side, ex] of [[-1, l], [1, r]]) {
+    const epts = eyePoints(ex.w * sc, ex.h * sc, ex.t * D2R, ex.lid || 0, ex.bend || 0, 36);
+    const cx = 32 + side * 6.5 + (ex.dx || 0) * sc, cy = 28 + (ex.dy || 0) * sc;
+    svg += `<path d="${polyPath(epts.map(p => ({ x: cx + p.x, y: cy + p.y })))}" fill="#0e0e14"/>`;
+  }
+  return svg + '</svg>';
+}
+
+document.getElementById('pane-expr').innerHTML = `
+  <div class="card">
+    <div class="eyebrow">${VISIBLE_EXPRESSIONS.length} PRESETS</div>
+    <div class="cardtop" style="margin-bottom:12px"><h3 style="font-size:20px">Expressions</h3>
+      <span style="font-size:12px;color:#9a9aa4;margin-top:5px">Morphs with springs</span></div>
+    <div class="exprgrid">${VISIBLE_EXPRESSIONS.map((i, displayIndex) =>
+      `<div class="exprcard ${i === state.expr ? 'sel' : ''}" data-expr="${i}" aria-label="Expression ${String(displayIndex).padStart(2, '0')}${i === 26 ? ', orbit' : ''}">${thumbSVG(i)}${i === 26 ? '<span class="tag">Orbit</span>' : ''}<span class="num">${String(displayIndex).padStart(2, '0')}</span></div>`).join('')}
+    </div>
+    <div class="btnrow">
+      <button class="btn primary" id="btnBlink">Blink</button>
+      <button class="btn" id="btnReset">Reset</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Spring speed</h3>
+    <div class="sub">How snappy every morph and movement settles.</div>
+    <div class="sliderrow">
+      <input type="range" id="speedSlider" min="2" max="14" step="0.5" value="${state.speed}">
+      <span class="val" id="speedVal">${state.speed.toFixed(1)}</span>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Orbit speed</h3>
+    <div class="sub">From a slow drift to three full revolutions per second.</div>
+    <div class="sliderrow">
+      <input type="range" id="orbitSpeedSlider" min="10" max="1080" step="10" value="${state.orbitSpeed}">
+      <span class="val" id="orbitSpeedVal" style="width:68px">${state.orbitSpeed}°/s</span>
+    </div>
+  </div>
+`;
+
+document.getElementById('pane-states').innerHTML = `
+  <div class="card">
+    <h3>States</h3>
+    <div class="sub">States pick and chain expressions, gaze and micro-movements while motion is active.</div>
+    ${Object.entries(STATES).map(([k, s]) => `
+      <div class="staterow ${k === state.stateName ? 'sel' : ''}" data-state="${k}">
+        <span class="sname">${s.label}</span>
+        <div class="statebody">
+          <div class="sdesc">${s.desc}</div>
+          <div class="state-colors">
+            ${['Primary', 'Secondary'].map((label, index) => `
+              <div class="state-color">
+                <label>${label}</label>
+                <div class="state-color-fields">
+                  <input type="color" data-state-color="${k}" data-color-index="${index}" value="${s.palette[index]}" aria-label="${s.label} ${label.toLowerCase()} color">
+                  <input type="text" data-state-hex="${k}" data-color-index="${index}" value="${s.palette[index]}" aria-label="${s.label} ${label.toLowerCase()} hex color">
+                </div>
+              </div>`).join('')}
+          </div>
+        </div>
+      </div>`).join('')}
+  </div>
+`;
+
+/* ---------- surface tab: the Orb Editor's exact controls ---------- */
+const ORB_SLIDERS = [
+  ['Animation', [
+    ['duration', 'Loop duration', 2, 20, 0.5, 's'],
+    ['blobScale', 'Blob size', 0.4, 3, 0.05],
+    ['flow', 'Motion', 0, 1.5, 0.05],
+    ['turbulence', 'Turbulence', 0, 1.5, 0.05],
+    ['wobble', 'Wobble', 0, 1, 0.02],
+  ]],
+  ['Color', [
+    ['balance', 'Color balance', 0, 1, 0.01],
+    ['shift', 'Palette shift', 0, 1, 0.01],
+    ['chroma', 'Hue ripple', 0, 2, 0.05],
+    ['contrast', 'Contrast', 0.5, 2, 0.05],
+  ]],
+  ['Light & depth', [
+    ['rim', 'Rim light', 0, 2, 0.05],
+    ['specular', 'Specular', 0, 1, 0.02],
+    ['inner', 'Inner light', 0, 1, 0.02],
+    ['shading', 'Shading', 0, 0.4, 0.01],
+    ['refraction', 'Curvature', 0, 0.6, 0.01],
+    ['lightX', 'Light X', -1, 1, 0.05],
+    ['lightY', 'Light Y', -1, 1, 0.05],
+  ]],
+  ['Texture', [
+    ['iridescence', 'Iridescence', 0, 1, 0.02],
+    ['aberration', 'Dispersion', 0, 1, 0.02],
+    ['grain', 'Grain', 0, 1, 0.02],
+  ]],
+  ['Edge', [
+    ['softness', 'Edge softness', 0.005, 0.15, 0.005],
+    ['glow', 'Glow', 0, 1, 0.05],
+  ]],
+];
+const ORB_UNITS = { duration: 's' };
+document.getElementById('pane-surface').innerHTML = `
+  <div class="card">
+    <h3>Surface</h3>
+    <div class="sub">The exact orb engine and controls from the Orb Editor — OkLab palette, seamless loop. The gradient fills whatever head shape is active.</div>
+    <div class="btnrow" style="margin-top:2px">
+      <button class="btn ${state.surface === 'flat' ? 'primary' : ''}" id="modeFlat">Flat ink</button>
+      <button class="btn ${state.surface === 'orb' ? 'primary' : ''}" id="modeOrb">Orb gradient</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Colors <span style="font-weight:600;color:#9a9aa4;font-size:12px">(2–4)</span></h3>
+    <div id="orbColors"></div>
+  </div>
+  ${ORB_SLIDERS.map(([title, rows]) => `
+  <div class="card"><h3>${title}</h3>
+    ${rows.map(([key, label, min, max, step]) => `
+    <div class="orow"><label>${label}</label>
+      <input type="range" data-orb="${key}" min="${min}" max="${max}" step="${step}" value="${orbCfg[key]}">
+      <span class="val" data-orbval="${key}">${orbCfg[key]}${ORB_UNITS[key] || ''}</span>
+    </div>`).join('')}
+  </div>`).join('')}
+`;
+
+function renderOrbColors() {
+  const box = document.getElementById('orbColors');
+  box.innerHTML = '';
+  orbCfg.colors.forEach((hex, i) => {
+    const row = document.createElement('div');
+    row.className = 'crow';
+    const c = document.createElement('input');
+    c.type = 'color'; c.value = hex;
+    const t = document.createElement('input');
+    t.type = 'text'; t.value = hex; t.placeholder = '#rrggbb';
+    const applyC = v => { orbCfg.colors[i] = v; orbUpdate(); };
+    c.addEventListener('input', () => { t.value = c.value; t.style.borderColor = ''; applyC(c.value); });
+    t.addEventListener('input', () => {
+      let v = t.value.trim();
+      if (v && v[0] !== '#') v = '#' + v;
+      const ok = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v);
+      t.style.borderColor = ok ? '' : '#d33';
+      if (!ok) return;
+      if (v.length === 4) v = '#' + v[1] + v[1] + v[2] + v[2] + v[3] + v[3];
+      v = v.toLowerCase();
+      c.value = v;
+      applyC(v);
+    });
+    row.appendChild(c);
+    row.appendChild(t);
+    if (orbCfg.colors.length > 2) {
+      const del = document.createElement('button');
+      del.className = 'cdel';
+      del.textContent = '×';
+      del.title = 'Remove colour ' + (i + 1);
+      del.addEventListener('click', () => { orbCfg.colors.splice(i, 1); renderOrbColors(); orbUpdate(); });
+      row.appendChild(del);
+    }
+    box.appendChild(row);
+  });
+  if (orbCfg.colors.length < 4) {
+    const add = document.createElement('button');
+    add.id = 'addColor';
+    add.textContent = '+';
+    add.title = 'Add colour';
+    add.addEventListener('click', () => { orbCfg.colors.push('#3f19c8'); renderOrbColors(); orbUpdate(); });
+    box.appendChild(add);
+  }
+}
+renderOrbColors();
+
+function applyStatePalette(stateID) {
+  const palette = STATES[stateID]?.palette;
+  if (!palette) return;
+  beginPaletteTransition(palette);
+  if (state.surface !== 'orb') setSurfaceMode(true);
+}
+
+/* ---------- bindings ---------- */
+function inputEl(key) { return document.querySelector(`input[data-key="${key}"]`); }
+function setField(key, v, fromLink) {
+  const f = FIELDS[key];
+  v = clamp(v, f.min, f.max);
+  f.set(v);
+  if (key === 'dimW' || key === 'dimH' || key === 'dimD') updateDimensionMiniature();
+  const inp = inputEl(key);
+  if (inp && document.activeElement !== inp) inp.value = v.toFixed(f.dec);
+  if (!fromLink && f.link && state.links[f.link]) {
+    const other = LINK_PAIRS[f.link].find(k => k !== key);
+    setField(other, v, true);
+  }
+}
+document.querySelectorAll('input[data-key]').forEach(inp => {
+  const key = inp.dataset.key;
+  const commit = () => {
+    const v = parseFloat(inp.value.replace(',', '.'));
+    if (!isNaN(v)) setField(key, v);
+    else inp.value = FIELDS[key].get().toFixed(FIELDS[key].dec);
+  };
+  inp.addEventListener('change', commit);
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') { commit(); inp.blur(); } });
+});
+document.querySelectorAll('[data-scrub]').forEach(lab => {
+  const key = lab.dataset.scrub, f = FIELDS[key];
+  lab.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    lab.setPointerCapture(e.pointerId);
+    let lastX = e.clientX;
+    const move = ev => { setField(key, f.get() + (ev.clientX - lastX) * f.step); lastX = ev.clientX; };
+    const up = () => { lab.removeEventListener('pointermove', move); lab.removeEventListener('pointerup', up); };
+    lab.addEventListener('pointermove', move);
+    lab.addEventListener('pointerup', up);
+  });
+});
+document.querySelectorAll('[data-link]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const g = btn.dataset.link;
+    state.links[g] = !state.links[g];
+    btn.classList.toggle('on', state.links[g]);
+    if (state.links[g]) setField(LINK_PAIRS[g][0], FIELDS[LINK_PAIRS[g][0]].get());
+  });
+});
+const planeEyeLiftSlider = document.getElementById('planeEyeLiftSlider');
+planeEyeLiftSlider.addEventListener('input', () => {
+  state.planeEyeLift = +planeEyeLiftSlider.value;
+  document.getElementById('planeEyeLiftVal').textContent = state.planeEyeLift;
+});
+document.querySelectorAll('[data-shape]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    state.shape = btn.dataset.shape;
+    document.querySelectorAll('[data-shape]').forEach(b => b.classList.toggle('sel', b === btn));
+    document.getElementById('planeLiftControl').style.display = state.shape === 'plane' ? 'block' : 'none';
+    S.pop.x = 0.93; S.pop.v = 0;
+  });
+});
+document.querySelectorAll('.tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b === btn));
+    for (const t of ['manual', 'expr', 'states', 'surface'])
+      document.getElementById('pane-' + t).style.display = (btn.dataset.tab === t) ? '' : 'none';
+  });
+});
+document.querySelectorAll('[data-expr]').forEach(card => {
+  card.addEventListener('click', () => setExpression(+card.dataset.expr));
+});
+document.querySelectorAll('input[data-orb]').forEach(inp => {
+  const key = inp.dataset.orb;
+  inp.addEventListener('input', () => {
+    orbCfg[key] = parseFloat(inp.value);
+    document.querySelector(`[data-orbval="${key}"]`).textContent = orbCfg[key] + (ORB_UNITS[key] || '');
+    orbUpdate();
+    if (state.surface !== 'orb') setSurfaceMode(true);
+  });
+});
+document.getElementById('modeFlat').addEventListener('click', () => setSurfaceMode(false));
+document.getElementById('modeOrb').addEventListener('click', () => setSurfaceMode(true));
+document.querySelectorAll('[data-state]').forEach(row => {
+  row.addEventListener('click', e => {
+    if (e.target.closest('.state-colors')) return;
+    beginStateTransition(row.dataset.state);
+    document.querySelectorAll('[data-state]').forEach(r => r.classList.toggle('sel', r === row));
+    applyStatePalette(state.stateName);
+    setExpression(STATES[state.stateName].expr, true);
+    nextGaze = 0;
+  });
+});
+function setStateColor(stateID, index, value) {
+  let hex = value.trim().toLowerCase();
+  if (hex && hex[0] !== '#') hex = '#' + hex;
+  if (!/^#[0-9a-f]{6}$/.test(hex)) return false;
+  STATES[stateID].palette[index] = hex;
+  document.querySelectorAll(`[data-state-color="${stateID}"][data-color-index="${index}"]`).forEach(input => { input.value = hex; });
+  document.querySelectorAll(`[data-state-hex="${stateID}"][data-color-index="${index}"]`).forEach(input => {
+    input.value = hex;
+    input.style.borderColor = '';
+  });
+  if (state.stateName === stateID) applyStatePalette(stateID);
+  return true;
+}
+document.querySelectorAll('[data-state-color]').forEach(input => {
+  input.addEventListener('input', () => setStateColor(input.dataset.stateColor, +input.dataset.colorIndex, input.value));
+});
+document.querySelectorAll('[data-state-hex]').forEach(input => {
+  input.addEventListener('input', () => {
+    const valid = setStateColor(input.dataset.stateHex, +input.dataset.colorIndex, input.value);
+    input.style.borderColor = valid ? '' : '#ff7a7a';
+  });
+});
+document.getElementById('btnBlink').addEventListener('click', blinkNow);
+function resetAvatar() {
+  state.shape = 'sphere';
+  beginStateTransition('idle');
+  state.userRot = { x: -4, y: -14, z: -6 };
+  state.links = { w: true, h: true, p: true };
+  state.motion = true;
+  state.speed = 7;
+  state.orbitSpeed = 220;
+  state.planeEyeLift = 7;
+  setMouseFollow(true);
+
+  setField('dimW', 210, true); setField('dimH', 210, true); setField('dimD', 210, true);
+  for (const [k, v] of Object.entries({ propL: 50, propR: 53, posXL: 0, posYL: 0, posXR: 0, posYR: 0 }))
+    setField(k, v, true);
+
+  for (const key of ['gx', 'gy', 'fx', 'fy', 'wx', 'wy', 'wz', 'blink']) S[key].snap(0);
+  S.pop.snap(1);
+  document.querySelectorAll('[data-shape]').forEach(btn => btn.classList.toggle('sel', btn.dataset.shape === 'sphere'));
+  document.querySelectorAll('[data-state]').forEach(row => row.classList.toggle('sel', row.dataset.state === 'idle'));
+  document.querySelectorAll('[data-link]').forEach(btn => btn.classList.add('on'));
+  document.getElementById('planeLiftControl').style.display = 'none';
+  planeEyeLiftSlider.value = 7;
+  document.getElementById('planeEyeLiftVal').textContent = '7';
+  speedSlider.value = 7;
+  document.getElementById('speedVal').textContent = '7.0';
+  orbitSpeedSlider.value = 220;
+  document.getElementById('orbitSpeedVal').textContent = '220°/s';
+  orbitBurstStart = -1e9;
+  nextGaze = clock + 2.5;
+  nextBlink = clock + 3;
+  applyStatePalette('idle');
+  setExpression(1);
+  updateDevInspector(true);
+}
+document.getElementById('btnReset').addEventListener('click', resetAvatar);
+const speedSlider = document.getElementById('speedSlider');
+speedSlider.addEventListener('input', () => {
+  state.speed = +speedSlider.value;
+  document.getElementById('speedVal').textContent = state.speed.toFixed(1);
+});
+const orbitSpeedSlider = document.getElementById('orbitSpeedSlider');
+orbitSpeedSlider.addEventListener('input', () => {
+  const requestedSpeed = +orbitSpeedSlider.value;
+  if (state.expr !== 26) setExpression(26);
+  state.orbitSpeed = requestedSpeed;
+  orbitSpeedSlider.value = requestedSpeed;
+  orbitBurstStart = -1e9;
+  document.getElementById('orbitSpeedVal').textContent = `${state.orbitSpeed}°/s`;
+});
+function syncRotInputs() {
+  for (const key of ['rotX', 'rotY', 'rotZ']) {
+    const inp = inputEl(key);
+    if (inp && document.activeElement !== inp) inp.value = FIELDS[key].get().toFixed(1);
+  }
+}
+
+/* =============================================================
+   IOS HANDOFF INSPECTOR
+   Live presentation values + authored behavior contract.
+   ============================================================= */
+let lastDevUpdate = 0;
+const devRound = (value, places = 3) => {
+  const p = 10 ** places;
+  return Math.round(value * p) / p;
+};
+
+function displayExpressionID(sourceID) {
+  const index = VISIBLE_EXPRESSIONS.indexOf(sourceID);
+  return index < 0 ? null : String(index).padStart(2, '0');
+}
+
+function eyeSpec(eye) {
+  return {
+    width: eye.w,
+    height: eye.h,
+    tiltDegrees: eye.t,
+    offsetX: eye.dx,
+    offsetY: eye.dy,
+    lid: eye.lid,
+    bend: eye.bend,
+  };
+}
+
+function currentEyeAnchor(side) {
+  const sign = side === 'L' ? -1 : 1;
+  const ex = EX[side];
+  const posX = side === 'L' ? S.xL.x : S.xR.x;
+  const posY = side === 'L' ? S.yL.x : S.yR.x;
+  if (state.expr === 26) {
+    const elapsed = clock - orbitStart;
+    const phase = side === 'L' ? 0 : 1.25;
+    return {
+      longitude: orbitEntry[side].lon + orbitAngle,
+      latitude: orbitEntry[side].lat + (Math.sin(elapsed * 1.9 + phase) - Math.sin(phase)) * 18,
+    };
+  }
+  return {
+    longitude: sign * 13 + (posX + ex.dx.x) * 0.35 + S.gx.x + S.fy.x * 0.34,
+    latitude: SHAPES[state.shape].face.lat + (posY - ex.dy.x) * 0.35 + S.gy.x - S.fx.x * 0.28,
+  };
+}
+
+function liveEyePose(side) {
+  const ex = EX[side];
+  const anchor = currentEyeAnchor(side);
+  const proportion = (side === 'L' ? S.pL.x : S.pR.x) / 50;
+  return {
+    anchorDegrees: {
+      longitude: devRound(anchor.longitude),
+      latitude: devRound(anchor.latitude),
+    },
+    geometryUnits: {
+      width: devRound(ex.w.x),
+      height: devRound(ex.h.x),
+      tilt: devRound(ex.t.x),
+      localOffsetX: devRound(ex.dx.x),
+      localOffsetY: devRound(ex.dy.x),
+      lid: devRound(ex.lid.x),
+      bend: devRound(ex.bend.x),
+    },
+    normalizedToHead: {
+      width: devRound(ex.w.x * proportion / Math.max(S.dw.x, 1)),
+      height: devRound(ex.h.x * proportion / Math.max(S.dh.x, 1)),
+    },
+    proportionalScale: devRound(proportion),
+  };
+}
+
+function getLivePose() {
+  return {
+    selection: {
+      state: state.stateName,
+      displayExpression: displayExpressionID(state.expr),
+      sourceExpression: state.expr,
+      shape: state.shape,
+      surface: state.surface,
+    },
+    head: {
+      dimensionsUnits: {
+        width: devRound(S.dw.x),
+        height: devRound(S.dh.x),
+        depth: devRound(S.dd.x),
+      },
+      dimensionsNormalizedToDefault: {
+        width: devRound(S.dw.x / 210),
+        height: devRound(S.dh.x / 210),
+        depth: devRound(S.dd.x / 210),
+      },
+      presentationRotationDegrees: {
+        x: devRound(S.rx.x),
+        y: devRound(S.ry.x),
+        z: devRound(S.rz.x),
+      },
+      mouseFollowEnabled: state.mouseFollow,
+      mouseFollowPositionNormalized: {
+        x: devRound(S.fy.x / 42),
+        y: devRound(S.fx.x / 28),
+      },
+      planeEyeDistanceUnits: state.shape === 'plane' ? devRound(state.planeEyeLift) : null,
+    },
+    eyes: {
+      left: liveEyePose('L'),
+      right: liveEyePose('R'),
+      blinkProgress: devRound(clamp(S.blink.x, 0, 1)),
+    },
+    orbit: state.expr === 26 ? {
+      phaseDegrees: devRound(orbitAngle),
+      liveSpeedDegreesPerSecond: devRound(orbitSpeedLive),
+      targetSpeedDegreesPerSecond: state.orbitSpeed,
+    } : null,
+  };
+}
+
+function getImplementationSpec() {
+  const expressions = {};
+  for (const [id, pair] of Object.entries(EXPRESSIONS)) {
+    expressions[id] = { left: eyeSpec(pair[0]), right: eyeSpec(pair[1]) };
+  }
+  const expressionOrder = VISIBLE_EXPRESSIONS.map((sourceID, index) => ({
+    displayID: String(index).padStart(2, '0'),
+    sourceID,
+    kind: sourceID === 26 ? 'continuousOrbit' : 'pose',
+  }));
+  return {
+    schemaVersion: 1,
+    product: '2D/3D Avatar',
+    coordinateSystem: {
+      units: 'avatarUnits',
+      angles: 'degrees',
+      mouseFollowRange: [-1, 1],
+      eyeAnchor: 'longitudeLatitudeOnHead',
+      normalization: 'Divide horizontal values by head width and vertical values by head height.',
+    },
+    transitionContract: {
+      interruptible: true,
+      startRule: 'Every transition begins at the current presentation value, including velocity.',
+      endRule: 'The selected expression supplies eye targets; the selected state continues to supply procedural head and gaze targets.',
+      stateMotionBlendSeconds: STATE_TRANSITION_SECONDS,
+      stateMotionBlendEasing: 'easeInOutCubic',
+      paletteBlendMilliseconds: PALETTE_TRANSITION_MS,
+      paletteColorSpace: 'OkLab',
+      renderOrder: ['resolveState', 'advanceContinuousLayers', 'stepSprings', 'projectToShape', 'clipToHead', 'draw'],
+    },
+    springSystem: {
+      integrator: 'semiImplicitEuler',
+      stiffnessFormula: '(speed * 1.85)^2',
+      speedRange: [2, 14],
+      defaultSpeed: 7,
+      dampingRatios: {
+        default: 0.9,
+        eyeMorph: 1,
+        mouseFollowGazeAndProceduralMotion: 0.95,
+        blink: 1,
+      },
+      blinkStiffness: 620,
+      settleThresholds: { distance: 0.0001, velocity: 0.001 },
+    },
+    blink: {
+      closeTarget: 1,
+      openTarget: 0,
+      closeHoldMilliseconds: 90,
+      eyeHeightCompression: 0.93,
+    },
+    mouseFollow: {
+      defaultEnabled: true,
+      maximumHeadRotationDegrees: { x: 28, y: 42 },
+      eyeEdgeTravel: { longitudePerHeadYDegree: 0.34, latitudePerHeadXDegree: -0.28 },
+    },
+    orbit: {
+      sourceExpression: 26,
+      entryRule: 'Capture each eye current visible longitude and latitude before starting the orbit.',
+      entrySpeedDegreesPerSecond: 670,
+      defaultTargetSpeedDegreesPerSecond: 220,
+      decelerationSeconds: 2,
+      decelerationEasing: 'easeOutCubic',
+      latitudeWaveAmplitudeDegrees: 18,
+      latitudeWaveAngularSpeed: 1.9,
+      rightEyePhaseOffsetRadians: 1.25,
+    },
+    shapes: {
+      sphere: { projection: 'ellipsoidSurface', clipEyesToHead: true },
+      mickey: { projection: 'ellipsoidSurfaceWithCompoundSilhouette', clipEyesToHead: true },
+      cube: { projection: 'normalizedFrontFaceForPose; smoothEllipsoidPathForOrbit', clipEyesToHead: true, depthAffectsEyes: false },
+      plane: { projection: 'normalizedFrontFaceForPose; thin3DPathForOrbit', clipEyesToHead: false, maximumGeometryHalfDepthUnits: 2, eyeDistanceRangeUnits: [0, 50] },
+    },
+    defaults: {
+      shape: 'sphere',
+      dimensionsUnits: { width: 210, height: 210, depth: 210 },
+      rotationDegrees: { x: -4, y: -14, z: -6 },
+      state: 'idle',
+      expressionSourceID: 1,
+      planeEyeDistanceUnits: 7,
+      surfaceColors: ['#3f19c8', '#ffffff'],
+    },
+    expressionOrder,
+    expressions,
+    states: STATES,
+    currentSurfaceTuning: { ...orbCfg, colors: [...orbCfg.colors] },
+  };
+}
+
+function updateDevInspector(force = false) {
+  if (!force && !devInspector.classList.contains('open')) return;
+  const live = getLivePose();
+  const sourceLabel = live.selection.displayExpression === null
+    ? `internal ${live.selection.sourceExpression}`
+    : `${live.selection.displayExpression} (source ${live.selection.sourceExpression})`;
+  document.getElementById('devRuntime').innerHTML = `
+    <dt>State</dt><dd>${STATES[state.stateName].label} · ${state.stateName}</dd>
+    <dt>Expression</dt><dd>${sourceLabel}</dd>
+    <dt>Shape</dt><dd>${state.shape}</dd>
+    <dt>Surface</dt><dd>${state.surface}</dd>
+    <dt>Dimensions</dt><dd>${devRound(S.dw.x, 1)} × ${devRound(S.dh.x, 1)} × ${devRound(S.dd.x, 1)}</dd>
+    <dt>Rotation</dt><dd>${devRound(S.rx.x, 1)}°, ${devRound(S.ry.x, 1)}°, ${devRound(S.rz.x, 1)}°</dd>
+    <dt>Mouse follow</dt><dd>${state.mouseFollow ? 'on' : 'off'} · ${devRound(S.fy.x / 42, 2)}, ${devRound(S.fx.x / 28, 2)}</dd>
+    <dt>Spring speed</dt><dd>${state.speed}</dd>
+    <dt>Orbit</dt><dd>${state.expr === 26 ? `${Math.round(orbitSpeedLive)}°/s · ${Math.round(orbitAngle)}°` : 'inactive'}</dd>`;
+  document.getElementById('devLivePose').textContent = JSON.stringify(live, null, 2);
+  if (force || !document.getElementById('devImplementation').textContent)
+    document.getElementById('devImplementation').textContent = JSON.stringify(getImplementationSpec(), null, 2);
+}
+
+async function copyDevJSON(kind) {
+  const payload = JSON.stringify(kind === 'live' ? getLivePose() : getImplementationSpec(), null, 2);
+  try {
+    await navigator.clipboard.writeText(payload);
+  } catch (_) {
+    const temp = document.createElement('textarea');
+    temp.value = payload;
+    temp.style.position = 'fixed'; temp.style.opacity = '0';
+    document.body.appendChild(temp); temp.select(); document.execCommand('copy'); temp.remove();
+  }
+  const status = document.getElementById('devCopyStatus');
+  status.textContent = kind === 'live' ? 'Live presentation pose copied.' : 'Complete iOS implementation spec copied.';
+  clearTimeout(copyDevJSON.statusTimer);
+  copyDevJSON.statusTimer = setTimeout(() => { status.textContent = ''; }, 2200);
+}
+
+document.getElementById('copyLivePose').addEventListener('click', () => copyDevJSON('live'));
+document.getElementById('copyLivePoseInline').addEventListener('click', () => copyDevJSON('live'));
+document.getElementById('copyImplementation').addEventListener('click', () => copyDevJSON('implementation'));
+document.getElementById('copyImplementationInline').addEventListener('click', () => copyDevJSON('implementation'));
+
+orbUpdate();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

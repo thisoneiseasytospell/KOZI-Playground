@@ -6,23 +6,16 @@
 <title>2D/3D Avatar — KOZI Playground</title>
 <style>
   @font-face {
-    font-family: "ABC Diatype";
-    src: url("fonts/ABCDiatype-Regular.otf") format("opentype");
+    font-family: "GT Planar";
+    src: url("fonts/GT-Planar-VF.ttf") format("truetype");
     font-style: normal;
-    font-weight: 400 699;
-    font-display: swap;
-  }
-  @font-face {
-    font-family: "ABC Diatype";
-    src: url("fonts/ABCDiatype-Bold.otf") format("opentype");
-    font-style: normal;
-    font-weight: 700 900;
+    font-weight: 100 900;
     font-display: swap;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body { height:100%; }
   body {
-    font-family: Inter, -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
+    font-family:"GT Planar", Arial, sans-serif;
     background:#0b0b11; color:#16161a; overflow:hidden;
     font-variant-numeric: tabular-nums;
   }
@@ -37,6 +30,10 @@
   #orbCanvas {
     position:absolute; inset:0; width:100%; height:100%;
     display:none; opacity:0; pointer-events:none;
+  }
+  #chessCanvas {
+    position:absolute; inset:0; width:100%; height:100%;
+    display:none; pointer-events:none;
   }
   #brand {
     position:absolute; top:20px; left:24px; z-index:2;
@@ -183,7 +180,7 @@
     --quiet:#e5e5df;
   }
   body {
-    font-family:"ABC Diatype", Arial, sans-serif;
+    font-family:"GT Planar", Arial, sans-serif;
     background:var(--stage);
     color:var(--ink);
     letter-spacing:-.01em;
@@ -227,7 +224,11 @@
     color:var(--muted); font-size:10px; font-weight:700; letter-spacing:.15em;
     text-transform:uppercase; margin-bottom:8px;
   }
-  .eyebrow.phead-credit { text-transform:none; letter-spacing:.04em; }
+  .eyebrow.phead-credit {
+    display:block; max-width:calc(100% - 2px); margin-left:2px; line-height:1.3;
+    text-transform:none; letter-spacing:.04em;
+    white-space:normal; overflow-wrap:anywhere;
+  }
   .phead { margin-bottom:20px; }
   .phead h1 {
     display:flex; gap:.16em; font-size:30px; line-height:1;
@@ -278,7 +279,7 @@
   .dim-mini .body { fill:#e2e2dc; stroke:currentColor; stroke-width:1; }
   .dim-mini .back, .dim-mini .join { fill:none; stroke:currentColor; stroke-width:1; stroke-opacity:.42; }
   .dim-mini .measure { stroke:currentColor; stroke-width:1; }
-  .dim-mini text { fill:currentColor; font:700 8px "ABC Diatype", Arial, sans-serif; letter-spacing:.08em; }
+  .dim-mini text { fill:currentColor; font:700 8px "GT Planar", Arial, sans-serif; letter-spacing:.08em; }
   .dim-fields { display:flex; flex-direction:column; }
   .dim-fields .frow { margin:0; padding:8px 0; border-bottom:1px solid var(--quiet); }
   .dim-fields .frow:first-child { padding-top:0; }
@@ -288,10 +289,10 @@
     width:18px; height:18px; display:inline-flex; align-items:center; justify-content:center;
     background:var(--ink); color:#fff; font-size:9px; font-weight:700;
   }
-  .plane-lift-control { border-top:1px solid var(--line); margin-top:16px; padding-top:14px; }
-  .plane-lift-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; }
-  .plane-lift-head label { font-size:12px; color:var(--ink); }
-  .plane-lift-head span { font-size:11px; color:var(--muted); font-weight:700; }
+  .eye-distance-control { border-top:1px solid var(--line); margin-top:16px; padding-top:14px; }
+  .eye-distance-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; }
+  .eye-distance-head label { font-size:12px; color:var(--ink); }
+  .eye-distance-head span { font-size:11px; color:var(--muted); font-weight:700; }
   .linkbtn { border-color:var(--line); background:transparent; color:var(--muted); }
   .linkbtn.on { background:var(--ink); border-color:var(--ink); color:#fff; }
 
@@ -375,7 +376,7 @@
   .dev-title span { font-size:10px; color:#bdbdb6; letter-spacing:.1em; text-transform:uppercase; }
   .dev-close {
     width:28px; height:28px; flex:none; border:1px solid #686862; background:transparent;
-    color:#fff; font:16px "ABC Diatype", Arial, sans-serif; cursor:pointer;
+    color:#fff; font:16px "GT Planar", Arial, sans-serif; cursor:pointer;
   }
   .dev-close:hover { background:#fff; color:var(--ink); }
   .dev-intro {
@@ -386,7 +387,7 @@
   .dev-actions { display:flex; gap:7px; flex:none; }
   .dev-btn {
     border:1px solid var(--ink); background:transparent; color:var(--ink);
-    padding:8px 10px; font:700 10px "ABC Diatype", Arial, sans-serif;
+    padding:8px 10px; font:700 10px "GT Planar", Arial, sans-serif;
     letter-spacing:.06em; text-transform:uppercase; cursor:pointer;
   }
   .dev-btn:hover, .dev-btn.primary { background:var(--ink); color:#fff; }
@@ -429,6 +430,7 @@
     .dev-grid { grid-template-columns:1fr; }
     .dev-col + .dev-col { border-left:0; }
     .dev-intro { flex-direction:column; }
+    .eyebrow.phead-credit { font-size:9px; letter-spacing:.025em; }
   }
 </style>
 </head>
@@ -437,6 +439,7 @@
   <div id="stagewrap">
     <a id="brand" href="../index.html" aria-label="Back to KOZI Playground overview"><span class="back">←</span>Playground overview</a>
     <canvas id="orbCanvas"></canvas>
+    <canvas id="chessCanvas"></canvas>
     <svg id="stage"></svg>
     <div id="caption"><b>E</b> Mouse follow <span id="mouseFollowStatus">ON</span> · Drag rotate · Click blink · <b>/</b> iOS handoff · Hold <b>R</b> reset</div>
     <div id="resetHold" role="status" aria-live="polite" aria-hidden="true">
@@ -479,7 +482,7 @@ setShape(id)
 setMouseFollow(enabled)
 setMousePosition(x: -1...1, y: -1...1)
 setDimensions(width, height, depth)
-setPlaneEyeDistance(value)
+setEyeDistance(value)
 blink()</pre>
           </section>
         </div>
@@ -514,6 +517,15 @@ blink()</pre>
   </div>
 </div>
 
+<svg id="chessGeometrySource" width="334" height="334" aria-hidden="true" style="position:absolute;width:1px;height:1px;left:-10000px;overflow:hidden;opacity:0;pointer-events:none"></svg>
+<script src="3D Chess Pieces/pieces-data.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<script type="module" src="chess-model.js"></script>
 <script>
 'use strict';
 /* =============================================================
@@ -745,10 +757,16 @@ function beginStateTransition(stateID, instant = false) {
    orbR: how far the orb shader's r=1 silhouette must extend beyond the
    projected ellipse so the gradient covers the whole clipped shape. */
 const SHAPES = {
-  sphere: { label: 'Sphere', face: { lat: 9,  scale: 1,    esc: 1 },    orbR: 1.0 },
+  sphere: { label: 'Sphere', face: { lat: 9,  scale: 1,    esc: 1 },    orbR: 1.0, defaultDepth: 210 },
   mickey: { label: 'Mickey', face: { lat: 6,  scale: 1,    esc: 1 },    orbR: 1.5 },
   cube:   { label: 'Cube',   face: { lat: 8,  scale: 0.92, esc: 0.95 }, orbR: 1.45 },
   plane:  { label: 'Plane',  face: { lat: 8,  scale: 0.92, esc: 0.95 }, orbR: 1.45 },
+  pawn:   { label: 'Pawn',   face: { lat: 12, scale: 0.9,  esc: 0.88 }, orbR: 1.55, chess: true, defaultDepth: 90 },
+  rook:   { label: 'Rook',   face: { lat: 10, scale: 0.9,  esc: 0.88 }, orbR: 1.55, chess: true, defaultDepth: 90 },
+  knight: { label: 'Knight', face: { lat: 9,  scale: 0.9,  esc: 0.86 }, orbR: 1.55, chess: true, defaultDepth: 90 },
+  bishop: { label: 'Bishop', face: { lat: 10, scale: 0.9,  esc: 0.88 }, orbR: 1.55, chess: true, defaultDepth: 90 },
+  queen:  { label: 'Queen',  face: { lat: 7,  scale: 0.9,  esc: 0.84 }, orbR: 1.55, chess: true, defaultDepth: 90 },
+  king:   { label: 'King',   face: { lat: 8,  scale: 0.9,  esc: 0.86 }, orbR: 1.55, chess: true, defaultDepth: 90 },
 };
 const SHAPE_ICONS = {
   sphere: '<circle cx="14" cy="14" r="10" class="ic" stroke-width="0"/>',
@@ -756,6 +774,52 @@ const SHAPE_ICONS = {
   cube:   '<rect x="5" y="5" width="18" height="18" class="ic" stroke-width="0"/>',
   plane:  '<path d="M3 10 L25 6 L25 18 L3 22 Z" class="ic" stroke-width="0"/>',
 };
+
+const CHESS_KEYS = ['pawn', 'rook', 'knight', 'bishop', 'queen', 'king'];
+const CHESS_GEOMETRY = {};
+const isChessShape = (shape = state.shape) => !!SHAPES[shape]?.chess;
+
+/* The imported chess artwork is sampled once into normalized contours. During
+   rendering each contour is extruded by the avatar depth and projected with
+   the same rotation matrix as the built-in primitives. */
+function prepareChessGeometry() {
+  const scratch = document.getElementById('chessGeometrySource');
+  for (const name of CHESS_KEYS) {
+    const source = window.CHESS_SVG?.[name];
+    if (!source) continue;
+    const dom = new DOMParser().parseFromString(source, 'image/svg+xml');
+    const sourcePaths = [...dom.querySelectorAll('path')].filter(node => {
+      const fill = node.getAttribute('fill');
+      return fill && fill !== 'none';
+    });
+    const rawParts = sourcePaths.map(node => {
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', node.getAttribute('d'));
+      scratch.appendChild(path);
+      const length = path.getTotalLength();
+      const count = Math.max(28, Math.min(110, Math.ceil(length / 6)));
+      const points = Array.from({ length: count }, (_, i) => {
+        const point = path.getPointAtLength(i / count * length);
+        return { x: point.x, y: point.y };
+      });
+      path.remove();
+      return points;
+    });
+    const all = rawParts.flat();
+    const minX = Math.min(...all.map(p => p.x)), maxX = Math.max(...all.map(p => p.x));
+    const minY = Math.min(...all.map(p => p.y)), maxY = Math.max(...all.map(p => p.y));
+    const midX = (minX + maxX) / 2, midY = (minY + maxY) / 2;
+    const halfW = Math.max(1, (maxX - minX) / 2), halfH = Math.max(1, (maxY - minY) / 2);
+    CHESS_GEOMETRY[name] = rawParts.map(points => points.map(point => ({
+      x: (point.x - midX) / halfW,
+      y: (midY - point.y) / halfH,
+    })));
+    SHAPE_ICONS[name] = sourcePaths.map(node =>
+      `<path d="${node.getAttribute('d')}" class="ic" stroke-width="0" fill-rule="${node.getAttribute('fill-rule') || 'nonzero'}"/>`
+    ).join('');
+  }
+}
+prepareChessGeometry();
 
 /* ---------- app state ---------- */
 const state = {
@@ -767,7 +831,7 @@ const state = {
   motion: true,
   speed: 7,
   orbitSpeed: 220,
-  planeEyeLift: 7,
+  eyeDistance: 7,
   mouseFollow: true,
   expr: 1,
   stateName: 'idle',
@@ -1386,9 +1450,32 @@ function buildSilhouette(m) {
       pts.push(P(apply(m, { x: sx * a, y: sy * b, z: sz * thin })));
     return { d: polyPath(hull(pts)), outline: true };
   }
+  if (isChessShape(shape)) return buildChessSilhouette(m, shape, a, b, c);
+  return { d: '', outline: false };
+}
+
+function compactPolyPath(points) {
+  return 'M' + points.map(point => `${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join('L') + 'Z';
+}
+
+function buildChessSilhouette(m, shape, a, b, c) {
+  const parts = CHESS_GEOMETRY[shape];
+  if (!parts) return { d: '', outline: false };
+  let d = '';
+  for (const contour of parts) {
+    const front = contour.map(point => P(apply(m, { x: point.x * a, y: point.y * b, z: c })));
+    const back = contour.map(point => P(apply(m, { x: point.x * a, y: point.y * b, z: -c })));
+    d += compactPolyPath(front) + compactPolyPath(back);
+    for (let i = 0; i < contour.length; i++) {
+      const next = (i + 1) % contour.length;
+      d += compactPolyPath([front[i], front[next], back[next], back[i]]);
+    }
+  }
+  return { d, outline: false };
 }
 
 function buildCubeEdges(m) {
+  if (isChessShape()) return '';
   if (state.shape !== 'cube') return '';
   const a = S.dw.x / 2, b = S.dh.x / 2, c = S.dd.x / 2;
   const faces = [
@@ -1414,19 +1501,22 @@ function placeEye(m, lonDeg, latDeg, smoothSurface = false) {
   const u = { x: Math.cos(lat) * Math.sin(lon), y: Math.sin(lat), z: Math.cos(lat) * Math.cos(lon) };
   const east = { x: Math.cos(lon), y: 0, z: -Math.sin(lon) };
   const north = { x: -Math.sin(lat) * Math.sin(lon), y: Math.cos(lat), z: -Math.sin(lat) * Math.cos(lon) };
+  const eyeLift = state.eyeDistance;
   let pos, n, t1, t2;
-  if ((state.shape === 'cube' || state.shape === 'plane') && !smoothSurface) {
+  if ((state.shape === 'cube' || state.shape === 'plane' || isChessShape()) && !smoothSurface) {
     // A normalized virtual face keeps eye placement and scale independent of cube depth.
     const nx = clamp(Math.tan(lon) * 0.9, -0.78, 0.78);
     const ny = clamp(Math.tan(lat) * 0.9, -0.72, 0.72);
-    const surfaceLift = state.shape === 'plane' ? state.planeEyeLift : 0;
-    pos = apply(m, { x: a * nx, y: b * ny, z: surfaceLift });
+    pos = apply(m, { x: a * nx, y: b * ny, z: eyeLift });
     n = norm3(apply(m, { x: 0, y: 0, z: 1 }));
     t1 = norm3(apply(m, { x: 1, y: 0, z: 0 }));
     t2 = norm3(apply(m, { x: 0, y: 1, z: 0 }));
   } else {
-    const planeOrbitLift = state.shape === 'plane' ? Math.sign(u.z || 1) * state.planeEyeLift : 0;
-    pos = apply(m, { x: a * u.x, y: b * u.y, z: c * u.z + planeOrbitLift });
+    pos = apply(m, {
+      x: (a + eyeLift) * u.x,
+      y: (b + eyeLift) * u.y,
+      z: c * u.z + Math.sign(u.z || 1) * eyeLift,
+    });
     n = norm3(apply(m, { x: u.x / a, y: u.y / b, z: u.z / c }));
     t1 = norm3(apply(m, { x: a * east.x, y: b * east.y, z: c * east.z }));
     t2 = norm3(apply(m, { x: a * north.x, y: b * north.y, z: c * north.z }));
@@ -1575,11 +1665,27 @@ function frame(now) {
   gEdge.setAttribute('d', sil.d);
   gEdge.setAttribute('stroke-opacity', state.shape === 'cube' ? '.14' : state.shape === 'plane' ? '.07' : '0');
   gCubeEdges.innerHTML = buildCubeEdges(m);
-  gEyes.setAttribute('clip-path', state.shape === 'plane' ? 'none' : 'url(#headclip)');
+  gEyes.setAttribute('clip-path', (state.shape === 'plane' || isChessShape()) ? 'none' : 'url(#headclip)');
   clipEl.setAttribute('d', sil.d);
   const pop = S.pop.x;
   const orbAlpha = updateSurface(now);
-  if (orbAlpha > 0.004 && ORB) {
+  const chess3DActive = isChessShape() && window.CHESS3D?.ready;
+  if (chess3DActive) {
+    gHead.setAttribute('fill-opacity', '0');
+    orbCanvas.style.display = 'none';
+    window.CHESS3D.render({
+      shape: state.shape,
+      width: S.dw.x * PX * pop,
+      height: S.dh.x * PX * pop,
+      depth: S.dd.x * PX * pop,
+      rotation: { x: S.rx.x, y: S.ry.x, z: S.rz.x },
+      colors: orbCfg.colors,
+      surface: state.surface,
+    });
+  } else {
+    window.CHESS3D?.hide();
+  }
+  if (!chess3DActive && orbAlpha > 0.004 && ORB) {
     const e = ellipsoidSilhouette(m, S.dw.x / 2, S.dh.x / 2, S.dd.x / 2);
     const rPx = Math.max(e.rx, e.ry) * PX * (SHAPES[state.shape].orbR || 1);
     orbRender(dt, CX, CY, rPx);
@@ -1828,7 +1934,7 @@ function fieldHTML(key) {
 
 function dimensionFieldHTML(key, axis) {
   const f = FIELDS[key];
-  return `<div class="frow">
+  return `<div class="frow"${key === 'dimD' ? ' id="depthField"' : ''}>
     <span class="flabel" data-scrub="${key}"><span class="dim-axis">${axis}</span>${f.label}</span>
     <span class="inpwrap"><input data-key="${key}" value="${f.get().toFixed(f.dec)}">${f.unit === 'u' ? '' : `<span class="unit">${f.unit}</span>`}</span>
   </div>`;
@@ -1861,7 +1967,7 @@ function updateDimensionMiniature() {
 function shapeButtonsHTML() {
   return Object.keys(SHAPES).map(k => `
     <button data-shape="${k}" class="${k === state.shape ? 'sel' : ''}">
-      <svg width="28" height="28" viewBox="0 0 28 28">${SHAPE_ICONS[k]}</svg>${SHAPES[k].label}
+      <svg width="28" height="28" viewBox="${isChessShape(k) ? '0 0 334 334' : '0 0 28 28'}">${SHAPE_ICONS[k]}</svg>${SHAPES[k].label}
     </button>`).join('');
 }
 
@@ -1878,10 +1984,10 @@ document.getElementById('pane-manual').innerHTML = `
         ${dimensionFieldHTML('dimD', 'D')}
       </div>
     </div>
-    <div class="plane-lift-control" id="planeLiftControl" style="display:${state.shape === 'plane' ? 'block' : 'none'}">
-      <div class="plane-lift-head"><label for="planeEyeLiftSlider">Eye distance</label><span id="planeEyeLiftVal">${state.planeEyeLift}</span></div>
+    <div class="eye-distance-control">
+      <div class="eye-distance-head"><label for="eyeDistanceSlider">Eye distance</label><span id="eyeDistanceVal">${state.eyeDistance}</span></div>
       <div class="sliderrow">
-        <input type="range" id="planeEyeLiftSlider" min="0" max="50" step="1" value="${state.planeEyeLift}">
+        <input type="range" id="eyeDistanceSlider" min="0" max="50" step="1" value="${state.eyeDistance}">
       </div>
     </div>
   </div>
@@ -2135,16 +2241,18 @@ document.querySelectorAll('[data-link]').forEach(btn => {
     if (state.links[g]) setField(LINK_PAIRS[g][0], FIELDS[LINK_PAIRS[g][0]].get());
   });
 });
-const planeEyeLiftSlider = document.getElementById('planeEyeLiftSlider');
-planeEyeLiftSlider.addEventListener('input', () => {
-  state.planeEyeLift = +planeEyeLiftSlider.value;
-  document.getElementById('planeEyeLiftVal').textContent = state.planeEyeLift;
+const eyeDistanceSlider = document.getElementById('eyeDistanceSlider');
+eyeDistanceSlider.addEventListener('input', () => {
+  state.eyeDistance = +eyeDistanceSlider.value;
+  document.getElementById('eyeDistanceVal').textContent = state.eyeDistance;
 });
 document.querySelectorAll('[data-shape]').forEach(btn => {
   btn.addEventListener('click', () => {
-    state.shape = btn.dataset.shape;
+    const nextShape = btn.dataset.shape;
+    state.shape = nextShape;
+    if (SHAPES[nextShape].defaultDepth != null) setField('dimD', SHAPES[nextShape].defaultDepth, true);
     document.querySelectorAll('[data-shape]').forEach(b => b.classList.toggle('sel', b === btn));
-    document.getElementById('planeLiftControl').style.display = state.shape === 'plane' ? 'block' : 'none';
+    document.getElementById('depthField').style.display = state.shape === 'plane' ? 'none' : '';
     S.pop.x = 0.93; S.pop.v = 0;
   });
 });
@@ -2210,7 +2318,7 @@ function resetAvatar() {
   state.motion = true;
   state.speed = 7;
   state.orbitSpeed = 220;
-  state.planeEyeLift = 7;
+  state.eyeDistance = 7;
   setMouseFollow(true);
 
   setField('dimW', 210, true); setField('dimH', 210, true); setField('dimD', 210, true);
@@ -2222,9 +2330,9 @@ function resetAvatar() {
   document.querySelectorAll('[data-shape]').forEach(btn => btn.classList.toggle('sel', btn.dataset.shape === 'sphere'));
   document.querySelectorAll('[data-state]').forEach(row => row.classList.toggle('sel', row.dataset.state === 'idle'));
   document.querySelectorAll('[data-link]').forEach(btn => btn.classList.add('on'));
-  document.getElementById('planeLiftControl').style.display = 'none';
-  planeEyeLiftSlider.value = 7;
-  document.getElementById('planeEyeLiftVal').textContent = '7';
+  document.getElementById('depthField').style.display = '';
+  eyeDistanceSlider.value = 7;
+  document.getElementById('eyeDistanceVal').textContent = '7';
   orbitSpeedSlider.value = 220;
   document.getElementById('orbitSpeedVal').textContent = '220°/s';
   orbitBurstStart = -1e9;
@@ -2353,7 +2461,7 @@ function getLivePose() {
         x: devRound(S.fy.x / 42),
         y: devRound(S.fx.x / 28),
       },
-      planeEyeDistanceUnits: state.shape === 'plane' ? devRound(state.planeEyeLift) : null,
+      eyeDistanceUnits: devRound(state.eyeDistance),
     },
     eyes: {
       left: liveEyePose('L'),
@@ -2439,6 +2547,12 @@ function getImplementationSpec() {
       mickey: { projection: 'ellipsoidSurfaceWithCompoundSilhouette', clipEyesToHead: true },
       cube: { projection: 'normalizedFrontFaceForPose; smoothEllipsoidPathForOrbit', clipEyesToHead: true, depthAffectsEyes: false },
       plane: { projection: 'normalizedFrontFaceForPose; thin3DPathForOrbit', clipEyesToHead: false, maximumGeometryHalfDepthUnits: 2, eyeDistanceRangeUnits: [0, 50] },
+      pawn: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
+      rook: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
+      knight: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
+      bishop: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
+      queen: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
+      king: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
     },
     defaults: {
       shape: 'sphere',
@@ -2446,7 +2560,7 @@ function getImplementationSpec() {
       rotationDegrees: { x: -4, y: -14, z: 0 },
       state: 'idle',
       expressionSourceID: 1,
-      planeEyeDistanceUnits: 7,
+      eyeDistanceUnits: 7,
       surfaceColors: ['#3f19c8', '#ffffff'],
     },
     expressionOrder,

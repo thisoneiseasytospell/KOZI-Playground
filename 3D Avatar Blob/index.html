@@ -1526,7 +1526,9 @@ function placeEye(m, lonDeg, latDeg, smoothSurface = false) {
     px: p2.x, py: p2.y,
     c1: { x: t1.x, y: -t1.y },
     c2: { x: -t2.x, y: t2.y },   // local y-down maps against surface "north"
-    alpha: clamp((n.z - 0.02) / 0.14, 0, 1)
+    // Detached eyes remain fully visible through the complete orbit. At zero
+    // distance they return to the surface visibility/clipping behavior.
+    alpha: state.eyeDistance > 0 ? 1 : clamp((n.z - 0.02) / 0.14, 0, 1)
   };
 }
 

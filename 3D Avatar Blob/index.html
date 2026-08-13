@@ -1507,7 +1507,7 @@ function placeEye(m, lonDeg, latDeg, smoothSurface = false) {
     // A normalized virtual face keeps eye placement and scale independent of cube depth.
     const nx = clamp(Math.tan(lon) * 0.9, -0.78, 0.78);
     const ny = clamp(Math.tan(lat) * 0.9, -0.72, 0.72);
-    pos = apply(m, { x: a * nx, y: b * ny, z: eyeLift });
+    pos = apply(m, { x: a * nx, y: b * ny, z: c + eyeLift });
     n = norm3(apply(m, { x: 0, y: 0, z: 1 }));
     t1 = norm3(apply(m, { x: 1, y: 0, z: 0 }));
     t2 = norm3(apply(m, { x: 0, y: 1, z: 0 }));
@@ -1665,7 +1665,7 @@ function frame(now) {
   gEdge.setAttribute('d', sil.d);
   gEdge.setAttribute('stroke-opacity', state.shape === 'cube' ? '.14' : state.shape === 'plane' ? '.07' : '0');
   gCubeEdges.innerHTML = buildCubeEdges(m);
-  gEyes.setAttribute('clip-path', (state.shape === 'plane' || isChessShape()) ? 'none' : 'url(#headclip)');
+  gEyes.setAttribute('clip-path', state.eyeDistance > 0 ? 'none' : 'url(#headclip)');
   clipEl.setAttribute('d', sil.d);
   const pop = S.pop.x;
   const orbAlpha = updateSurface(now);

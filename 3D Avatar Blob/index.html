@@ -270,16 +270,9 @@
   .inpwrap input { color:var(--ink); font-size:12px; font-weight:400; }
   .inpwrap .unit { color:var(--muted); font-size:10px; font-weight:400; }
   .dimension-editor {
-    display:grid; grid-template-columns:138px 1fr; gap:18px; align-items:center;
+    display:block;
     border-top:1px solid var(--line); padding-top:16px;
   }
-  .dim-mini {
-    width:138px; height:138px; display:block; color:var(--ink); overflow:visible;
-  }
-  .dim-mini .body { fill:#e2e2dc; stroke:currentColor; stroke-width:1; }
-  .dim-mini .back, .dim-mini .join { fill:none; stroke:currentColor; stroke-width:1; stroke-opacity:.42; }
-  .dim-mini .measure { stroke:currentColor; stroke-width:1; }
-  .dim-mini text { fill:currentColor; font:700 8px "GT Planar", Arial, sans-serif; letter-spacing:.08em; }
   .dim-fields { display:flex; flex-direction:column; }
   .dim-fields .frow { margin:0; padding:8px 0; border-bottom:1px solid var(--quiet); }
   .dim-fields .frow:first-child { padding-top:0; }
@@ -357,7 +350,34 @@
   }
   .state-color input[type=text]:focus { background:#292925; border-color:#fff; }
 
-  /* ---------- iOS developer handoff ---------- */
+  /* ---------- package export ---------- */
+  .format-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:14px; }
+  .format-option {
+    min-height:112px; padding:13px; border:1px solid var(--line); background:var(--surface);
+    color:var(--ink); text-align:left; cursor:pointer; font:inherit;
+  }
+  .format-option:hover { border-color:var(--ink); }
+  .format-option.sel { border-color:var(--ink); box-shadow:inset 0 0 0 2px var(--ink); background:#fff; }
+  .format-option svg { display:block; width:25px; height:25px; margin-bottom:14px; }
+  .format-option strong { display:block; font-size:13px; line-height:1.2; }
+  .format-option span { display:block; margin-top:5px; color:var(--muted); font-size:10.5px; line-height:1.35; }
+  .export-summary { display:grid; grid-template-columns:1fr 1fr; border-top:1px solid var(--quiet); margin-top:13px; }
+  .export-summary div { padding:9px 0; border-bottom:1px solid var(--quiet); font-size:11px; }
+  .export-summary div:nth-child(odd) { color:var(--muted); }
+  .export-summary div:nth-child(even) { text-align:right; font-weight:700; }
+  .export-action { width:100%; margin-top:12px; padding:11px; }
+  .export-note { min-height:15px; margin-top:9px; color:var(--muted); font-size:10.5px; }
+  .dev-export-selects { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
+  .dev-export-selects label span {
+    display:block; margin-bottom:5px; color:var(--muted); font-size:8px;
+    font-weight:700; letter-spacing:.12em; text-transform:uppercase;
+  }
+  .dev-export-selects select {
+    width:100%; height:32px; padding:0 8px; border:1px solid var(--line);
+    background:#fff; color:var(--ink); font:11px "GT Planar", Arial, sans-serif;
+  }
+
+  /* ---------- developer tools ---------- */
   #devInspector {
     position:absolute; z-index:20; inset:76px 22px 22px;
     display:none; overflow:auto; background:rgba(244,244,240,.98);
@@ -441,20 +461,20 @@
     <canvas id="orbCanvas"></canvas>
     <canvas id="chessCanvas"></canvas>
     <svg id="stage"></svg>
-    <div id="caption"><b>E</b> Mouse follow <span id="mouseFollowStatus">ON</span> · Drag rotate · Click blink · <b>/</b> iOS handoff · Hold <b>R</b> reset</div>
+    <div id="caption"><b>E</b> Mouse follow <span id="mouseFollowStatus">ON</span> · Drag rotate · Click blink · <b>/</b> Developer · Hold <b>R</b> reset</div>
     <div id="resetHold" role="status" aria-live="polite" aria-hidden="true">
       <div class="reset-hold-dialog">
         <div class="reset-hold-copy"><strong id="resetHoldTitle">Reset avatar?</strong><span id="resetHoldHint">Hold R to confirm</span></div>
         <div class="reset-hold-track"><div id="resetHoldBar"></div></div>
       </div>
     </div>
-    <section id="devInspector" aria-hidden="true" inert aria-label="iOS implementation handoff">
+    <section id="devInspector" aria-hidden="true" inert aria-label="Developer tools">
       <header class="dev-head">
-        <div class="dev-title"><h2>iOS implementation handoff</h2><span>Live source of truth</span></div>
-        <button class="dev-close" id="devClose" aria-label="Close developer handoff">×</button>
+        <div class="dev-title"><h2>Developer</h2><span>Export · live source of truth</span></div>
+        <button class="dev-close" id="devClose" aria-label="Close developer tools">×</button>
       </header>
       <div class="dev-intro">
-        <p>This inspector describes behavior, authored presets and the currently rendered pose. Values use degrees and avatar units. The iOS renderer should normalize positions against head width and height, then animate from its current presentation values whenever a state is interrupted.</p>
+        <p>Export a reusable avatar package, inspect authored presets, or copy the currently rendered pose. Values use degrees and avatar units; native renderers should normalize positions against head width and height.</p>
         <div class="dev-actions">
           <button class="dev-btn" id="copyLivePose">Copy live pose</button>
           <button class="dev-btn primary" id="copyImplementation">Copy full spec</button>
@@ -463,6 +483,20 @@
       <div class="dev-copy-status" id="devCopyStatus" role="status"></div>
       <div class="dev-grid">
         <div class="dev-col">
+          <section class="dev-section">
+            <h3>Export avatar</h3>
+            <div class="dev-export-selects">
+              <label><span>State</span><select id="exportStateSelect" aria-label="State to export"></select></label>
+              <label><span>Expression</span><select id="exportExpressionSelect" aria-label="Expression to export"></select></label>
+            </div>
+            <div class="format-grid" role="radiogroup" aria-label="Export format">
+              <button class="format-option sel" data-export-format="react" role="radio" aria-checked="true"></button>
+              <button class="format-option" data-export-format="javascript" role="radio" aria-checked="false"></button>
+            </div>
+            <div class="export-summary" id="exportSummary"></div>
+            <button class="dev-btn primary export-action" id="downloadAvatarPackage">Export React package</button>
+            <div class="export-note" id="exportStatus" role="status">Select a state and expression, then download the package.</div>
+          </section>
           <section class="dev-section">
             <h3>Current runtime</h3>
             <dl class="dev-kv" id="devRuntime"></dl>
@@ -475,7 +509,7 @@
             <div class="dev-rule"><b>4</b><p>Apply shape projection and clipping after pose interpolation; plane eyes intentionally render above the surface.</p></div>
           </section>
           <section class="dev-section">
-            <h3>iOS-facing events</h3>
+            <h3>Developer API events</h3>
             <pre class="dev-code">setState(id, animated: true)
 setExpression(id, animated: true)
 setShape(id)
@@ -526,6 +560,7 @@ blink()</pre>
 } }
 </script>
 <script type="module" src="chess-model.js"></script>
+<script src="avatar-export.js"></script>
 <script>
 'use strict';
 /* =============================================================
@@ -1496,7 +1531,11 @@ function placeEye(m, lonDeg, latDeg, smoothSurface = false) {
   const fs = cfg.face.scale;
   const a = S.dw.x / 2 * fs, b = S.dh.x / 2 * fs;
   let c = S.dd.x / 2 * Math.max(fs, 0.9);
-  if (state.shape === 'plane') c = Math.min(c, 2);
+  if (state.shape === 'plane') {
+    // Orbit eyes travel around a gently rounded virtual carrier. The rendered
+    // plane stays thin, but its edge no longer produces a sudden tangent flip.
+    c = smoothSurface ? Math.max(10, Math.min(a, b) * 0.16) : Math.min(c, 2);
+  }
   const lon = lonDeg * D2R, lat = latDeg * D2R;
   const u = { x: Math.cos(lat) * Math.sin(lon), y: Math.sin(lat), z: Math.cos(lat) * Math.cos(lon) };
   const east = { x: Math.cos(lon), y: 0, z: -Math.sin(lon) };
@@ -1568,13 +1607,14 @@ function eyePathD(side, m) {
   const w = Math.max(3, ex.w.x * prop * esc);
   let h = Math.max(3, ex.h.x * prop * esc);
   h = Math.max(3.5, h * (1 - 0.93 * clamp(S.blink.x, 0, 1)));
-  const pts = eyePoints(w, h, ex.t.x * D2R, clamp(ex.lid.x, 0, 1), ex.bend.x);
+  const orbiting = state.expr === 26;
+  const pts = eyePoints(w, h, ex.t.x * D2R, clamp(ex.lid.x, 0, 1), ex.bend.x, orbiting ? 128 : 44);
   const { c1, c2 } = pl;
   const out = pts.map(p => ({
     x: pl.px + (c1.x * p.x + c2.x * p.y) * PX,
     y: pl.py + (c1.y * p.x + c2.y * p.y) * PX
   }));
-  return { d: polyPath(out), alpha: pl.alpha };
+  return { d: orbiting ? catmullClosed(out) : polyPath(out), alpha: pl.alpha };
 }
 
 /* wireframe (sphere / mickey main body) */
@@ -1792,7 +1832,10 @@ function setDevInspectorOpen(open) {
   devInspector.classList.toggle('open', open);
   devInspector.setAttribute('aria-hidden', String(!open));
   devInspector.inert = !open;
-  if (open) updateDevInspector(true);
+  if (open) {
+    syncDeveloperExportSelection();
+    updateDevInspector(true);
+  }
   else if (devInspector.contains(document.activeElement)) document.activeElement.blur();
 }
 
@@ -1950,30 +1993,6 @@ function dimensionFieldHTML(key, axis) {
   </div>`;
 }
 
-function updateDimensionMiniature() {
-  const g = document.getElementById('dimGeometry');
-  if (!g) return;
-  const scale = v => clamp((v - 1) / 419, 0, 1);
-  const w = 48 + scale(state.dims.w) * 35;
-  const h = 48 + scale(state.dims.h) * 35;
-  const d = 5 + scale(state.dims.d) * 22;
-  const x = 65 - w / 2, y = 69 - h / 2;
-  const front = `${x},${y} ${x+w},${y} ${x+w},${y+h} ${x},${y+h}`;
-  const back = `${x+d},${y-d} ${x+w+d},${y-d} ${x+w+d},${y+h-d} ${x+d},${y+h-d}`;
-  g.innerHTML = `
-    <polygon class="back" points="${back}"/>
-    <line class="join" x1="${x}" y1="${y}" x2="${x+d}" y2="${y-d}"/>
-    <line class="join" x1="${x+w}" y1="${y}" x2="${x+w+d}" y2="${y-d}"/>
-    <line class="join" x1="${x+w}" y1="${y+h}" x2="${x+w+d}" y2="${y+h-d}"/>
-    <polygon class="body" points="${front}"/>
-    <line class="measure" x1="${x}" y1="${y+h+10}" x2="${x+w}" y2="${y+h+10}"/>
-    <text x="${x+w/2}" y="${y+h+22}" text-anchor="middle">W</text>
-    <line class="measure" x1="${x-10}" y1="${y}" x2="${x-10}" y2="${y+h}"/>
-    <text x="${x-15}" y="${y+h/2+3}" text-anchor="middle">H</text>
-    <line class="measure" x1="${x+w+5}" y1="${y-3}" x2="${x+w+d+5}" y2="${y-d-3}"/>
-    <text x="${x+w+d+12}" y="${y-d-5}">D</text>`;
-}
-
 function shapeButtonsHTML() {
   return Object.keys(SHAPES).map(k => `
     <button data-shape="${k}" class="${k === state.shape ? 'sel' : ''}">
@@ -1987,7 +2006,6 @@ document.getElementById('pane-manual').innerHTML = `
     <div class="sub">The surface changes — expressions and states stay compatible.</div>
     <div class="shapegrid">${shapeButtonsHTML()}</div>
     <div class="dimension-editor">
-      <svg class="dim-mini" viewBox="0 0 138 138" aria-label="Width, height and depth preview"><g id="dimGeometry"></g></svg>
       <div class="dim-fields">
         ${dimensionFieldHTML('dimW', 'W')}
         ${dimensionFieldHTML('dimH', 'H')}
@@ -2027,7 +2045,6 @@ document.getElementById('pane-manual').innerHTML = `
     </div>
   </div>
 `;
-updateDimensionMiniature();
 
 /* expression thumbnails */
 function thumbSVG(i) {
@@ -2154,6 +2171,116 @@ document.getElementById('pane-surface').innerHTML = `
   </div>`).join('')}
 `;
 
+const exportIcon = '<svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M9 4.5h7l5 5V23.5H9z" stroke="currentColor" stroke-width="1.5"/><path d="M16 4.5v5h5M5 13.5l-3 3 3 3M2 16.5h10" stroke="currentColor" stroke-width="1.5"/></svg>';
+let exportFormat = 'react';
+const exportStateSelect = document.getElementById('exportStateSelect');
+const exportExpressionSelect = document.getElementById('exportExpressionSelect');
+
+exportStateSelect.innerHTML = Object.entries(STATES).map(([id, preset]) =>
+  `<option value="${id}">${preset.label}</option>`
+).join('');
+exportExpressionSelect.innerHTML = Object.keys(EXPRESSIONS).map(Number).sort((a, b) => a - b).map(sourceID => {
+  const displayID = displayExpressionID(sourceID);
+  const label = sourceID === 26 ? 'Orbit' : displayID === null ? `Internal ${sourceID}` : `Expression ${displayID}`;
+  return `<option value="${sourceID}">${label}</option>`;
+}).join('');
+
+const exportFormatCopy = {
+  react: `${exportIcon}<strong>React / TypeScript</strong><span>Component + Vite preview (.zip)</span>`,
+  javascript: `${exportIcon}<strong>JavaScript module</strong><span>HTML + dependency-free module (.zip)</span>`,
+};
+document.querySelectorAll('[data-export-format]').forEach(button => {
+  button.innerHTML = exportFormatCopy[button.dataset.exportFormat];
+});
+
+function refreshExportSummary() {
+  const box = document.getElementById('exportSummary');
+  if (!box) return;
+  const stateID = exportStateSelect.value;
+  const expressionID = +exportExpressionSelect.value;
+  const expressionLabel = expressionID === 26
+    ? 'Orbit'
+    : displayExpressionID(expressionID) === null ? `Internal ${expressionID}` : displayExpressionID(expressionID);
+  box.innerHTML = `
+    <div>Shape</div><div>${SHAPES[state.shape].label}</div>
+    <div>State</div><div>${STATES[stateID].label}</div>
+    <div>Expression</div><div>${expressionLabel}</div>
+    <div>Surface</div><div>${state.surface === 'orb' ? 'Animated gradient' : 'Flat ink'}</div>`;
+}
+
+function getExportSnapshot() {
+  const stateID = exportStateSelect.value;
+  const expressionID = +exportExpressionSelect.value;
+  const expression = EXPRESSIONS[expressionID];
+  const makeEye = (eye, side) => {
+    const left = side === 'L';
+    return {
+      width: eye.w,
+      height: eye.h,
+      tilt: eye.t,
+      offsetX: eye.dx,
+      offsetY: eye.dy,
+      lid: eye.lid,
+      bend: eye.bend,
+      proportion: left ? state.eyes.pL : state.eyes.pR,
+      positionX: left ? state.eyes.xL : state.eyes.xR,
+      positionY: left ? state.eyes.yL : state.eyes.yR,
+    };
+  };
+  const authoredMotion = STATES[stateID];
+  return {
+    name: 'KOZI Avatar',
+    shape: state.shape,
+    selection: { state: stateID, expressionSourceID: expressionID },
+    expression: expressionID === 26 ? 'orbit' : 'pose',
+    dimensions: { width: state.dims.w, height: state.dims.h, depth: state.dims.d },
+    rotation: { ...state.userRot },
+    eyeDistance: state.eyeDistance,
+    eyeColor: '#0e0e14',
+    eyes: { left: makeEye(expression[0], 'L'), right: makeEye(expression[1], 'R') },
+    motion: { enabled: state.motion, amplitude: [...authoredMotion.amp], frequency: authoredMotion.freq },
+    orbit: { speed: state.orbitSpeed, latitudeAmplitude: 18, latitudeSpeed: 1.9 },
+    surface: { mode: state.surface, colors: [...authoredMotion.palette] },
+    chessGeometry: CHESS_GEOMETRY[state.shape] || null,
+  };
+}
+
+function syncDeveloperExportSelection() {
+  exportStateSelect.value = state.stateName;
+  exportExpressionSelect.value = String(state.expr);
+  refreshExportSummary();
+}
+
+exportStateSelect.addEventListener('change', () => {
+  exportExpressionSelect.value = String(STATES[exportStateSelect.value].expr);
+  refreshExportSummary();
+});
+exportExpressionSelect.addEventListener('change', refreshExportSummary);
+
+document.querySelectorAll('[data-export-format]').forEach(button => {
+  button.addEventListener('click', () => {
+    exportFormat = button.dataset.exportFormat;
+    document.querySelectorAll('[data-export-format]').forEach(option => {
+      const selected = option === button;
+      option.classList.toggle('sel', selected);
+      option.setAttribute('aria-checked', String(selected));
+    });
+    document.getElementById('downloadAvatarPackage').textContent = exportFormat === 'react'
+      ? 'Export React package' : 'Export JavaScript module';
+  });
+});
+
+document.getElementById('downloadAvatarPackage').addEventListener('click', () => {
+  const status = document.getElementById('exportStatus');
+  if (!window.AvatarExporter) {
+    status.textContent = 'Exporter could not be loaded. Refresh and try again.';
+    return;
+  }
+  const filename = window.AvatarExporter.download(exportFormat, getExportSnapshot());
+  status.textContent = `${filename} is ready.`;
+});
+syncDeveloperExportSelection();
+
 function renderOrbColors() {
   const box = document.getElementById('orbColors');
   box.innerHTML = '';
@@ -2213,7 +2340,6 @@ function setField(key, v, fromLink) {
   const f = FIELDS[key];
   v = clamp(v, f.min, f.max);
   f.set(v);
-  if (key === 'dimW' || key === 'dimH' || key === 'dimD') updateDimensionMiniature();
   const inp = inputEl(key);
   if (inp && document.activeElement !== inp) inp.value = v.toFixed(f.dec);
   if (!fromLink && f.link && state.links[f.link]) {
@@ -2370,7 +2496,7 @@ function syncRotInputs() {
 }
 
 /* =============================================================
-   IOS HANDOFF INSPECTOR
+   DEVELOPER INSPECTOR
    Live presentation values + authored behavior contract.
    ============================================================= */
 let lastDevUpdate = 0;
@@ -2556,7 +2682,7 @@ function getImplementationSpec() {
       sphere: { projection: 'ellipsoidSurface', clipEyesToHead: true },
       mickey: { projection: 'ellipsoidSurfaceWithCompoundSilhouette', clipEyesToHead: true },
       cube: { projection: 'normalizedFrontFaceForPose; smoothEllipsoidPathForOrbit', clipEyesToHead: true, depthAffectsEyes: false },
-      plane: { projection: 'normalizedFrontFaceForPose; thin3DPathForOrbit', clipEyesToHead: false, maximumGeometryHalfDepthUnits: 2, eyeDistanceRangeUnits: [0, 50] },
+      plane: { projection: 'normalizedFrontFaceForPose; filletedVirtualCarrierForOrbit', clipEyesToHead: false, maximumGeometryHalfDepthUnits: 2, orbitCarrierHalfDepth: 'max(10, min(width,height) * 0.16)', eyeDistanceRangeUnits: [0, 50] },
       pawn: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
       rook: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
       knight: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },

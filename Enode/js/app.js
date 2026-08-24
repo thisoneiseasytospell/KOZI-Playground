@@ -1,4 +1,4 @@
-/* Enode Oker — KOZI Playground */
+/* Enode Generator — KOZI Playground */
 'use strict';
 
 // ─── State ───────────────────────────────────────────────────────
@@ -1924,6 +1924,12 @@ document.addEventListener('mouseout', e => {
 });
 
 // ─── Light/dark theme toggle (press "i") ───────────────────────
+const creditsEl = document.getElementById('credits');
+
+document.addEventListener('pointerdown', event => {
+  if (creditsEl.open && !creditsEl.contains(event.target)) creditsEl.open = false;
+});
+
 function applyTheme(light) {
   document.body.classList.toggle('light', light);
   try { localStorage.setItem('enode-theme', light ? 'light' : 'dark'); } catch (e) {}
@@ -1933,6 +1939,10 @@ applyTheme(localStorage.getItem('enode-theme') === 'light');
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closePatternMenu();
+    if (creditsEl.open) {
+      creditsEl.open = false;
+      creditsEl.querySelector('summary')?.focus();
+    }
     return;
   }
   if (e.key !== 'i' && e.key !== 'I') return;

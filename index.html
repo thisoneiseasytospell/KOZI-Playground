@@ -74,6 +74,8 @@
     .video-preview {
       display: none;
       position: fixed;
+      width: auto;
+      height: auto;
       max-width: 400px;
       max-height: 300px;
       z-index: 1000;
@@ -83,6 +85,26 @@
     .project-card:hover .video-preview {
       display: block;
     }
+
+    /* Touch and narrow screens never fire a hover, so the preview that
+       normally trails the cursor sits inline under its title instead. */
+    @media (hover: none), (max-width: 700px) {
+      .project-card {
+        display: block;
+        width: 100%;
+        padding: 10px 0 18px;
+      }
+      .video-preview,
+      .project-card:hover .video-preview {
+        display: block;
+        position: static;
+        width: 100%;
+        max-width: 340px;
+        max-height: none;
+        height: auto;
+        margin-top: 10px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -91,66 +113,69 @@
     <div class="project-list">
       <a href="3D%20Avatar%20Blob/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>2D/3D Avatar</h2>
-        <video class="video-preview" autoplay loop muted playsinline preload="metadata">
+        <video class="video-preview" loop muted playsinline preload="none" width="1200" height="1080">
           <source src="demos/orb-avatar-demo.mp4" type="video/mp4">
         </video>
       </a>
       <a href="ASCII/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>ASCII Camera Glitch</h2>
-        <video class="video-preview" autoplay loop muted playsinline>
+        <video class="video-preview" loop muted playsinline preload="none" width="640" height="360">
           <source src="demos/asciidemo.mp4" type="video/mp4">
         </video>
       </a>
       <a href="GLGS/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>GLGS</h2>
-        <video class="video-preview" autoplay loop muted playsinline>
+        <video class="video-preview" loop muted playsinline preload="none" width="3116" height="1854">
           <source src="demos/gsgs%20demo.mp4" type="video/mp4">
         </video>
       </a>
       <a href="Grafitti/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>Grafitti</h2>
-        <video class="video-preview" autoplay loop muted playsinline>
+        <video class="video-preview" loop muted playsinline preload="none" width="640" height="360">
           <source src="demos/grafittidemo.mp4" type="video/mp4">
         </video>
       </a>
       <a href="Thunderbolt/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>Thunderbolt</h2>
-        <video class="video-preview" autoplay loop muted playsinline>
+        <video class="video-preview" loop muted playsinline preload="none" width="640" height="360">
           <source src="demos/thunderdemo.mp4" type="video/mp4">
         </video>
       </a>
       <a href="010%20Totems/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>010 Totems</h2>
-        <video class="video-preview" autoplay loop muted playsinline>
+        <video class="video-preview" loop muted playsinline preload="none" width="1882" height="1080">
           <source src="demos/010demo.mp4" type="video/mp4">
         </video>
       </a>
       <a href="T%23/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>T#</h2>
-        <video class="video-preview" autoplay loop muted playsinline>
+        <video class="video-preview" loop muted playsinline preload="none" width="1882" height="1080">
           <source src="demos/T%23demo.mp4" type="video/mp4">
         </video>
       </a>
       <a href="KZI%20SPRING/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>SPRNG NYC</h2>
-        <video class="video-preview" autoplay loop muted playsinline>
+        <video class="video-preview" loop muted playsinline preload="none" width="1814" height="1080">
           <source src="demos/KZIspringdemo.mp4" type="video/mp4">
         </video>
       </a>
       <a href="Flag/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>Flag</h2>
-        <video class="video-preview" autoplay loop muted playsinline>
+        <video class="video-preview" loop muted playsinline preload="none" width="1920" height="1080">
           <source src="demos/flagdemo.mp4" type="video/mp4">
         </video>
       </a>
       <a href="WdKA%20Grad/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>WdKA Grad</h2>
-        <video class="video-preview" autoplay loop muted playsinline>
+        <video class="video-preview" loop muted playsinline preload="none" width="1920" height="1080">
           <source src="WdKA%20Grad/Wdka%20Grad%20Final%204.mp4" type="video/mp4">
         </video>
       </a>
       <a href="Enode/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>Enode</h2>
+        <video class="video-preview" loop muted playsinline preload="none" width="720" height="720">
+          <source src="demos/enodedemo.mp4" type="video/mp4">
+        </video>
       </a>
       <a href="Carte%20Blenche/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>Carte Blenche</h2>
@@ -161,14 +186,106 @@
     </div>
   </div>
   <script>
-    document.querySelectorAll('.project-card').forEach(card => {
-      const video = card.querySelector('.video-preview');
-      card.addEventListener('mousemove', (e) => {
+    (function () {
+      var inlineMedia = window.matchMedia('(hover: none), (max-width: 700px)');
+      var previews = [];
+      var observer = null;
+
+      function start(video) {
+        var attempt = video.play();
+        if (attempt && typeof attempt.catch === 'function') {
+          attempt.catch(function () {});
+        }
+      }
+
+      document.querySelectorAll('.project-card').forEach(function (card) {
+        var video = card.querySelector('.video-preview');
         if (!video) return;
-        video.style.left = (e.clientX + 20) + 'px';
-        video.style.top = (e.clientY + 20) + 'px';
+        previews.push(video);
+
+        card.addEventListener('mousemove', function (e) {
+          if (inlineMedia.matches) return;
+          video.style.left = (e.clientX + 20) + 'px';
+          video.style.top = (e.clientY + 20) + 'px';
+        });
+
+        // preload="none" keeps the list cheap, so hovering is what actually
+        // fetches the clip.
+        card.addEventListener('pointerenter', function () {
+          if (inlineMedia.matches) return;
+          start(video);
+        });
+
+        card.addEventListener('pointerleave', function () {
+          if (inlineMedia.matches) return;
+          video.pause();
+        });
       });
-    });
+
+      // Inline previews would pull every clip at once, so each one only
+      // loads as it scrolls into view.
+      function enableInline() {
+        if (observer) return;
+
+        if (!('IntersectionObserver' in window)) {
+          previews.forEach(start);
+          return;
+        }
+
+        observer = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) start(entry.target);
+            else entry.target.pause();
+          });
+        }, { rootMargin: '15% 0px', threshold: 0.2 });
+
+        previews.forEach(function (video) { observer.observe(video); });
+      }
+
+      function disableInline() {
+        if (!observer) return;
+        observer.disconnect();
+        observer = null;
+        previews.forEach(function (video) { video.pause(); });
+      }
+
+      function sync() {
+        if (inlineMedia.matches) enableInline();
+        else disableInline();
+      }
+
+      function inView(video) {
+        var rect = video.getBoundingClientRect();
+        return rect.bottom > 0 && rect.top < window.innerHeight;
+      }
+
+      // Low Power Mode rejects autoplay outright; the first interaction
+      // starts whatever should already be running.
+      function retryBlockedPlayback() {
+        if (!inlineMedia.matches) return;
+        previews.forEach(function (video) {
+          if (video.paused && inView(video)) start(video);
+        });
+      }
+
+      ['pointerdown', 'touchstart', 'keydown'].forEach(function (type) {
+        window.addEventListener(type, retryBlockedPlayback, { capture: true, passive: true });
+      });
+
+      // Returning to a backgrounded tab leaves the previews paused with no
+      // intersection change left to restart them.
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') retryBlockedPlayback();
+      });
+
+      sync();
+
+      if (typeof inlineMedia.addEventListener === 'function') {
+        inlineMedia.addEventListener('change', sync);
+      } else if (typeof inlineMedia.addListener === 'function') {
+        inlineMedia.addListener(sync);
+      }
+    })();
   </script>
 </body>
 </html>

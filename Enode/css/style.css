@@ -173,6 +173,7 @@ canvas {
 }
 
 .sidebar-header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -187,15 +188,94 @@ canvas {
   text-transform: uppercase;
 }
 
-.back-link {
-  color: var(--fg-dim);
-  text-decoration: none;
-  font-size: 16px;
-  padding: 2px 8px;
-  border-radius: var(--r);
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  /* Pull the bordered ? box past the 16px text grid so it sits closer to the edge. */
+  margin-right: -8px;
 }
 
-.back-link:hover { color: var(--fg); background: var(--bg-3); }
+#credits {
+  position: relative;
+  z-index: 4;
+  flex: none;
+  color: var(--fg);
+}
+
+#credits summary {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--fg);
+  background: color-mix(in srgb, var(--bg-2) 78%, transparent);
+  color: var(--fg);
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+#credits summary::-webkit-details-marker { display: none; }
+
+#credits summary:hover,
+#credits summary:focus-visible,
+#credits[open] summary {
+  background: var(--fg);
+  color: var(--bg-2);
+  outline: none;
+}
+
+.credits-card {
+  position: absolute;
+  z-index: 8;
+  top: calc(100% + 7px);
+  right: 0;
+  width: 248px;
+  padding: 14px;
+  border: 1px solid var(--fg);
+  background: color-mix(in srgb, var(--bg-2) 94%, transparent);
+  box-shadow: 6px 6px 0 color-mix(in srgb, var(--fg) 12%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.credits-label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--fg-mute);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.credits-card a {
+  display: inline-block;
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.credits-card a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.credits-for {
+  margin-top: 13px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+  color: var(--fg-dim);
+  font-size: 10px;
+  line-height: 1.45;
+}
 
 .tabs {
   display: flex;

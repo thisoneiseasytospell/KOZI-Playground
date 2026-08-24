@@ -230,6 +230,17 @@
     display:flex; gap:.16em; font-size:30px; line-height:1;
     font-weight:700; letter-spacing:-.04em;
   }
+  .phead-help {
+    flex:none; width:26px; height:26px; padding:0; border:1px solid var(--ink);
+    background:var(--paper); color:var(--ink); font:inherit; font-size:13px;
+    font-weight:700; line-height:1; cursor:pointer;
+  }
+  .phead-help:hover,
+  .phead-help[aria-expanded="true"] { background:var(--ink); color:var(--paper); }
+  .credits { margin:0 0 20px; padding:12px; border:1px solid var(--ink); background:var(--quiet); }
+  .credits-line { font-size:11px; font-weight:700; letter-spacing:.04em; }
+  .credits-note { margin:6px 0 0; color:var(--muted); font-size:11px; line-height:1.45; }
+  .credits-note a { color:var(--ink); }
   .tabs {
     background:transparent; border:1px solid var(--ink); padding:0; margin-bottom:18px;
     box-shadow:none;
@@ -724,6 +735,11 @@ blink()</pre>
   <div id="panel">
     <div class="phead">
       <h1><span>Maggie</span><span>Studio</span></h1>
+      <button type="button" id="creditsToggle" class="phead-help" aria-controls="credits" aria-expanded="false" title="Credits">?</button>
+    </div>
+    <div class="credits" id="credits" hidden>
+      <div class="credits-line">KOZI x Blunt for Take Take Take</div>
+      <p class="credits-note">Inspired by <a href="https://orb-pg.vercel.app/" target="_blank" rel="noopener noreferrer">orb-pg.vercel.app</a> and <a href="https://avatars.bible-strong.app/" target="_blank" rel="noopener noreferrer">avatars.bible-strong.app</a>.</p>
     </div>
     <div class="tabs">
       <button data-tab="manual" class="active">Manual</button>
@@ -1253,7 +1269,7 @@ const SHAPES = {
   queen:  { label: 'Queen',  face: { lat: 7,  scale: 0.9,  esc: 0.84 }, orbR: 1.55, chess: true, defaultDepth: 90 },
   king:   { label: 'King',   face: { lat: 8,  scale: 0.9,  esc: 0.86 }, orbR: 1.55, chess: true, defaultDepth: 90 },
 };
-const DEFAULT_SHAPE = 'plane';
+const DEFAULT_SHAPE = 'sphere';
 const SHAPE_ICONS = {
   sphere: '<circle cx="14" cy="14" r="10" class="ic" stroke-width="0"/>',
   mickey: '<circle cx="7" cy="8" r="5" class="ic" stroke-width="0"/><circle cx="21" cy="8" r="5" class="ic" stroke-width="0"/><circle cx="14" cy="16" r="9" class="ic" stroke-width="0"/>',
@@ -4643,6 +4659,13 @@ document.querySelectorAll('[data-state-hex]').forEach(input => {
   });
 });
 document.getElementById('btnBlink').addEventListener('click', blinkNow);
+const creditsToggle = document.getElementById('creditsToggle');
+const creditsPanel = document.getElementById('credits');
+creditsToggle.addEventListener('click', () => {
+  const open = creditsToggle.getAttribute('aria-expanded') !== 'true';
+  creditsToggle.setAttribute('aria-expanded', String(open));
+  creditsPanel.hidden = !open;
+});
 function resetAvatar() {
   state.shape = DEFAULT_SHAPE;
   beginStateTransition('idle');
@@ -4672,7 +4695,7 @@ function resetAvatar() {
   document.getElementById('depthField').style.display = DEFAULT_SHAPE === 'plane' ? 'none' : '';
   eyeDistanceSlider.value = 7;
   document.getElementById('eyeDistanceVal').textContent = '7';
-  document.getElementById('planeMeshCard').style.display = '';
+  document.getElementById('planeMeshCard').style.display = DEFAULT_SHAPE === 'plane' ? '' : 'none';
   setPlaneMeshPreview(false, true);
   updatePlaneMeshLinkButton();
   updatePlaneMeshEditor();
@@ -5132,7 +5155,7 @@ const PROFILE_SPRINGS = {
 
 function readAvatarProfile() {
   // The root editor is the clean R&D entry point: refreshing it should always
-  // return to the authored Plane + Idle baseline instead of reopening a draft.
+  // return to the authored Sphere + Idle baseline instead of reopening a draft.
   if (AVATAR_PROFILE === 'default') return null;
   try {
     const value = JSON.parse(localStorage.getItem(AVATAR_PROFILE_KEY) || 'null');

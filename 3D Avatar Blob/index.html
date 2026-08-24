@@ -3,7 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>2D/3D Avatar — KOZI Playground</title>
+<title>Maggie Studio</title>
+<script>
+  const avatarQuery = new URLSearchParams(location.search);
+  window.AVATAR_ICON_MODE = avatarQuery.get('avatar-icon') === '1';
+  window.AVATAR_PROFILE = avatarQuery.get('profile') || 'default';
+  window.AVATAR_ICON_VIEWPORT = Number(avatarQuery.get('icon-viewport')) || 0;
+  window.AVATAR_ICON_FIT = avatarQuery.get('icon-fit') === '1';
+  window.AVATAR_MIRROR_SOURCE = avatarQuery.get('mirror-source') === '1';
+  window.AVATAR_MIRROR_MODE = avatarQuery.get('avatar-mirror') === '1';
+  if (window.AVATAR_ICON_MODE) document.documentElement.classList.add('avatar-icon-mode');
+</script>
 <style>
   @font-face {
     font-family: "GT Planar";
@@ -27,6 +37,7 @@
     background: radial-gradient(120% 90% at 50% 42%, #12121b 0%, #0b0b11 62%, #08080d 100%);
   }
   #stage { position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+  #iconFallbackStage { position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none; }
   #orbCanvas {
     position:absolute; inset:0; width:100%; height:100%;
     display:none; opacity:0; pointer-events:none;
@@ -34,11 +45,6 @@
   #chessCanvas {
     position:absolute; inset:0; width:100%; height:100%;
     display:none; pointer-events:none;
-  }
-  #brand {
-    position:absolute; top:20px; left:24px; z-index:2;
-    font-size:13px; font-weight:700; color:#e8e8ee; letter-spacing:.01em;
-    display:flex; align-items:center; gap:8px; text-decoration:none;
   }
   #caption {
     position:absolute; bottom:18px; left:0; right:0; text-align:center; z-index:2; pointer-events:none;
@@ -52,7 +58,7 @@
   #panel::-webkit-scrollbar-thumb { background:#d4d5dd; border-radius:6px; border:3px solid #edeef3; }
 
   .eyebrow { font-size:11px; font-weight:700; letter-spacing:.16em; color:#5460f2; margin-bottom:6px; }
-  .phead { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:16px; }
+  .phead { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
   .phead h1 { font-size:26px; font-weight:800; letter-spacing:-.02em; }
   .tabs {
     display:flex; background:#fff; border:1px solid #e2e3ea; border-radius:14px;
@@ -136,7 +142,8 @@
   .exprgrid { display:grid; grid-template-columns:repeat(5, 1fr); gap:9px; }
   .exprcard {
     position:relative; border:1.5px solid #e8e8ee; background:#f6f6f9; border-radius:13px;
-    cursor:pointer; padding:5px; aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; padding:0; aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
   }
   .exprcard:hover { border-color:#cfd0da; }
   .exprcard.sel { border-color:#5460f2; box-shadow:0 0 0 3px #dfe3fd; background:#fff; }
@@ -186,12 +193,6 @@
     letter-spacing:-.01em;
   }
   #stagewrap { background:var(--stage); }
-  #brand {
-    top:24px; left:26px; color:var(--ink); font-size:12px; font-weight:700;
-    letter-spacing:.08em; text-transform:uppercase;
-  }
-  #brand:hover { text-decoration:underline; text-underline-offset:3px; }
-  #brand .back { font-size:15px; font-weight:400; transform:translateY(-1px); }
   #caption { bottom:20px; color:#65655f; font-size:11px; letter-spacing:.01em; }
   #resetHold {
     position:fixed; z-index:100; inset:0; display:flex; align-items:center; justify-content:center;
@@ -212,8 +213,8 @@
   .reset-hold-track { height:3px; background:var(--line); overflow:hidden; }
   #resetHoldBar { width:0; height:100%; background:var(--ink); }
   #panel {
-    width:460px; background:var(--paper); padding:26px 24px 44px;
-    border-left:1px solid var(--ink);
+    order:-1; width:460px; background:var(--paper); padding:26px 24px 44px;
+    border-right:1px solid var(--ink); border-left:0;
   }
   #panel * { border-radius:0 !important; }
   #panel::-webkit-scrollbar { width:8px; }
@@ -224,12 +225,7 @@
     color:var(--muted); font-size:10px; font-weight:700; letter-spacing:.15em;
     text-transform:uppercase; margin-bottom:8px;
   }
-  .eyebrow.phead-credit {
-    display:block; max-width:calc(100% - 2px); margin-left:2px; line-height:1.3;
-    text-transform:none; letter-spacing:.04em;
-    white-space:normal; overflow-wrap:anywhere;
-  }
-  .phead { margin-bottom:20px; }
+  .phead { align-items:center; margin-bottom:20px; }
   .phead h1 {
     display:flex; gap:.16em; font-size:30px; line-height:1;
     font-weight:700; letter-spacing:-.04em;
@@ -286,8 +282,127 @@
   .eye-distance-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; }
   .eye-distance-head label { font-size:12px; color:var(--ink); }
   .eye-distance-head span { font-size:11px; color:var(--muted); font-weight:700; }
+  .plane-mesh-editor {
+    display:block; width:100%; aspect-ratio:1.34; margin-top:12px;
+    border:1px solid var(--line); background:var(--quiet); touch-action:none;
+  }
+  .plane-mesh-boundary { fill:none; stroke:#c4c4bc; stroke-width:1; stroke-dasharray:4 4; }
+  .plane-mesh-shape { fill:rgba(17,17,15,.06); stroke:var(--ink); stroke-width:1.5; }
+  .plane-mesh-spoke { stroke:#b4b4ad; stroke-width:1; stroke-dasharray:2 3; }
+  .plane-mesh-handle {
+    fill:#fff; stroke:var(--ink); stroke-width:2; cursor:grab; outline:none;
+  }
+  .plane-mesh-handle.corner { fill:var(--quiet); stroke:#8a8a84; stroke-width:1.5; }
+  .plane-mesh-handle:hover, .plane-mesh-handle:focus { fill:var(--ink); stroke:#fff; }
+  .plane-mesh-handle:active { cursor:grabbing; }
+  .plane-mesh-head-tools { display:flex; align-items:center; gap:8px; }
+  .plane-mesh-head-tools .linkbtn { width:26px; height:26px; }
+  .plane-mesh-actions { display:flex; align-items:center; gap:7px; margin-top:10px; }
+  .plane-mesh-actions .btn { flex:1; padding:8px 6px; font-size:10.5px; }
+  #planeMeshPreviewButton { display:flex; align-items:center; justify-content:center; gap:6px; }
+  #planeMeshPreviewButton svg { width:14px; height:14px; flex:none; }
+  .plane-mesh-key { margin-left:auto; color:var(--muted); font-size:9.5px; white-space:nowrap; }
+  .plane-mesh-key kbd {
+    display:inline-flex; min-width:44px; height:22px; align-items:center; justify-content:center;
+    margin-left:4px; border:1px solid var(--line); background:#fff; color:var(--ink);
+    font:700 8px "GT Planar", Arial, sans-serif; letter-spacing:.08em;
+  }
   .linkbtn { border-color:var(--line); background:transparent; color:var(--muted); }
   .linkbtn.on { background:var(--ink); border-color:var(--ink); color:#fff; }
+  .eye-shape-stage {
+    display:block; width:100%; aspect-ratio:578 / 348; margin-top:12px; overflow:hidden;
+    border:1px solid var(--line); touch-action:none; cursor:default;
+    background:
+      radial-gradient(circle at 67% 18%, rgba(218,238,255,.92), transparent 32%),
+      radial-gradient(circle at 31% 73%, rgba(158,196,255,.68), transparent 44%),
+      linear-gradient(145deg, #8079ed 0%, #a9c7fb 50%, #6748d2 100%);
+  }
+  .eye-shape-grid { fill:none; stroke:rgba(255,255,255,.2); stroke-width:1; stroke-dasharray:4 6; }
+  .eye-shape-marquee { fill:rgba(84,96,242,.18); stroke:#8f9bff; stroke-width:1; stroke-dasharray:3 3; pointer-events:none; }
+  .eye-shape-handle.picked { fill:#5460f2; stroke:#fff; }
+  .eye-shape-path { fill:#0e0e14; stroke:none; shape-rendering:geometricPrecision; }
+  .eye-shape-control-line {
+    fill:none; stroke:rgba(255,255,255,.58); stroke-width:1.25; stroke-dasharray:4 5;
+    vector-effect:non-scaling-stroke; pointer-events:none;
+  }
+  .eye-shape-handle {
+    fill:#fff; stroke:#0e0e14; stroke-width:2.5; cursor:grab; outline:none;
+    vector-effect:non-scaling-stroke;
+  }
+  .eye-shape-handle:hover, .eye-shape-handle:focus { fill:#0e0e14; stroke:#fff; }
+  .eye-shape-handle:active { cursor:grabbing; }
+  .eye-shape-tangent-line {
+    fill:none; stroke:rgba(255,255,255,.9); stroke-width:1.5;
+    vector-effect:non-scaling-stroke; pointer-events:none;
+  }
+  .eye-shape-tangent {
+    fill:#5460f2; stroke:#fff; stroke-width:2; cursor:grab; outline:none;
+    vector-effect:non-scaling-stroke;
+  }
+  .eye-shape-tangent:hover, .eye-shape-tangent:focus { fill:#fff; stroke:#5460f2; }
+  .eye-shape-tangent:active { cursor:grabbing; }
+  .eye-shape-stage[data-handle-mode="simple"] .eye-shape-handle.detail { display:none; }
+  .eye-shape-toolbar { display:flex; align-items:center; gap:8px; }
+  .eye-shape-toolbar .linkbtn { width:26px; height:26px; }
+  .eye-shape-actions { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin-top:10px; }
+  .eye-shape-actions .btn { flex:none; }
+  .eye-shape-mode { display:flex; border:1px solid var(--line); }
+  .eye-shape-mode button {
+    height:30px; padding:0 9px; border:0; border-right:1px solid var(--line);
+    background:#fff; color:var(--muted); cursor:pointer; font:700 9px "GT Planar", Arial, sans-serif;
+    letter-spacing:.08em; text-transform:uppercase;
+  }
+  .eye-shape-mode button:last-child { border-right:0; }
+  .eye-shape-mode button.active { background:var(--ink); color:#fff; }
+  .eye-shape-status { width:100%; min-height:13px; color:var(--muted); font-size:9.5px; }
+  .eye-shape-status[data-tone="success"] { color:#28653b; }
+  .eye-shape-status[data-tone="error"] { color:#a12e2e; }
+  .eye-shape-status[data-tone="warn"] { color:#8a5a00; }
+  .eye-shape-import { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:7px; margin-top:9px; }
+  .eye-shape-import textarea {
+    min-width:0; height:58px; padding:8px; resize:vertical; border:1px solid var(--line);
+    background:#fff; color:var(--ink); outline:none;
+    font:9px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .eye-shape-import textarea:focus { border-color:var(--ink); }
+  .eye-shape-import .btn { align-self:stretch; }
+  .eye-measure-section { padding:13px 0; border-bottom:1px solid var(--quiet); }
+  .eye-measure-section:last-child { padding-bottom:0; border-bottom:0; }
+  .eye-measure-section .cardtop { align-items:center; margin-bottom:4px; }
+  .eye-measure-section h4 { font-size:11px; font-weight:700; }
+  .linked-eye-row {
+    display:grid; grid-template-columns:minmax(0, 1fr) 30px minmax(0, 1fr);
+    align-items:end; gap:8px; margin-top:9px;
+  }
+  .linked-eye-row .frow { display:grid; gap:6px; min-width:0; margin:0; }
+  .linked-eye-row .inpwrap { width:100%; }
+  .linked-eye-row .linkbtn { width:30px; height:30px; }
+  .eye-position-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
+  .xy-control { min-width:0; }
+  .xy-head {
+    display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px;
+    color:var(--muted); font-size:8.5px; letter-spacing:.1em; text-transform:uppercase;
+  }
+  .xy-readout { color:var(--ink); font-size:8px; letter-spacing:.02em; white-space:nowrap; }
+  .xy-pad {
+    position:relative; width:100%; aspect-ratio:1.28; overflow:hidden; touch-action:none;
+    border:1px solid var(--line); background:var(--surface); cursor:crosshair; outline:none;
+  }
+  .xy-pad:hover, .xy-pad:focus-visible { border-color:var(--ink); }
+  .xy-pad:focus-visible { box-shadow:inset 0 0 0 1px var(--ink); }
+  .xy-axes { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  .xy-axes path { fill:none; stroke:#c8c8c1; stroke-width:1; stroke-dasharray:2 3; }
+  .xy-axes .xy-arrow { stroke:#85857f; stroke-dasharray:none; }
+  .xy-origin { fill:var(--surface); stroke:#85857f; stroke-width:1; }
+  .xy-eye-handle {
+    position:absolute; left:50%; top:50%; width:27px; height:18px;
+    transform:translate(-50%, -50%); pointer-events:none;
+    border:1px solid var(--ink); background:var(--ink); transition:box-shadow .12s ease;
+  }
+  .xy-pad:focus-visible .xy-eye-handle { box-shadow:0 0 0 3px rgba(17,17,15,.14); }
+  .xy-eye-handle::after {
+    position:absolute; top:3px; left:3px; width:3px; height:3px; background:#fff; content:"";
+  }
 
   .orow label { color:#343430; font-size:12px; font-weight:400; }
   .orow input[type=range], .sliderrow input[type=range] {
@@ -349,6 +464,42 @@
     font:9.5px ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   .state-color input[type=text]:focus { background:#292925; border-color:#fff; }
+  .state-default-meta {
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    margin-top:10px; color:var(--muted); font-size:9.5px;
+  }
+  .state-default-meta strong { color:var(--ink); font-size:10px; font-weight:700; }
+  #stateDefaultStatus { min-height:14px; }
+  .staterow { display:block; padding:0; cursor:default; overflow:hidden; }
+  .state-summary {
+    display:grid; grid-template-columns:84px minmax(0, 1fr) 96px; align-items:center;
+    gap:12px; padding:12px; cursor:pointer;
+  }
+  .state-summary:focus-visible { outline:2px solid var(--ink); outline-offset:-3px; }
+  .state-edit-button {
+    min-height:34px; padding:6px 8px; border:1px solid var(--line); background:transparent;
+    color:var(--ink); font:700 8.5px/1.2 "GT Planar", Arial, sans-serif;
+    letter-spacing:.07em; text-transform:uppercase; cursor:pointer;
+  }
+  .state-edit-button:hover { border-color:var(--ink); background:var(--quiet); }
+  .staterow.sel .state-edit-button { border-color:#66665f; color:#fff; }
+  .staterow.sel .state-edit-button:hover { border-color:#fff; background:#292925; }
+  .state-editor-panel { display:none; padding:15px 12px 12px; border-top:1px solid var(--line); background:var(--paper); }
+  .staterow.editing .state-editor-panel { display:block; }
+  .state-editor-intro { display:flex; align-items:baseline; justify-content:space-between; gap:15px; }
+  .state-editor-intro strong { font-size:12px; }
+  .state-editor-intro span { color:var(--muted); font-size:9.5px; text-align:right; }
+  #pane-states .state-colors { display:none; margin-top:14px; padding-top:13px; border-color:var(--line); }
+  #pane-states .staterow.editing .state-colors { display:flex; }
+  #pane-states .state-color label { color:var(--muted); }
+  #pane-states .state-color input[type=text] { border-color:var(--line); background:#fff; color:var(--ink); }
+  #pane-states .state-color input[type=text]:focus { border-color:var(--ink); background:#fff; }
+  .state-manual-heading {
+    margin-top:16px; padding-top:13px; border-top:1px solid var(--line); color:var(--muted);
+    font-size:8.5px; font-weight:700; letter-spacing:.13em; text-transform:uppercase;
+  }
+  .state-editor-host #manualSetupContent { margin-top:9px; }
+  .state-editor-host #manualSetupContent > .card { margin-top:9px; background:#fff; }
 
   /* ---------- package export ---------- */
   .format-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:14px; }
@@ -443,28 +594,63 @@
   .dev-section-head .dev-btn { padding:5px 7px; font-size:9px; }
 
   @media (max-width: 940px) {
-    #app { flex-direction:column; }
-    #stagewrap { height:52vh; flex:none; }
-    #panel { width:100%; flex:1; }
+    .tabs { width:100%; min-width:0; }
+    .shapegrid { grid-template-columns:repeat(4, minmax(0, 1fr)); }
     #devInspector { position:fixed; inset:14px; }
     .dev-grid { grid-template-columns:1fr; }
     .dev-col + .dev-col { border-left:0; }
     .dev-intro { flex-direction:column; }
-    .eyebrow.phead-credit { font-size:9px; letter-spacing:.025em; }
+  }
+  @media (max-width: 720px) {
+    #app { width:100%; max-width:100vw; overflow:hidden; flex-direction:column; }
+    #stagewrap { order:0; height:52vh; flex:none; }
+    #panel {
+      order:0; width:100%; max-width:100vw; min-width:0; flex:1; overflow-x:hidden;
+      border-top:1px solid var(--ink); border-right:0;
+    }
+  }
+  @media (max-width: 520px) {
+    #panel { padding:22px 14px 40px; }
+    .tabs button { min-width:0; font-size:10.5px; }
+    .card { padding:14px; }
+    .fgrid2 { grid-template-columns:1fr; }
+    .format-grid, .dev-export-selects { grid-template-columns:1fr; }
+  }
+
+  html.avatar-icon-mode,
+  html.avatar-icon-mode body {
+    overflow:hidden;
+    background:transparent;
+  }
+  html.avatar-icon-mode #app {
+    display:block;
+    width:100%;
+    height:100%;
+  }
+  html.avatar-icon-mode #stagewrap {
+    width:100%;
+    height:100%;
+    min-height:0;
+    background:transparent;
+  }
+  html.avatar-icon-mode #panel,
+  html.avatar-icon-mode #caption,
+  html.avatar-icon-mode #resetHold,
+  html.avatar-icon-mode #devInspector {
+    display:none !important;
   }
 </style>
 </head>
 <body>
 <div id="app">
   <div id="stagewrap">
-    <a id="brand" href="../index.html" aria-label="Back to KOZI Playground overview"><span class="back">←</span>Playground overview</a>
     <canvas id="orbCanvas"></canvas>
     <canvas id="chessCanvas"></canvas>
     <svg id="stage"></svg>
-    <div id="caption"><b>E</b> Mouse follow <span id="mouseFollowStatus">ON</span> · Drag rotate · Click blink · <b>/</b> Developer · Hold <b>R</b> reset</div>
+    <div id="caption"><b>1-0</b> Expression · <b>`</b> Next ten · <b>P</b> Preview · <b>E</b> Mouse follow <span id="mouseFollowStatus">ON</span> · <b>/</b> Developer · Hold <b>R</b> 1s reset</div>
     <div id="resetHold" role="status" aria-live="polite" aria-hidden="true">
       <div class="reset-hold-dialog">
-        <div class="reset-hold-copy"><strong id="resetHoldTitle">Reset avatar?</strong><span id="resetHoldHint">Hold R to confirm</span></div>
+        <div class="reset-hold-copy"><strong id="resetHoldTitle">Reset avatar?</strong><span id="resetHoldHint">Hold R for 1 second</span></div>
         <div class="reset-hold-track"><div id="resetHoldBar"></div></div>
       </div>
     </div>
@@ -517,6 +703,8 @@ setMouseFollow(enabled)
 setMousePosition(x: -1...1, y: -1...1)
 setDimensions(width, height, depth)
 setEyeDistance(value)
+setPlaneMesh({ top, right, bottom, left })
+previewPlaneMesh(enabled)
 blink()</pre>
           </section>
         </div>
@@ -534,9 +722,8 @@ blink()</pre>
     </section>
   </div>
   <div id="panel">
-    <div class="eyebrow phead-credit">KOZI x Blunt for Take Take Take</div>
     <div class="phead">
-      <h1><span>2D/3D</span><span>Avatar</span></h1>
+      <h1><span>Maggie</span><span>Studio</span></h1>
     </div>
     <div class="tabs">
       <button data-tab="manual" class="active">Manual</button>
@@ -561,18 +748,38 @@ blink()</pre>
 </script>
 <script type="module" src="chess-model.js"></script>
 <script src="avatar-export.js"></script>
+<script src="gyro-tilt.js"></script>
 <script>
 'use strict';
 /* =============================================================
-   Avatar Studio — procedural 3D rendered as flat 2D SVG.
+   Maggie Studio — procedural 3D rendered as flat 2D SVG.
    Orthographic projection, spring-driven motion, no libraries.
    ============================================================= */
 
 const TAU = Math.PI * 2, D2R = Math.PI / 180;
+const AVATAR_ICON_MODE = !!window.AVATAR_ICON_MODE;
+const AVATAR_PROFILE = window.AVATAR_PROFILE || 'default';
+const AVATAR_ICON_VIEWPORT = window.AVATAR_ICON_VIEWPORT || 0;
+const AVATAR_ICON_FIT = !!window.AVATAR_ICON_FIT;
+const AVATAR_MIRROR_SOURCE = !!window.AVATAR_MIRROR_SOURCE;
+const AVATAR_MIRROR_MODE = !!window.AVATAR_MIRROR_MODE;
+let avatarMirrorPose = null;
+let appliedMirrorMaterialSignature = '';
+const AVATAR_PROFILE_KEY = `ttt-avatar-profile:${AVATAR_PROFILE}`;
+const AVATAR_STATE_DEFAULTS_KEY = 'ttt-avatar-state-defaults:v1';
+if (!AVATAR_ICON_MODE && AVATAR_PROFILE !== 'default') {
+  const profileLabel = AVATAR_PROFILE[0].toUpperCase() + AVATAR_PROFILE.slice(1);
+  document.title = `Maggie Studio · ${profileLabel}`;
+}
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const rnd = (a, b) => a + Math.random() * (b - a);
 const F1 = v => (Math.round(v * 10) / 10).toString();
 const MOUSE_EYE_LONGITUDE = 0.34, MOUSE_EYE_LATITUDE = 0.5;
+/* How far across a flat face a mark may sit, as a fraction of the eye plane's
+   half extent. 1.087 is the silhouette edge itself; the old 0.78/0.72 pinned
+   anything past two thirds of the way out, which folded the low mouths and
+   wide eyes of the reference faces into a heap. */
+const FACE_REACH = 1.06;
 
 /* ---------- 3D math ---------- */
 function mul3(A, B) {
@@ -670,7 +877,6 @@ function catmullClosed(pts) {
   }
   return d + 'Z';
 }
-
 /* ---------- springs ---------- */
 class Spring {
   constructor(v) { this.x = v; this.v = 0; this.t = v; }
@@ -685,7 +891,133 @@ class Spring {
 }
 
 /* ---------- eye outline generator (local u units, y down) ---------- */
-function eyePoints(w, h, tiltRad, lid, bend, N = 44) {
+const EYE_SHAPE_HANDLE_COUNT = 8;
+const EYE_TANGENT_LIMIT = 1.2;
+const EYE_OFFSET_LIMIT = 0.6;
+const EYE_TANGENT_KEYS = ['ox', 'oy', 'ix', 'iy'];
+const BASE_EYE_SHAPE = Array.from({ length:EYE_SHAPE_HANDLE_COUNT },
+  () => ({ x:0, y:0, ox:null, oy:null, ix:null, iy:null }));
+/* Two outline shapes live side by side. A hand-drawn one is eight offsets from
+   the neutral capsule's anchors. A traced one is a closed cubic path in
+   fractions of the shape's own box, with as many nodes as the artwork needs —
+   fourteen for a round-capped stroke, four for a circle. */
+const TRACED_OUTLINE_VERSION = 2;
+const MAX_FACE_NODES = 24;
+const isTracedOutline = outline => outline?.v === TRACED_OUTLINE_VERSION && Array.isArray(outline.nodes);
+const TRACED_KEYS = ['x', 'y', 'ox', 'oy', 'ix', 'iy'];
+const T = flat => ({
+  v:TRACED_OUTLINE_VERSION,
+  nodes:Array.from({ length:Math.floor(flat.length / 6) }, (_, i) =>
+    Object.fromEntries(TRACED_KEYS.map((key, k) => [key, flat[i * 6 + k]]))),
+});
+const cloneEyeShape = outline => isTracedOutline(outline)
+  ? { v:TRACED_OUTLINE_VERSION, nodes:outline.nodes.map(node => ({ ...node })) }
+  : outline.map(point => ({
+      x:point.x, y:point.y,
+      ox:point.ox ?? null, oy:point.oy ?? null, ix:point.ix ?? null, iy:point.iy ?? null,
+    }));
+const outlineNodeCount = outline =>
+  isTracedOutline(outline) ? outline.nodes.length : EYE_SHAPE_HANDLE_COUNT;
+/* Local control points for a traced outline, tilt already applied. The surface
+   frame that follows is affine, so these stay exact all the way to the path. */
+function tracedNodes(outline, w, h, tiltRad) {
+  const ct = Math.cos(tiltRad), st = Math.sin(tiltRad);
+  const put = (x, y) => tiltRad ? { x:x * ct - y * st, y:x * st + y * ct } : { x, y };
+  return outline.nodes.map(node => ({
+    p:put(node.x * w, node.y * h),
+    out:put(node.ox * w, node.oy * h),
+    in:put(node.ix * w, node.iy * h),
+  }));
+}
+function cubicPathD(nodes, project) {
+  const total = nodes.length;
+  const start = project(nodes[0].p);
+  let d = `M${start.x.toFixed(2)} ${start.y.toFixed(2)}`;
+  for (let i = 0; i < total; i++) {
+    const a = nodes[i], b = nodes[(i + 1) % total];
+    const c1 = project({ x:a.p.x + a.out.x, y:a.p.y + a.out.y });
+    const c2 = project({ x:b.p.x + b.in.x, y:b.p.y + b.in.y });
+    const end = project(b.p);
+    d += `C${c1.x.toFixed(2)} ${c1.y.toFixed(2)} ${c2.x.toFixed(2)} ${c2.y.toFixed(2)} ${end.x.toFixed(2)} ${end.y.toFixed(2)}`;
+  }
+  return d + 'Z';
+}
+/* A point with no tangent stored follows the Catmull-Rom default, so outlines
+   authored before tangents existed keep their exact shape. */
+const eyeTangent = (point, xKey, yKey) =>
+  point?.[xKey] == null || point?.[yKey] == null ? null : { x:point[xKey], y:point[yKey] };
+const eyeShapeIsCustom = outline => isTracedOutline(outline) || !!outline?.some?.(point =>
+  point?.x || point?.y || EYE_TANGENT_KEYS.some(key => point?.[key] != null));
+function normalizeEyeShape(outline) {
+  if (isTracedOutline(outline)) return {
+    v:TRACED_OUTLINE_VERSION,
+    nodes:outline.nodes.slice(0, MAX_FACE_NODES).map(node =>
+      Object.fromEntries(TRACED_KEYS.map(key => [key, clamp(Number(node?.[key]) || 0, -2, 2)]))),
+  };
+  return BASE_EYE_SHAPE.map((fallback, index) => {
+    const source = outline?.[index];
+    const point = {
+      x:clamp(Number(source?.x) || fallback.x, -EYE_OFFSET_LIMIT, EYE_OFFSET_LIMIT),
+      y:clamp(Number(source?.y) || fallback.y, -EYE_OFFSET_LIMIT, EYE_OFFSET_LIMIT),
+    };
+    for (const key of EYE_TANGENT_KEYS) {
+      const value = Number(source?.[key]);
+      point[key] = source?.[key] == null || !Number.isFinite(value)
+        ? null : clamp(value, -EYE_TANGENT_LIMIT, EYE_TANGENT_LIMIT);
+    }
+    return point;
+  });
+}
+/* Exact anchor for outline handle `index` on the neutral capsule. Snapping to the
+   nearest of N sampled points made the anchor hop between samples as w/h animate,
+   which tore the outline apart mid-blink and made the shape depend on N. */
+function eyeHandleAnchor(w, h, index) {
+  w = Math.max(4, w); h = Math.max(4, h);
+  const swap = w > h;
+  const W = swap ? h : w, H = swap ? w : h;
+  const r = W / 2, side = Math.max(0, H / 2 - r);
+  const target = -Math.PI / 2 + index / EYE_SHAPE_HANDLE_COUNT * TAU;
+  const ray = { x:w / 2 * Math.cos(target), y:h / 2 * Math.sin(target) };
+  const d = swap ? { x:ray.y, y:-ray.x } : ray;                                // into the upright frame
+  const flankY = Math.abs(d.x) > 1e-9 ? r / Math.abs(d.x) * d.y : Infinity;
+  let p;
+  if (Math.abs(flankY) <= side) p = { x:Math.sign(d.x) * r, y:flankY };        // straight flank
+  else {                                                                       // rounded cap
+    const cy = d.y >= 0 ? side : -side;
+    const dd = d.x * d.x + d.y * d.y, dc = d.y * cy;
+    p = { x:0, y:0 };
+    const u = (dc + Math.sqrt(Math.max(0, dc * dc - dd * (cy * cy - r * r)))) / dd;
+    p.x = u * d.x; p.y = u * d.y;
+  }
+  return swap ? { x:-p.y, y:p.x } : p;
+}
+/* Closed cubic Bezier through the handle ring. A uniform Catmull-Rom segment is the
+   Bezier with control points P +/- (neighbour - neighbour)/6, so leaving every tangent
+   on auto reproduces the old curve exactly. */
+function sampleClosedBezier(nodes, count) {
+  const total = nodes.length, outs = [], ins = [];
+  for (let index = 0; index < total; index++) {
+    const previous = nodes[(index + total - 1) % total].p, next = nodes[(index + 1) % total].p;
+    const auto = { x:(next.x - previous.x) / 6, y:(next.y - previous.y) / 6 };
+    outs.push(nodes[index].out || auto);
+    ins.push(nodes[index].in || { x:-auto.x, y:-auto.y });
+  }
+  const samples = [];
+  for (let index = 0; index < count; index++) {
+    const progress = index / count * total;
+    const segment = Math.floor(progress) % total;
+    const t = progress - Math.floor(progress);
+    const start = nodes[segment].p, end = nodes[(segment + 1) % total].p;
+    const c1 = outs[segment], c2 = ins[(segment + 1) % total];
+    const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+    samples.push({
+      x:a * start.x + b * (start.x + c1.x) + c * (end.x + c2.x) + d * end.x,
+      y:a * start.y + b * (start.y + c1.y) + c * (end.y + c2.y) + d * end.y,
+    });
+  }
+  return samples;
+}
+function eyePoints(w, h, tiltRad, lid, bend, N = 44, outline = null) {
   w = Math.max(4, w); h = Math.max(4, h);
   const swap = w > h;
   const W = swap ? h : w, H = swap ? w : h;
@@ -694,8 +1026,8 @@ function eyePoints(w, h, tiltRad, lid, bend, N = 44) {
   const pts = [];
   for (let i = 0; i < N; i++) {
     let p = i / N * total, x, y;
-    if (p < side) { x = r; y = -side + p; }                                   // right side, going down
-    else if ((p -= side) < arc) { const t = p / arc * Math.PI;                 // bottom arc 0..pi
+    if (p < 2 * side) { x = r; y = -side + p; }                               // right side, going down
+    else if ((p -= 2 * side) < arc) { const t = p / arc * Math.PI;             // bottom arc 0..pi
       x = r * Math.cos(t); y = side + r * Math.sin(t); }
     else if ((p -= arc) < 2 * side) { x = -r; y = side - p; }                  // left side, going up
     else { p -= 2 * side; const t = Math.PI + p / arc * Math.PI;               // top arc pi..2pi
@@ -704,6 +1036,24 @@ function eyePoints(w, h, tiltRad, lid, bend, N = 44) {
     pts.push({ x, y });
   }
   const hw = Math.max(w, 4) / 2, hh = Math.max(h, 4) / 2;
+  if (isTracedOutline(outline)) {
+    pts.splice(0, pts.length, ...sampleClosedBezier(tracedNodes(outline, w, h, 0), N));
+  } else if (outline?.length === EYE_SHAPE_HANDLE_COUNT && eyeShapeIsCustom(outline)) {
+    const nodes = BASE_EYE_SHAPE.map((_, index) => {
+      const anchor = eyeHandleAnchor(w, h, index);
+      const point = outline[index];
+      const scale = tangent => tangent && { x:tangent.x * w, y:tangent.y * h };
+      return {
+        p:{
+          x:anchor.x + (Number(point?.x) || 0) * w,
+          y:anchor.y + (Number(point?.y) || 0) * h,
+        },
+        out:scale(eyeTangent(point, 'ox', 'oy')),
+        in:scale(eyeTangent(point, 'ix', 'iy')),
+      };
+    });
+    pts.splice(0, pts.length, ...sampleClosedBezier(nodes, N));
+  }
   const ct = Math.cos(tiltRad), st = Math.sin(tiltRad);
   lid = clamp(lid, 0, 0.92);
   const bendEff = clamp(bend, -1.2, 1.2) * clamp((h - 5) / 10, 0, 1);        // fade bend out as the eye closes
@@ -717,7 +1067,14 @@ function eyePoints(w, h, tiltRad, lid, bend, N = 44) {
 }
 
 /* ---------- curated expressions ---------- */
-const E = (w, h, t = 0, dx = 0, dy = 0, lid = 0, bend = 0) => ({ w, h, t, dx, dy, lid, bend });
+const E = (w, h, t = 0, dx = 0, dy = 0, lid = 0, bend = 0, shape = null) => ({ w, h, t, dx, dy, lid, bend, shape });
+// A mouth is one stadium below the eye row — the dash, dot, slanted tick and
+// smile on the reference sheet are all the same primitive. `drop` is degrees of
+// latitude below the eyes, `curve` is positive for a smile, and w <= 0 means the
+// expression simply has no mouth.
+const M = (w = 0, h = 0, t = 0, drop = 22, curve = 0, dx = 0, shape = null) => ({ w, h, t, drop, curve, dx, shape });
+const MOUTH_KEYS = ['w', 'h', 't', 'drop', 'curve', 'dx'];
+const NO_MOUTH = M();
 const EXPRESSIONS = {
   0:  [E(13.2, 60.7, 7),          E(13.2, 33.5, 7)],          // 00 default
   1:  [E(11, 34),                 E(11, 34)],                  // 01
@@ -732,20 +1089,74 @@ const EXPRESSIONS = {
   24: [E(24, 16, 0, 0, 0, 0, .9), E(24, 16, 0, 0, 0, 0, .9)], // 24 happy
   25: [E(16, 30, 0, 0, 2, .6),    E(16, 30, 0, 0, 2, .6)],     // 25 heavy lids
   26: [E(16, 32, -12),             E(16, 32, 12)],              // orbit
+  27: [E(25, 25),                  E(25, 25)],                   // nervous rounds
+  28: [E(24, 54),                  E(24, 54)],                   // shocked ovals
+  /* Reference face sheet, carried as the artwork's own cubic paths. */
+  30: [ // 30 twin bars
+    E(47.89, 73.68, 0, -16.83, 22.86, 0, 0, T([-0.5,-0.3,0,-0.1105,0,0.2,-0.1923,-0.5,0.1282,0,-0.1699,0,0.1923,-0.5,0.1699,0,-0.1282,0,0.5,-0.3,0,0.2,0,-0.1105,0.5,0.3,0,0.1105,0,-0.2,0.1923,0.5,-0.1282,0,0.1699,0,-0.1923,0.5,-0.1699,0,0.1282,0,-0.5,0.3,0,-0.2,0,0.1105])),
+    E(47.89, 73.68, 0, 16.83, 22.86, 0, 0, T([-0.5,-0.3,0,-0.1105,0,0.2,-0.1923,-0.5,0.1282,0,-0.1699,0,0.1923,-0.5,0.1699,0,-0.1282,0,0.5,-0.3,0,0.2,0,-0.1105,0.5,0.3,0,0.1105,0,-0.2,0.1923,0.5,-0.1282,0,0.1699,0,-0.1923,0.5,-0.1699,0,0.1282,0,-0.5,0.3,0,-0.2,0,0.1105])),
+    M(),
+  ],
+  31: [ // 31 low lids
+    E(47.89, 36.84, 0, -16.83, 116.53, 0, 0, T([-0.5,-0.5,0.3333,0,0,0.2,0.5,-0.5,0,0.2,-0.3333,0,0.5,0.1,0,0.2209,0,-0.2,0.1923,0.5,-0.1282,0,0.1699,0,-0.1923,0.5,-0.1699,0,0.1282,0,-0.5,0.1,0,-0.2,0,0.2209])),
+    E(47.89, 36.84, 0, 16.83, 116.53, 0, 0, T([-0.5,-0.5,0.3333,0,0,0.2,0.5,-0.5,0,0.2,-0.3333,0,0.5,0.1,0,0.2209,0,-0.2,0.1923,0.5,-0.1282,0,0.1699,0,-0.1923,0.5,-0.1699,0,0.1282,0,-0.5,0.1,0,-0.2,0,0.2209])),
+    M(44.21, 14.74, 0, 54.31, 0, 0, T([-0.5,0,0,-0.2761,0,0.2761,-0.3333,-0.5,0.2222,0,-0.0921,0,0.3333,-0.5,0.0921,0,-0.2222,0,0.5,0,0,0.2761,0,-0.2761,0.3333,0.5,-0.2222,0,0.0921,0,-0.3333,0.5,-0.0921,0,0.2222,0])),
+  ],
+  32: [ // 32 high rounds
+    E(47.89, 36.84, 0, -10.86, -39.8, 0, 0, T([0.5,0.5,-0.3333,0,0,-0.2,-0.5,0.5,0,-0.2,0.3333,0,-0.5,-0.1,0,-0.2209,0,0.2,-0.1923,-0.5,0.1282,0,-0.1699,0,0.1923,-0.5,0.1699,0,-0.1282,0,0.5,-0.1,0,0.2,0,-0.2209])),
+    E(47.89, 36.84, 0, 22.65, -39.8, 0, 0, T([0.5,0.5,-0.3333,0,0,-0.2,-0.5,0.5,0,-0.2,0.3333,0,-0.5,-0.1,0,-0.2209,0,0.2,-0.1923,-0.5,0.1282,0,-0.1699,0,0.1923,-0.5,0.1699,0,-0.1282,0,0.5,-0.1,0,0.2,0,-0.2209])),
+    M(66.32, 33.16, 0, 20.48, 0, 6.59, T([-0.5,-0.2778,0,0.037,0,-0.1227,-0.5,-0.1667,0,0.3682,0,-0.037,-0.1667,0.5,0.1111,0,-0.1841,0,0.1667,0.5,0.1841,0,-0.1111,0,0.5,-0.1667,0,-0.037,0,0.3682,0.5,-0.2778,0,-0.1227,0,0.037,0.3889,-0.5,-0.0614,0,0.0614,0,0.2778,-0.2778,0,0.037,0,-0.1227,0.2778,-0.1667,0,0.1228,0,-0.037,0.1667,0.0556,-0.1111,0,0.0614,0,-0.1667,0.0556,-0.0614,0,0.1111,0,-0.2778,-0.1667,0,-0.037,0,0.1228,-0.2778,-0.2778,0,-0.1227,0,0.037,-0.3889,-0.5,-0.0614,0,0.0614,0])),
+  ],
+  33: [ // 33 offset stare
+    E(47.89, 47.89, 0, -54.18, -42.61, 0, 0, T([-0.5,-0.1923,0,-0.1699,0,0.1282,-0.1923,-0.5,0.1282,0,-0.1699,0,0.1923,-0.5,0.1699,0,-0.1282,0,0.5,-0.1923,0,0.1282,0,-0.1699,0.5,0.1923,0,0.1699,0,-0.1282,0.1923,0.5,-0.1282,0,0.1699,0,-0.1923,0.5,-0.1699,0,0.1282,0,-0.5,0.1923,0,-0.1282,0,0.1699])),
+    E(47.89, 47.89, 0, 58.84, 26.15, 0, 0, T([-0.5,-0.1923,0,-0.1699,0,0.1282,-0.1923,-0.5,0.1282,0,-0.1699,0,0.1923,-0.5,0.1699,0,-0.1282,0,0.5,-0.1923,0,0.1282,0,-0.1699,0.5,0.1923,0,0.1699,0,-0.1282,0.1923,0.5,-0.1282,0,0.1699,0,-0.1923,0.5,-0.1699,0,0.1282,0,-0.5,0.1923,0,-0.1282,0,0.1699])),
+    M(42.64, 24.24, 0, 45.41, 0, 13.15, T([-0.4907,0.2939,-0.0308,-0.1589,0.0308,0.1589,-0.3829,-0.0918,0.2181,-0.1306,-0.0904,0.0541,0.2714,-0.4837,0.0904,-0.0541,-0.2181,0.1306,0.4907,-0.2939,0.0308,0.1589,-0.0308,-0.1589,0.3828,0.0917,-0.2181,0.1306,0.0904,-0.0541,-0.2715,0.4837,-0.0903,0.0541,0.2181,-0.1306])),
+  ],
+  34: [ // 34 tall + short
+    E(47.89, 73.68, 0, -16.83, 22.86, 0, 0, T([-0.5,-0.3,0,-0.1105,0,0.2,-0.1923,-0.5,0.1282,0,-0.1699,0,0.1923,-0.5,0.1699,0,-0.1282,0,0.5,-0.3,0,0.2,0,-0.1105,0.5,0.3,0,0.1105,0,-0.2,0.1923,0.5,-0.1282,0,0.1699,0,-0.1923,0.5,-0.1699,0,0.1282,0,-0.5,0.3,0,-0.2,0,0.1105])),
+    E(47.89, 36.84, 0, 16.83, 22.86, 0, 0, T([-0.5,-0.1,0,-0.2209,0,0.0667,-0.1923,-0.5,0.1282,0,-0.1699,0,0.1923,-0.5,0.1699,0,-0.1282,0,0.5,-0.1,0,0.0667,0,-0.2209,0.5,0.1,0,0.2209,0,-0.0667,0.1923,0.5,-0.1282,0,0.1699,0,-0.1923,0.5,-0.1699,0,0.1282,0,-0.5,0.1,0,-0.0667,0,0.2209])),
+    M(22.11, 14.74, 0, 49.53, 0, 0, T([-0.5,0,0,-0.2761,0,0.2761,-0.1667,-0.5,0.1111,0,-0.1842,0,0.1667,-0.5,0.1842,0,-0.1111,0,0.5,0,0,0.2761,0,-0.2761,0.1667,0.5,-0.1111,0,0.1842,0,-0.1667,0.5,-0.1842,0,0.1111,0])),
+  ],
+  35: [ // 35 wide blocks
+    E(70, 110.53, 0, -39.18, 22.86, 0, 0, T([-0.5,-0.3667,0,-0.0736,0,0.2444,-0.2895,-0.5,0.193,0,-0.1163,0,0.2895,-0.5,0.1163,0,-0.193,0,0.5,-0.3667,0,0.2444,0,-0.0736,0.5,0.3667,0,0.0736,0,-0.2444,0.2895,0.5,-0.193,0,0.1163,0,-0.2895,0.5,-0.1163,0,0.193,0,-0.5,0.3667,0,-0.2444,0,0.0736])),
+    E(70, 110.53, 0, 39.18, 22.86, 0, 0, T([-0.5,-0.3667,0,-0.0736,0,0.2444,-0.2895,-0.5,0.193,0,-0.1163,0,0.2895,-0.5,0.1163,0,-0.193,0,0.5,-0.3667,0,0.2444,0,-0.0736,0.5,0.3667,0,0.0736,0,-0.2444,0.2895,0.5,-0.193,0,0.1163,0,-0.2895,0.5,-0.1163,0,0.193,0,-0.5,0.3667,0,-0.2444,0,0.0736])),
+    M(14.74, 14.74, 0, 52.01, 0, 0, T([-0.5,0,0,-0.2761,0,0.2761,0,-0.5,0.2763,0,-0.2763,0,0.5,0,0,0.2761,0,-0.2761,0,0.5,-0.2763,0,0.2763,0])),
+  ],
+  36: [ // 36 dash pair
+    E(58.95, 29.47, 0, -25.51, 22.86, 0, 0, T([-0.5,0,0,-0.2761,0,0.2761,-0.25,-0.5,0.1667,0,-0.1381,0,0.25,-0.5,0.1381,0,-0.1667,0,0.5,0,0,0.2761,0,-0.2761,0.25,0.5,-0.1667,0,0.1381,0,-0.25,0.5,-0.1381,0,0.1667,0])),
+    E(58.95, 29.47, 0, 25.51, 22.86, 0, 0, T([-0.5,0,0,-0.2761,0,0.2761,-0.25,-0.5,0.1667,0,-0.1381,0,0.25,-0.5,0.1381,0,-0.1667,0,0.5,0,0,0.2761,0,-0.2761,0.25,0.5,-0.1667,0,0.1381,0,-0.25,0.5,-0.1381,0,0.1667,0])),
+    M(44.21, 14.74, 0, 40.79, 0, 0, T([-0.5,0,0,-0.2761,0,0.2761,-0.3333,-0.5,0.2222,0,-0.0921,0,0.3333,-0.5,0.0921,0,-0.2222,0,0.5,0,0,0.2761,0,-0.2761,0.3333,0.5,-0.2222,0,0.0921,0,-0.3333,0.5,-0.0921,0,0.2222,0])),
+  ],
+  37: [ // 37 cupped
+    E(62.63, 33.16, 0, -28.33, 82.65, 0, 0, T([-0.5,-0.2778,0,0.037,0,-0.1227,-0.5,-0.1667,0,0.3681,0,-0.037,-0.1471,0.5,0.098,0,-0.1949,0,0.1471,0.5,0.1949,0,-0.098,0,0.5,-0.1667,0,-0.037,0,0.3681,0.5,-0.2778,0,-0.1227,0,0.037,0.3824,-0.5,-0.065,0,0.065,0,0.2647,-0.2778,0,0.037,0,-0.1227,0.2647,-0.1667,0,0.1227,0,-0.037,0.1471,0.0556,-0.098,0,0.065,0,-0.1471,0.0556,-0.065,0,0.098,0,-0.2647,-0.1667,0,-0.037,0,0.1227,-0.2647,-0.2778,0,-0.1227,0,0.037,-0.3824,-0.5,-0.065,0,0.065,0])),
+    E(62.63, 33.16, 0, 28.33, 82.65, 0, 0, T([-0.5,-0.2778,0,0.037,0,-0.1227,-0.5,-0.1667,0,0.3681,0,-0.037,-0.1471,0.5,0.098,0,-0.1949,0,0.1471,0.5,0.1949,0,-0.098,0,0.5,-0.1667,0,-0.037,0,0.3681,0.5,-0.2778,0,-0.1227,0,0.037,0.3824,-0.5,-0.065,0,0.065,0,0.2647,-0.2778,0,0.037,0,-0.1227,0.2647,-0.1667,0,0.1227,0,-0.037,0.1471,0.0556,-0.098,0,0.065,0,-0.1471,0.0556,-0.065,0,0.098,0,-0.2647,-0.1667,0,-0.037,0,0.1227,-0.2647,-0.2778,0,-0.1227,0,0.037,-0.3824,-0.5,-0.065,0,0.065,0])),
+    M(44.21, 14.74, 0, 50.8, 0, 6.59, T([-0.5,0,0,-0.2762,0,0.2762,-0.3333,-0.5,0.2222,0,-0.0921,0,0.3333,-0.5,0.0921,0,-0.2222,0,0.5,0,0,0.2762,0,-0.2762,0.3333,0.5,-0.2222,0,0.0921,0,-0.3333,0.5,-0.0921,0,0.2222,0])),
+  ],
+  38: [ // 38 arched
+    E(62.63, 33.16, 0, -28.33, -53.46, 0, 0, T([0.5,0.2778,0,-0.037,0,0.1227,0.5,0.1667,0,-0.3682,0,0.037,0.1471,-0.5,-0.098,0,0.1949,0,-0.1471,-0.5,-0.1949,0,0.098,0,-0.5,0.1667,0,0.037,0,-0.3682,-0.5,0.2778,0,0.1227,0,-0.037,-0.3824,0.5,0.065,0,-0.065,0,-0.2647,0.2778,0,-0.037,0,0.1227,-0.2647,0.1667,0,-0.1228,0,0.037,-0.1471,-0.0556,0.098,0,-0.065,0,0.1471,-0.0556,0.065,0,-0.098,0,0.2647,0.1667,0,0.037,0,-0.1228,0.2647,0.2778,0,0.1227,0,-0.037,0.3824,0.5,0.065,0,-0.065,0])),
+    E(62.63, 33.16, 0, 28.33, -53.46, 0, 0, T([0.5,0.2778,0,-0.037,0,0.1227,0.5,0.1667,0,-0.3682,0,0.037,0.1471,-0.5,-0.098,0,0.1949,0,-0.1471,-0.5,-0.1949,0,0.098,0,-0.5,0.1667,0,0.037,0,-0.3682,-0.5,0.2778,0,0.1227,0,-0.037,-0.3824,0.5,0.065,0,-0.065,0,-0.2647,0.2778,0,-0.037,0,0.1227,-0.2647,0.1667,0,-0.1228,0,0.037,-0.1471,-0.0556,0.098,0,-0.065,0,0.1471,-0.0556,0.065,0,-0.098,0,0.2647,0.1667,0,0.037,0,-0.1228,0.2647,0.2778,0,0.1227,0,-0.037,0.3824,0.5,0.065,0,-0.065,0])),
+    M(66.32, 33.16, 0, 18.27, 0, 0, T([-0.5,-0.2778,0,0.037,0,-0.1227,-0.5,-0.1667,0,0.3681,0,-0.037,-0.1667,0.5,0.1111,0,-0.1841,0,0.1667,0.5,0.1841,0,-0.1111,0,0.5,-0.1667,0,-0.037,0,0.3681,0.5,-0.2778,0,-0.1227,0,0.037,0.3889,-0.5,-0.0614,0,0.0614,0,0.2778,-0.2778,0,0.037,0,-0.1227,0.2778,-0.1667,0,0.1227,0,-0.037,0.1667,0.0556,-0.1111,0,0.0614,0,-0.1667,0.0556,-0.0614,0,0.1111,0,-0.2778,-0.1667,0,-0.037,0,0.1227,-0.2778,-0.2778,0,-0.1227,0,0.037,-0.3889,-0.5,-0.0614,0,0.0614,0])),
+  ],
+  39: [ // 39 thin dashes
+    E(58.95, 14.74, 0, -25.51, 22.86, 0, 0, T([-0.5,0,0,-0.2763,0,0.2763,-0.375,-0.5,0.25,0,-0.0691,0,0.375,-0.5,0.0691,0,-0.25,0,0.5,0,0,0.2763,0,-0.2763,0.375,0.5,-0.25,0,0.0691,0,-0.375,0.5,-0.0691,0,0.25,0])),
+    E(58.95, 14.74, 0, 25.51, 22.86, 0, 0, T([-0.5,0,0,-0.2763,0,0.2763,-0.375,-0.5,0.25,0,-0.0691,0,0.375,-0.5,0.0691,0,-0.25,0,0.5,0,0,0.2763,0,-0.2763,0.375,0.5,-0.25,0,0.0691,0,-0.375,0.5,-0.0691,0,0.25,0])),
+    M(22.11, 14.74, 0, 37.41, 0, -6.59, T([-0.5,0,0,-0.2763,0,0.2763,-0.1667,-0.5,0.1111,0,-0.1842,0,0.1667,-0.5,0.1842,0,-0.1111,0,0.5,0,0,0.2763,0,-0.2763,0.1667,0.5,-0.1111,0,0.1842,0,-0.1667,0.5,-0.1842,0,0.1111,0])),
+  ],
 };
-const VISIBLE_EXPRESSIONS = [0, 1, 2, 3, 4, 5, 7, 8, 9, 24, 25, 26];
+const VISIBLE_EXPRESSIONS = [30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 0, 1, 2, 3, 4, 5, 7, 8, 9, 24, 25, 26];
 
 /* ---------- states ---------- */
 const STATES = {
   idle:    { label: 'Idle',    desc: 'Slow drift, relaxed blinks.',                     palette: ['#3f19c8', '#ffffff'], amp: [3, 7, 2],    freq: 0.22, bias: [0, 0, 0], gaze: 4,  gItv: [2.5, 5],   blink: [3, 6.5],   expr: 1,  bounce: 0 },
+  nervous: { label: 'Nervous', desc: 'Round eyes glance around while the plane gives a fine wiggle.', palette: ['#ff4f33', '#ffe5a8'], amp: [2.2, 3.2, 1.7], freq: 1.7, bias: [0, 0, 0], gaze: 7, gItv: [0.28, 0.58], blink: [1.4, 3], expr: 27, bounce: 0.003, bounceFreq: 4.2, wiggle: 2.4, eyeJitter: 1.3 },
   curious: { label: 'Curious', desc: 'Asymmetric eyes, big slow looks and curious tilts.',palette: ['#5e00ff', '#ffffff'], amp: [9, 26, 11], freq: 0.4, bias: [0, 0, 0], gaze: 12, gItv: [0.7, 1.6], blink: [2.5, 5], expr: 9, bounce: 0 },
   excited: { label: 'Excited', desc: 'Quick bounces, happy eyes.',                      palette: ['#009494', '#d6ffff'], amp: [5, 9, 11],   freq: 1.5,  bias: [0, 0, 0], gaze: 6,  gItv: [0.5, 1.0], blink: [1.8, 3.2], expr: 24, bounce: 0.022, bounceFreq: 2.2 },
   disappointed: { label: 'Disappointed', desc: 'Heavy lids, a lowered gaze and slow sway.', palette: ['#bd0000', '#ffa047'], amp: [6, 5, 4], freq: 0.1, bias: [9, 0, 0], gaze: 2, gItv: [4, 7], blink: [5, 9], expr: 25, bounce: 0 },
   alert:   { label: 'Alert',   desc: 'Small focused eyes with snappy gaze shifts.',     palette: ['#dbd400', '#dee147'], amp: [2, 5, 1.5], freq: 0.8, bias: [0, 0, 0], gaze: 13, gItv: [0.5, 1.2], blink: [2, 4], expr: 22, bounce: 0 },
-  shocked: { label: 'Shocked', desc: 'Wide disbelief with a small head wiggle.',         palette: ['#5e00ff', '#ffffff'], amp: [1, 2, 1.5], freq: 0.35, bias: [0, 0, 0], gaze: 3, gItv: [1.3, 2.4], blink: [3, 5], expr: 2, bounce: 0.004, wiggle: 3.2 },
+  shocked: { label: 'Shocked', desc: 'Tall black eyes held inside the authored plane mesh.', palette: ['#5e00ff', '#ffffff'], amp: [1, 2, 1.5], freq: 0.35, bias: [0, 0, 0], gaze: 3, gItv: [1.3, 2.4], blink: [3, 5], expr: 28, bounce: 0.004, wiggle: 3.2, eyeColor: '#0e0e14', eyeGlow: false },
 };
 
-const STATE_TRANSITION_SECONDS = 1.25;
+const STATE_TRANSITION_SECONDS = AVATAR_ICON_MODE ? 0.38 : 1.25;
 const motionProfile = source => ({
   amp: [...source.amp],
   bias: [...source.bias],
@@ -754,10 +1165,13 @@ const motionProfile = source => ({
   bounce: source.bounce || 0,
   bounceFreq: source.bounceFreq || 2.9,
   wiggle: source.wiggle || 0,
+  eyeJitter: source.eyeJitter || 0,
 });
 let stateTransition = {
   from: motionProfile(STATES.idle),
   to: motionProfile(STATES.idle),
+  fromState: 'idle',
+  toState: 'idle',
   start: 0,
   duration: STATE_TRANSITION_SECONDS,
 };
@@ -774,17 +1188,53 @@ function blendedMotionProfile(at = clock) {
     bounce: lerp(stateTransition.from.bounce, stateTransition.to.bounce, t),
     bounceFreq: lerp(stateTransition.from.bounceFreq, stateTransition.to.bounceFreq, t),
     wiggle: lerp(stateTransition.from.wiggle, stateTransition.to.wiggle, t),
+    eyeJitter: lerp(stateTransition.from.eyeJitter, stateTransition.to.eyeJitter, t),
   };
+}
+
+function applyStateEyeStyle(stateID) {
+  const preset = STATES[stateID];
+  const eyeColor = preset.eyeColor || '#0e0e14';
+  gEyeL.setAttribute('fill', eyeColor);
+  gEyeR.setAttribute('fill', eyeColor);
+  gMouth.setAttribute('fill', eyeColor);
+  gEyes.setAttribute('filter', preset.eyeGlow ? 'url(#eyeGlow)' : 'none');
 }
 
 function beginStateTransition(stateID, instant = false) {
   const current = blendedMotionProfile();
+  const fromState = state.stateName;
   state.stateName = stateID;
   stateTransition = {
     from: instant ? motionProfile(STATES[stateID]) : current,
     to: motionProfile(STATES[stateID]),
+    fromState,
+    toState: stateID,
     start: clock,
     duration: instant ? 0.0001 : STATE_TRANSITION_SECONDS,
+  };
+  applyStateEyeStyle(stateID);
+  setPlaneMeshPreview(stateID === 'shocked', instant);
+}
+
+/* The plane briefly compresses evenly, rebounds, then settles when an
+   idle character becomes nervous. Eye anchors share the deformation so the
+   face stays attached while the silhouette's borders squish. */
+function planeTransitionSquish(at = clock) {
+  let squash = 0;
+  if (stateTransition.fromState === 'idle' && stateTransition.toState === 'nervous') {
+    const duration = Math.min(stateTransition.duration, AVATAR_ICON_MODE ? 0.38 : 0.72);
+    const t = clamp((at - stateTransition.start) / Math.max(duration, 0.0001), 0, 1);
+    if (t < 1) squash = t < 0.5
+      ? Math.sin(t / 0.5 * Math.PI)
+      : -0.22 * Math.sin((t - 0.5) / 0.5 * Math.PI);
+  }
+  const strength = 0.7;
+  const uniformScale = 1 - 0.2 * strength * squash;
+  return {
+    x: uniformScale,
+    y: uniformScale,
+    bend: 0.08 * strength * squash,
   };
 }
 
@@ -803,6 +1253,7 @@ const SHAPES = {
   queen:  { label: 'Queen',  face: { lat: 7,  scale: 0.9,  esc: 0.84 }, orbR: 1.55, chess: true, defaultDepth: 90 },
   king:   { label: 'King',   face: { lat: 8,  scale: 0.9,  esc: 0.86 }, orbR: 1.55, chess: true, defaultDepth: 90 },
 };
+const DEFAULT_SHAPE = 'plane';
 const SHAPE_ICONS = {
   sphere: '<circle cx="14" cy="14" r="10" class="ic" stroke-width="0"/>',
   mickey: '<circle cx="7" cy="8" r="5" class="ic" stroke-width="0"/><circle cx="21" cy="8" r="5" class="ic" stroke-width="0"/><circle cx="14" cy="16" r="9" class="ic" stroke-width="0"/>',
@@ -857,21 +1308,119 @@ function prepareChessGeometry() {
 prepareChessGeometry();
 
 /* ---------- app state ---------- */
+const PLANE_MESH_CORNERS = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'];
+const PLANE_MESH_EDGES = ['top', 'right', 'bottom', 'left'];
+const PLANE_MESH_NODES = ['topLeft', 'top', 'topRight', 'right', 'bottomRight', 'bottom', 'bottomLeft', 'left'];
+const BASE_PLANE_MESH = {
+  topLeft:{ x:-1, y:1 }, top:{ x:0, y:1 }, topRight:{ x:1, y:1 }, right:{ x:1, y:0 },
+  bottomRight:{ x:1, y:-1 }, bottom:{ x:0, y:-1 }, bottomLeft:{ x:-1, y:-1 }, left:{ x:-1, y:0 },
+};
+const DEFAULT_PLANE_MESH = {
+  topLeft:{ x:-1, y:1 }, top:{ x:0, y:.72 }, topRight:{ x:1, y:1 }, right:{ x:.72, y:0 },
+  bottomRight:{ x:1, y:-1 }, bottom:{ x:0, y:-.72 }, bottomLeft:{ x:-1, y:-1 }, left:{ x:-.72, y:0 },
+};
+const clonePlaneMesh = mesh => Object.fromEntries(PLANE_MESH_NODES.map(node => [node, { ...mesh[node] }]));
+function normalizePlaneMesh(mesh) {
+  if (mesh && typeof mesh.top === 'number') {
+    const legacy = edge => clamp(Number(mesh[edge]) || 0, -0.35, 0.75);
+    const migrated = clonePlaneMesh(BASE_PLANE_MESH);
+    migrated.top.y = 1 - legacy('top');
+    migrated.right.x = 1 - legacy('right');
+    migrated.bottom.y = -1 + legacy('bottom');
+    migrated.left.x = -1 + legacy('left');
+    return migrated;
+  }
+  const normalized = clonePlaneMesh(DEFAULT_PLANE_MESH);
+  for (const node of PLANE_MESH_NODES) {
+    if (!mesh?.[node] || typeof mesh[node] !== 'object') continue;
+    const x = Number(mesh[node].x), y = Number(mesh[node].y);
+    if (Number.isFinite(x)) normalized[node].x = clamp(x, -1.35, 1.35);
+    if (Number.isFinite(y)) normalized[node].y = clamp(y, -1.35, 1.35);
+  }
+  return normalized;
+}
+const FACE_SHAPE_SLOTS = ['L', 'R', 'M'];
+const FACE_SLOT_LABELS = { L:'Left eye', R:'Right eye', M:'Mouth' };
+const createEyeShapePreset = () => ({
+  L:cloneEyeShape(BASE_EYE_SHAPE),
+  R:cloneEyeShape(BASE_EYE_SHAPE),
+  M:cloneEyeShape(BASE_EYE_SHAPE),
+  linked:true,
+});
+const createStateEyeShapes = () => Object.fromEntries(Object.keys(STATES).map(stateID => [stateID, createEyeShapePreset()]));
+const cloneEyeShapePreset = preset => ({
+  L:cloneEyeShape(preset.L),
+  R:cloneEyeShape(preset.R),
+  M:cloneEyeShape(preset.M || BASE_EYE_SHAPE),
+  linked:!!preset.linked,
+});
+function normalizeEyeShapePreset(preset) {
+  return {
+    L:normalizeEyeShape(preset?.L),
+    R:normalizeEyeShape(preset?.R),
+    M:normalizeEyeShape(preset?.M),
+    linked:typeof preset?.linked === 'boolean' ? preset.linked : true,
+  };
+}
+function cloneStateEyeShapes(source) {
+  return Object.fromEntries(Object.keys(STATES).map(stateID => [stateID, cloneEyeShapePreset(source[stateID])]));
+}
+function normalizeStateEyeShapes(source, legacyShape = null, legacyLinked = true, legacyState = 'idle') {
+  const normalized = createStateEyeShapes();
+  if (source && typeof source === 'object') {
+    for (const stateID of Object.keys(STATES)) {
+      if (source[stateID] && typeof source[stateID] === 'object') normalized[stateID] = normalizeEyeShapePreset(source[stateID]);
+    }
+  } else if (legacyShape && typeof legacyShape === 'object' && STATES[legacyState]) {
+    normalized[legacyState] = normalizeEyeShapePreset({ ...legacyShape, linked:legacyLinked });
+  }
+  return normalized;
+}
 const state = {
-  shape: 'sphere',
+  shape: DEFAULT_SHAPE,
   dims: { w: 210, h: 210, d: 210 },
   userRot: { x: -4, y: -14, z: 0 },
   eyes: { pL: 50, pR: 53, xL: 0, yL: 0, xR: 0, yR: 0 },
+  eyeShapes: createStateEyeShapes(),
   links: { w: true, h: true, p: true },
   motion: true,
   speed: 7,
   orbitSpeed: 220,
   eyeDistance: 7,
+  planeMesh: clonePlaneMesh(DEFAULT_PLANE_MESH),
+  planeMeshLinked: true,
+  planeMeshPreview: false,
   mouseFollow: true,
   expr: 1,
   stateName: 'idle',
   surface: 'orb',
 };
+// A preset carries its traced outline; a state that has been drawn on carries its
+// own. The stored one wins, and stays untouched until someone actually edits it.
+function presetOutline(slot, expressionID = state.expr) {
+  const entry = EXPRESSIONS[expressionID];
+  const source = slot === 'M' ? entry?.[2] : entry?.[slot === 'L' ? 0 : 1];
+  return source?.shape || null;
+}
+function effectiveOutline(slot, stateID = state.stateName) {
+  const stored = activeEyeShape(stateID)[slot];
+  return eyeShapeIsCustom(stored) ? stored : (presetOutline(slot) || stored);
+}
+// Dragging a handle on an untouched state seeds it from whatever is on screen,
+// so the first drag nudges the preset instead of snapping back to a capsule.
+function ensureEditableOutline(slot) {
+  const shapes = activeEyeShape();
+  if (!eyeShapeIsCustom(shapes[slot])) {
+    const preset = presetOutline(slot);
+    if (preset) shapes[slot] = cloneEyeShape(preset);
+  }
+  return shapes[slot];
+}
+
+function activeEyeShape(stateID = state.stateName) {
+  if (!state.eyeShapes[stateID]) state.eyeShapes[stateID] = createEyeShapePreset();
+  return state.eyeShapes[stateID];
+}
 
 const S = {
   rx: new Spring(state.userRot.x), ry: new Spring(state.userRot.y), rz: new Spring(state.userRot.z),
@@ -879,18 +1428,183 @@ const S = {
   pL: new Spring(50), pR: new Spring(53),
   xL: new Spring(0), yL: new Spring(0), xR: new Spring(0), yR: new Spring(0),
   gx: new Spring(0), gy: new Spring(0),
+  // The mouth chases the eyes' gaze and mouse-follow instead of sharing them,
+  // on a much softer spring, so it arrives a beat late rather than locked on.
+  mgx: new Spring(0), mgy: new Spring(0), mfx: new Spring(0), mfy: new Spring(0),
   wx: new Spring(0), wy: new Spring(0), wz: new Spring(0),
   fx: new Spring(0), fy: new Spring(0),
   blink: new Spring(0),
   pop: new Spring(1),
   wf: new Spring(0),
 };
+const planeMeshSpringKey = (node, axis) => `mesh${node[0].toUpperCase()}${node.slice(1)}${axis.toUpperCase()}`;
+for (const node of PLANE_MESH_NODES) for (const axis of ['x', 'y'])
+  S[planeMeshSpringKey(node, axis)] = new Spring(BASE_PLANE_MESH[node][axis]);
+const planeMeshSpring = (node, axis) => S[planeMeshSpringKey(node, axis)];
+
+function setPlaneMeshPreview(enabled, instant = false) {
+  state.planeMeshPreview = !!enabled;
+  for (const node of PLANE_MESH_NODES) for (const axis of ['x', 'y']) {
+    const spring = planeMeshSpring(node, axis);
+    const target = state.planeMeshPreview ? state.planeMesh[node][axis] : BASE_PLANE_MESH[node][axis];
+    if (instant) spring.snap(target);
+    else spring.t = target;
+  }
+  const button = document.getElementById('planeMeshPreviewButton');
+  const status = document.getElementById('planeMeshPreviewStatus');
+  if (button) {
+    button.classList.toggle('primary', state.planeMeshPreview);
+    button.innerHTML = `${planePreviewIcon}<span>Preview</span>`;
+    button.setAttribute('aria-pressed', String(state.planeMeshPreview));
+    button.title = state.planeMeshPreview ? 'Return to base shape' : 'Preview target shape';
+  }
+  if (status) status.textContent = state.planeMeshPreview ? 'TARGET' : 'BASE';
+}
 const EYE_KEYS = ['w', 'h', 't', 'dx', 'dy', 'lid', 'bend'];
 const EX = { L: {}, R: {} };
+const MO = {};
+const expressionMouth = i => EXPRESSIONS[i]?.[2] || NO_MOUTH;
+for (const key of MOUTH_KEYS) MO[key] = new Spring(expressionMouth(state.expr)[key] || 0);
+
+function setMouth(mouth, instant = false) {
+  const hidden = MO.w.x <= 0.5;
+  const visible = (mouth.w || 0) > 0;
+  for (const key of MOUTH_KEYS) {
+    // Nothing but the size retargets while the mouth is on its way out —
+    // otherwise it slides across the face as it shrinks.
+    if (!visible && key !== 'w' && key !== 'h') { MO[key].t = MO[key].x; continue; }
+    const value = mouth[key] || 0;
+    MO[key].t = value;
+    // Pose keys jump while the mouth is still invisible, so a new mouth grows
+    // in place instead of travelling from where the last one sat.
+    if (instant || (hidden && key !== 'w' && key !== 'h')) MO[key].snap(value);
+  }
+  if (instant) { MO.w.snap(mouth.w || 0); MO.h.snap(mouth.h || 0); }
+}
+const mouthTarget = () => Object.fromEntries(MOUTH_KEYS.map(key => [key, MO[key].t]));
 let orbitStart = 0, orbitBurstStart = -1e9, orbitAngle = 0, orbitSpeedLive = state.orbitSpeed;
 const orbitEntry = { L: { lon: -13, lat: 9 }, R: { lon: 13, lat: 9 } };
 for (const side of ['L', 'R']) for (const k of EYE_KEYS)
   EX[side][k] = new Spring(EXPRESSIONS[state.expr][side === 'L' ? 0 : 1][k] || 0);
+
+function defaultStateSetup(stateID) {
+  const expressionID = STATES[stateID].expr;
+  const expression = side => Object.fromEntries(EYE_KEYS.map(key => [key, EXPRESSIONS[expressionID][side === 'L' ? 0 : 1][key] || 0]));
+  const mouth = Object.fromEntries(MOUTH_KEYS.map(key => [key, expressionMouth(expressionID)[key] || 0]));
+  return {
+    shape:DEFAULT_SHAPE,
+    dims:{ w:210, h:210, d:210 },
+    userRot:{ x:-4, y:-14, z:0 },
+    eyes:{ pL:50, pR:53, xL:0, yL:0, xR:0, yR:0 },
+    links:{ w:true, h:true, p:true },
+    eyeDistance:7,
+    planeMesh:clonePlaneMesh(DEFAULT_PLANE_MESH),
+    planeMeshLinked:true,
+    expression:{ L:expression('L'), R:expression('R'), M:mouth },
+  };
+}
+const createStateSetups = () => Object.fromEntries(Object.keys(STATES).map(stateID => [stateID, defaultStateSetup(stateID)]));
+function cloneStateSetup(setup) {
+  return {
+    shape:setup.shape,
+    dims:{ ...setup.dims },
+    userRot:{ ...setup.userRot },
+    eyes:{ ...setup.eyes },
+    links:{ ...setup.links },
+    eyeDistance:setup.eyeDistance,
+    planeMesh:clonePlaneMesh(setup.planeMesh),
+    planeMeshLinked:!!setup.planeMeshLinked,
+    expression:{ L:{ ...setup.expression.L }, R:{ ...setup.expression.R }, M:{ ...setup.expression.M } },
+  };
+}
+const cloneStateSetups = source => Object.fromEntries(Object.keys(STATES).map(stateID => [stateID, cloneStateSetup(source[stateID])]));
+function normalizeStateSetups(source) {
+  const normalized = createStateSetups();
+  if (!source || typeof source !== 'object') return normalized;
+  const finite = (value, fallback, min = -Infinity, max = Infinity) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? clamp(number, min, max) : fallback;
+  };
+  for (const stateID of Object.keys(STATES)) {
+    const input = source[stateID];
+    if (!input || typeof input !== 'object') continue;
+    const setup = normalized[stateID];
+    if (SHAPES[input.shape]) setup.shape = input.shape;
+    setup.dims = {
+      w:finite(input.dims?.w, setup.dims.w, 60, 420),
+      h:finite(input.dims?.h, setup.dims.h, 60, 420),
+      d:finite(input.dims?.d, setup.dims.d, 1, 420),
+    };
+    setup.userRot = {
+      x:finite(input.userRot?.x, setup.userRot.x, -180, 180),
+      y:finite(input.userRot?.y, setup.userRot.y, -180, 180),
+      z:finite(input.userRot?.z, setup.userRot.z, -180, 180),
+    };
+    setup.eyes = {
+      pL:finite(input.eyes?.pL, setup.eyes.pL, 10, 150), pR:finite(input.eyes?.pR, setup.eyes.pR, 10, 150),
+      xL:finite(input.eyes?.xL, setup.eyes.xL, -80, 80), yL:finite(input.eyes?.yL, setup.eyes.yL, -80, 80),
+      xR:finite(input.eyes?.xR, setup.eyes.xR, -80, 80), yR:finite(input.eyes?.yR, setup.eyes.yR, -80, 80),
+    };
+    setup.links = { ...setup.links, ...(input.links || {}) };
+    setup.eyeDistance = finite(input.eyeDistance, setup.eyeDistance, 0, 50);
+    setup.planeMesh = normalizePlaneMesh(input.planeMesh);
+    setup.planeMeshLinked = typeof input.planeMeshLinked === 'boolean' ? input.planeMeshLinked : setup.planeMeshLinked;
+    for (const side of ['L', 'R']) for (const key of EYE_KEYS)
+      setup.expression[side][key] = finite(input.expression?.[side]?.[key], setup.expression[side][key]);
+    for (const key of MOUTH_KEYS)
+      setup.expression.M[key] = finite(input.expression?.M?.[key], setup.expression.M[key]);
+  }
+  return normalized;
+}
+let stateSetups = createStateSetups();
+
+function captureStateSetup(stateID = state.stateName) {
+  if (!STATES[stateID]) return;
+  stateSetups[stateID] = {
+    shape:state.shape,
+    dims:{ ...state.dims },
+    userRot:{ ...state.userRot },
+    eyes:{ ...state.eyes },
+    links:{ ...state.links },
+    eyeDistance:state.eyeDistance,
+    planeMesh:clonePlaneMesh(state.planeMesh),
+    planeMeshLinked:state.planeMeshLinked,
+    expression:{
+      L:Object.fromEntries(EYE_KEYS.map(key => [key, EX.L[key].t])),
+      R:Object.fromEntries(EYE_KEYS.map(key => [key, EX.R[key].t])),
+      M:mouthTarget(),
+    },
+  };
+}
+
+function applyStateSetup(stateID, instant = false) {
+  const setup = stateSetups[stateID] || (stateSetups[stateID] = defaultStateSetup(stateID));
+  state.shape = setup.shape;
+  state.dims = { ...setup.dims };
+  state.userRot = { ...setup.userRot };
+  state.eyes = { ...setup.eyes };
+  state.links = { ...setup.links };
+  state.eyeDistance = setup.eyeDistance;
+  state.planeMesh = clonePlaneMesh(setup.planeMesh);
+  state.planeMeshLinked = setup.planeMeshLinked;
+  const springValues = {
+    dw:state.dims.w, dh:state.dims.h, dd:state.dims.d,
+    rx:state.userRot.x, ry:state.userRot.y, rz:state.userRot.z,
+    pL:state.eyes.pL, pR:state.eyes.pR,
+    xL:state.eyes.xL, yL:state.eyes.yL, xR:state.eyes.xR, yR:state.eyes.yR,
+  };
+  for (const [key, value] of Object.entries(springValues)) {
+    if (instant) S[key].snap(value);
+    else S[key].t = value;
+  }
+  setExpression(STATES[stateID].expr, !instant);
+  for (const side of ['L', 'R']) for (const key of EYE_KEYS) {
+    const value = setup.expression[side][key];
+    EX[side][key].t = value;
+    if (instant) EX[side][key].snap(value);
+  }
+  setMouth(setup.expression.M, instant);
+}
 
 function setExpression(i, smoothHappy = false) {
   if (i === 26 && state.expr !== 26) {
@@ -916,6 +1630,7 @@ function setExpression(i, smoothHappy = false) {
   const orbitSpeedCard = document.getElementById('orbitSpeedCard');
   if (orbitSpeedCard) orbitSpeedCard.style.display = i === 26 ? '' : 'none';
   const [l, r] = EXPRESSIONS[i];
+  setMouth(expressionMouth(i), i === 24 && !smoothHappy);
   for (const k of EYE_KEYS) {
     EX.L[k].t = l[k] || 0;
     EX.R[k].t = r[k] || 0;
@@ -932,10 +1647,24 @@ function setExpression(i, smoothHappy = false) {
     const inp = document.querySelector(`input[data-key="${key}"]`);
     if (inp && document.activeElement !== inp) inp.value = v.toFixed(1);
   }
+  updateEyeShapeEditor();
 }
 
 /* ---------- scheduler ---------- */
-let nextGaze = 0, nextBlink = 2.5, clock = 0, motionPhase = 0, bouncePhase = 0, wigglePhase = 0;
+let nextGaze = 0, nextBlink = 2.5, clock = 0, motionPhase = 0, bouncePhase = 0, wigglePhase = 0, directWiggle = 0;
+let editorStateEyeMotion = AVATAR_ICON_MODE;
+const stateEyeMotionEnabled = () => AVATAR_ICON_MODE || editorStateEyeMotion;
+
+function setEditorStateEyeMotion(enabled) {
+  editorStateEyeMotion = !!enabled;
+  if (editorStateEyeMotion) {
+    nextGaze = 0;
+  } else {
+    S.gx.snap(0);
+    S.gy.snap(0);
+  }
+}
+
 function blinkNow() {
   S.blink.t = 1;
   setTimeout(() => { S.blink.t = 0; }, 90);
@@ -958,7 +1687,7 @@ function schedule(dt) {
     const orbitValue = document.getElementById('orbitSpeedVal');
     if (orbitValue) orbitValue.textContent = `${Math.round(orbitSpeedLive)}°/s`;
   }
-  if (!state.motion) { S.wx.t = 0; S.wy.t = 0; S.wz.t = 0; S.gx.t = 0; S.gy.t = 0; S.pop.t = 1; return; }
+  if (!state.motion) { S.wx.t = 0; S.wy.t = 0; S.wz.t = 0; S.gx.t = 0; S.gy.t = 0; S.pop.t = 1; directWiggle = 0; return; }
   const authoredState = STATES[state.stateName];
   const st = blendedMotionProfile();
   motionPhase += dt * st.freq * TAU;
@@ -968,9 +1697,12 @@ function schedule(dt) {
   S.wx.t = st.bias[0] + st.amp[0] * noise1(w * 0.9, 1.3);
   S.wy.t = st.bias[1] + st.amp[1] * noise1(w * 0.7, 4.1);
   S.wz.t = st.bias[2] + st.amp[2] * noise1(w * 0.55, 7.7);
-  if (st.wiggle) S.wz.t += st.wiggle * Math.sin(wigglePhase);
+  directWiggle = st.wiggle ? st.wiggle * Math.sin(wigglePhase) : 0;
   S.pop.t = 1 + (st.bounce ? st.bounce * Math.sin(bouncePhase) : 0);
-  if (clock >= nextGaze) {
+  if (!stateEyeMotionEnabled()) {
+    S.gx.t = 0;
+    S.gy.t = 0;
+  } else if (clock >= nextGaze) {
     S.gx.t = rnd(-st.gaze, st.gaze);
     S.gy.t = rnd(-st.gaze * 0.55, st.gaze * 0.55);
     nextGaze = clock + rnd(authoredState.gItv[0], authoredState.gItv[1]);
@@ -989,6 +1721,10 @@ const NS = 'http://www.w3.org/2000/svg';
 stage.innerHTML = `
   <defs>
     <clipPath id="headclip"><path id="clipPathEl"/></clipPath>
+    <filter id="eyeGlow" x="-45%" y="-30%" width="190%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3.2" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
   </defs>
   <g id="gRoot">
     <path id="gHead" fill="#3f19c8"/>
@@ -998,15 +1734,53 @@ stage.innerHTML = `
     <g id="gEyes" clip-path="url(#headclip)">
       <path id="gEyeL" fill="#0e0e14"/>
       <path id="gEyeR" fill="#0e0e14"/>
+      <path id="gMouth" fill="#0e0e14"/>
     </g>
     <path id="gOutline" fill="none" stroke="#f4f4f0" stroke-width="1.6"/>
   </g>
-  <g id="gGizmo"></g>
 `;
 const el = id => document.getElementById(id);
-const gHead = el('gHead'), gWire = el('gWire'), gEyeL = el('gEyeL'), gEyeR = el('gEyeR'),
+const gHead = el('gHead'), gWire = el('gWire'), gEyeL = el('gEyeL'), gEyeR = el('gEyeR'), gMouth = el('gMouth'),
       gEdge = el('gEdge'), gCubeEdges = el('gCubeEdges'), gEyes = el('gEyes'),
-      gOutline = el('gOutline'), gGizmo = el('gGizmo'), gRoot = el('gRoot'), clipEl = el('clipPathEl');
+      gOutline = el('gOutline'), gRoot = el('gRoot'), clipEl = el('clipPathEl');
+let iconFallbackStage = document.createElementNS(NS, 'svg');
+iconFallbackStage.id = 'iconFallbackStage';
+iconFallbackStage.innerHTML = `
+  <defs><radialGradient id="iconFallbackGradient" cx="30%" cy="24%" r="88%" fx="24%" fy="18%"></radialGradient></defs>
+  <g id="iconFallbackRoot"><path id="iconFallbackPath" fill="url(#iconFallbackGradient)"/></g>`;
+document.getElementById('stagewrap').insertBefore(iconFallbackStage, document.getElementById('orbCanvas'));
+let iconFallbackRoot = iconFallbackStage.querySelector('#iconFallbackRoot');
+let iconFallbackPath = iconFallbackStage.querySelector('#iconFallbackPath');
+let iconSurfaceGradient = iconFallbackStage.querySelector('#iconFallbackGradient');
+let iconPaletteSignature = '';
+
+function updateIconSurface(pathD, pop, now) {
+  iconFallbackPath.setAttribute('d', pathD);
+  iconFallbackRoot.setAttribute('transform', `translate(${CX} ${CY}) scale(${pop.toFixed(4)}) translate(${-CX} ${-CY})`);
+  const usesVectorFallback = state.surface === 'orb' && !ORB && !isChessShape();
+  if (!usesVectorFallback) {
+    gHead.setAttribute('fill', orbCfg.colors[0] || '#3f19c8');
+    iconFallbackStage.style.display = 'none';
+    return;
+  }
+  iconFallbackStage.style.display = 'block';
+  const presented = avatarMirrorPose?.surface?.presentationColors || presentedPaletteHex(now);
+  const colors = presented.length === 2
+    ? [presented[0], presented[1], presented[0]]
+    : [...presented, presented[0]];
+  const signature = colors.join('|');
+  if (signature !== iconPaletteSignature) {
+    iconPaletteSignature = signature;
+    iconSurfaceGradient.replaceChildren(...colors.map((color, index) => {
+      const stop = document.createElementNS(NS, 'stop');
+      stop.setAttribute('offset', `${index / (colors.length - 1) * 100}%`);
+      stop.setAttribute('stop-color', color);
+      return stop;
+    }));
+  }
+  const rotation = ((clock / Math.max(orbCfg.duration, .5)) * 360 * Math.max(.15, orbCfg.flow) + orbCfg.shift * 360) % 360;
+  iconSurfaceGradient.setAttribute('gradientTransform', `rotate(${rotation.toFixed(2)} .5 .5)`);
+}
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const easeInOutCubic = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -1247,6 +2021,24 @@ function srgbToOklab(hex) {
     0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
   ];
 }
+function oklabToHex(lab) {
+  const [L, a, b] = lab;
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+  const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
+  const linear = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+  const hex = linear.map(value => {
+    const clamped = clamp(value, 0, 1);
+    const srgb = clamped <= 0.0031308 ? clamped * 12.92 : 1.055 * clamped ** (1 / 2.4) - 0.055;
+    return Math.round(clamp(srgb, 0, 1) * 255).toString(16).padStart(2, '0');
+  });
+  return `#${hex.join('')}`;
+}
 
 /* the editor's exact default state */
 const orbCfg = {
@@ -1274,7 +2066,7 @@ const orbCfg = {
   glow:       0
 };
 
-const PALETTE_TRANSITION_MS = 1400;
+const PALETTE_TRANSITION_MS = AVATAR_ICON_MODE ? 360 : 1400;
 function paletteLabs(colors) {
   const source = colors.slice(0, 4);
   while (source.length < 4) source.push(source[source.length - 1]);
@@ -1300,6 +2092,10 @@ function presentedPaletteLabs(now = performance.now()) {
     paletteTransition.from = colors.map(color => [...color]);
   }
   return colors;
+}
+
+function presentedPaletteHex(now = performance.now()) {
+  return presentedPaletteLabs(now).slice(0, paletteTransition.count).map(oklabToHex);
 }
 
 function beginPaletteTransition(colors) {
@@ -1436,10 +2232,14 @@ function updateSurface(now) {
   updatePaletteTransition(now);
   const p = easeInOutCubic(clamp((now - orbMix.start) / 900, 0, 1));
   orbMix.live = lerp(orbMix.from, orbMix.to, p);
+  // All shapes use the full animated material when WebGL is available. The
+  // lightweight vector surface is only a fallback for browsers without WebGL.
+  const usesVectorFallback = state.surface === 'orb' && !ORB && !isChessShape();
   const a = ORB ? orbMix.live : 0;
   orbCanvas.style.opacity = a.toFixed(3);
   orbCanvas.style.display = a > 0.004 ? 'block' : 'none';
-  gHead.setAttribute('fill-opacity', (1 - a).toFixed(3));
+  if (state.surface === 'flat') gHead.setAttribute('fill', orbCfg.colors[0] || '#3f19c8');
+  gHead.setAttribute('fill-opacity', usesVectorFallback ? '0' : (1 - a).toFixed(3));
   return a;
 }
 
@@ -1448,11 +2248,45 @@ new ResizeObserver(entries => {
   const r = entries[0].contentRect;
   CW = Math.max(50, r.width); CH = Math.max(50, r.height);
   stage.setAttribute('viewBox', `0 0 ${CW} ${CH}`);
+  if (iconFallbackStage) iconFallbackStage.setAttribute('viewBox', `0 0 ${CW} ${CH}`);
 }).observe(document.getElementById('stagewrap'));
 
 /* per-frame projection context */
 let PX = 1, CX = 0, CY = 0;
 const P = v => ({ x: CX + v.x * PX, y: CY - v.y * PX });
+
+function planeMeshPathD(m, halfWidth, halfHeight, squish) {
+  const a = halfWidth * squish.x, b = halfHeight * squish.y;
+  const reach = Math.max(1, Math.min(a, b));
+  const localPoint = node => {
+    let x = planeMeshSpring(node, 'x').x;
+    let y = planeMeshSpring(node, 'y').x;
+    if (node === 'top') y -= squish.bend * reach / Math.max(1, b);
+    if (node === 'right') x -= squish.bend * reach / Math.max(1, a);
+    if (node === 'bottom') y += squish.bend * reach / Math.max(1, b);
+    if (node === 'left') x += squish.bend * reach / Math.max(1, a);
+    return { x:x * a, y:y * b, z:0 };
+  };
+  const cornerNodes = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'];
+  const localCorners = cornerNodes.map(localPoint);
+  const localMidpoints = PLANE_MESH_EDGES.map(localPoint);
+  const localControls = localMidpoints.map((midpoint, index) => {
+    const start = localCorners[index], end = localCorners[(index + 1) % 4];
+    return {
+      x:midpoint.x * 2 - (start.x + end.x) / 2,
+      y:midpoint.y * 2 - (start.y + end.y) / 2,
+      z:0,
+    };
+  });
+  const corners = localCorners.map(point => P(apply(m, point)));
+  const controls = localControls.map(point => P(apply(m, point)));
+  let d = `M${corners[0].x.toFixed(2)} ${corners[0].y.toFixed(2)}`;
+  for (let i = 0; i < 4; i++) {
+    const next = corners[(i + 1) % 4], control = controls[i];
+    d += `Q${control.x.toFixed(2)} ${control.y.toFixed(2)} ${next.x.toFixed(2)} ${next.y.toFixed(2)}`;
+  }
+  return d + 'Z';
+}
 
 /* silhouette builders — return { d, outline (bool), extra } */
 function buildSilhouette(m) {
@@ -1479,11 +2313,8 @@ function buildSilhouette(m) {
     return { d: polyPath(hull(pts)), outline: true };
   }
   if (shape === 'plane') {
-    const pts = [];
-    const thin = Math.min(Math.max(c, 0.5), 2);
-    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1])
-      pts.push(P(apply(m, { x: sx * a, y: sy * b, z: sz * thin })));
-    return { d: polyPath(hull(pts)), outline: true };
+    const squish = planeTransitionSquish();
+    return { d: planeMeshPathD(m, a, b, squish), outline: true };
   }
   if (isChessShape(shape)) return buildChessSilhouette(m, shape, a, b, c);
   return { d: '', outline: false };
@@ -1525,13 +2356,39 @@ function buildCubeEdges(m) {
     ? `<path d="${polyPath(face.p.map(p => P(apply(m, p))))}"/>` : '').join('');
 }
 
+function fittedIconProjectionScale(m) {
+  const width = Math.max(1, S.dw.x), height = Math.max(1, S.dh.x), depth = Math.max(1, S.dd.x);
+  let projectedWidth, projectedHeight;
+  if (state.shape === 'sphere') {
+    const ellipse = ellipsoidSilhouette(m, width / 2, height / 2, depth / 2);
+    projectedWidth = ellipse.rx * 2;
+    projectedHeight = ellipse.ry * 2;
+  } else {
+    const effectiveDepth = state.shape === 'plane' ? Math.min(Math.max(depth / 2, .5), 2) * 2 : depth;
+    const points = [];
+    for (const sx of [-.5, .5]) for (const sy of [-.5, .5]) for (const sz of [-.5, .5])
+      points.push(apply(m, { x:sx * width, y:sy * height, z:sz * effectiveDepth }));
+    const xs = points.map(point => point.x), ys = points.map(point => point.y);
+    projectedWidth = Math.max(...xs) - Math.min(...xs);
+    projectedHeight = Math.max(...ys) - Math.min(...ys);
+    if (state.shape === 'mickey') {
+      projectedWidth *= 1.42;
+      projectedHeight *= 1.42;
+    }
+  }
+  return Math.min(CW * .9 / Math.max(1, projectedWidth), CH * .9 / Math.max(1, projectedHeight));
+}
+
 /* face placement: local eye anchor -> screen pos + tangent basis + visibility */
 function placeEye(m, lonDeg, latDeg, smoothSurface = false) {
   const cfg = SHAPES[state.shape];
   const fs = cfg.face.scale;
-  const a = S.dw.x / 2 * fs, b = S.dh.x / 2 * fs;
+  let a = S.dw.x / 2 * fs, b = S.dh.x / 2 * fs;
   let c = S.dd.x / 2 * Math.max(fs, 0.9);
   if (state.shape === 'plane') {
+    const squish = planeTransitionSquish();
+    a *= squish.x;
+    b *= squish.y;
     // Orbit eyes travel around a gently rounded virtual carrier. The rendered
     // plane stays thin, but its edge no longer produces a sudden tangent flip.
     c = smoothSurface ? Math.max(10, Math.min(a, b) * 0.16) : Math.min(c, 2);
@@ -1544,8 +2401,8 @@ function placeEye(m, lonDeg, latDeg, smoothSurface = false) {
   let pos, n, t1, t2;
   if ((state.shape === 'cube' || state.shape === 'plane' || isChessShape()) && !smoothSurface) {
     // A normalized virtual face keeps eye placement and scale independent of cube depth.
-    const nx = clamp(Math.tan(lon) * 0.9, -0.78, 0.78);
-    const ny = clamp(Math.tan(lat) * 0.9, -0.72, 0.72);
+    const nx = clamp(Math.tan(lon) * 0.9, -FACE_REACH, FACE_REACH);
+    const ny = clamp(Math.tan(lat) * 0.9, -FACE_REACH, FACE_REACH);
     pos = apply(m, { x: a * nx, y: b * ny, z: c + eyeLift });
     n = norm3(apply(m, { x: 0, y: 0, z: 1 }));
     t1 = norm3(apply(m, { x: 1, y: 0, z: 0 }));
@@ -1579,42 +2436,70 @@ function placeEye(m, lonDeg, latDeg, smoothSurface = false) {
   };
 }
 
+// Enough samples that a sampled outline reads as a curve at any size the head
+// is drawn at. 44 was fine for a 30-unit eye and visibly faceted at 110.
+const outlineDetail = (w, h) => clamp(Math.round((w + h) * 1.1), 48, 220);
+
 function eyePathD(side, m) {
-  const sgn = side === 'L' ? -1 : 1;
   const ex = EX[side];
   const cfg = SHAPES[state.shape];
-  const baseLat = cfg.face.lat;
-  const posX = side === 'L' ? S.xL.x : S.xR.x, posY = side === 'L' ? S.yL.x : S.yR.x;
-  let lon = sgn * 13 + (posX + ex.dx.x) * 0.35 + S.gx.x;
-  let lat = baseLat + (posY - ex.dy.x) * 0.35 + S.gy.x;
-  let pl;
-  if (state.expr === 26) {
-    // Start from the eyes' current visible anchors, then enter the original dizzy orbit.
-    const elapsed = clock - orbitStart;
-    const phase = side === 'L' ? 0 : 1.25;
-    lon = orbitEntry[side].lon + orbitAngle;
-    lat = orbitEntry[side].lat + (Math.sin(elapsed * 1.9 + phase) - Math.sin(phase)) * 18;
-    pl = placeEye(m, lon, lat, true);
-  } else {
-    // The farther the cursor is from center, the farther the eyes travel toward the edge.
-    lon += S.fy.x * MOUSE_EYE_LONGITUDE;
-    lat -= S.fx.x * MOUSE_EYE_LATITUDE;
-    pl = placeEye(m, lon, lat);
-  }
+  const mirrorEye = avatarMirrorPose?.eyes?.[side === 'L' ? 'left' : 'right'];
+  const anchor = mirrorEye?.anchorDegrees || currentEyeAnchor(side);
+  const orbiting = avatarMirrorPose ? !!avatarMirrorPose.orbit : state.expr === 26;
+  const pl = placeEye(m, anchor.longitude, anchor.latitude, orbiting);
   if (pl.alpha <= 0.01) return { d: '', alpha: 0 };
   const prop = (side === 'L' ? S.pL.x : S.pR.x) / 50;
   const esc = cfg.face.esc || 1;
   const w = Math.max(3, ex.w.x * prop * esc);
   let h = Math.max(3, ex.h.x * prop * esc);
   h = Math.max(3.5, h * (1 - 0.93 * clamp(S.blink.x, 0, 1)));
-  const orbiting = state.expr === 26;
-  const pts = eyePoints(w, h, ex.t.x * D2R, clamp(ex.lid.x, 0, 1), ex.bend.x, orbiting ? 128 : 44);
+  const outline = effectiveOutline(side);
+  const lid = clamp(ex.lid.x, 0, 1);
   const { c1, c2 } = pl;
-  const out = pts.map(p => ({
+  const project = p => ({
     x: pl.px + (c1.x * p.x + c2.x * p.y) * PX,
-    y: pl.py + (c1.y * p.x + c2.y * p.y) * PX
-  }));
-  return { d: orbiting ? catmullClosed(out) : polyPath(out), alpha: pl.alpha };
+    y: pl.py + (c1.y * p.x + c2.y * p.y) * PX,
+  });
+  // The surface frame is affine, so a traced path can go out as real cubics —
+  // no sampling, and no faceted edges however large the eye gets. Bend and lid
+  // warp points non-affinely, so those still take the sampled route.
+  if (isTracedOutline(outline) && !orbiting && lid <= 0 && !ex.bend.x) {
+    return { d:cubicPathD(tracedNodes(outline, w, h, ex.t.x * D2R), project), alpha: pl.alpha };
+  }
+  const pts = eyePoints(w, h, ex.t.x * D2R, lid, ex.bend.x, orbiting ? 128 : outlineDetail(w, h), outline);
+  const out = pts.map(project);
+  return { d:orbiting ? catmullClosed(out) : polyPath(out), alpha: pl.alpha };
+}
+
+// The mouth rides the same surface placement as the eyes, so it lifts, tilts
+// and fades with them. It never blinks and never takes a custom eye outline.
+function mouthPathD(m) {
+  const cfg = SHAPES[state.shape];
+  const esc = cfg.face.esc || 1;
+  const w = MO.w.x * esc, h = MO.h.x * esc;
+  if (w <= 0.5 || h <= 0.5 || state.expr === 26) return { d: '', alpha: 0 };
+  const longitude = MO.dx.x * 0.35 + S.mgx.x + S.mfy.x * MOUSE_EYE_LONGITUDE;
+  const latitude = cfg.face.lat - MO.drop.x + S.mgy.x - S.mfx.x * MOUSE_EYE_LATITUDE;
+  const pl = placeEye(m, longitude, latitude, false);
+  if (pl.alpha <= 0.01) return { d: '', alpha: 0 };
+  const outline = effectiveOutline('M');
+  const { c1, c2 } = pl;
+  const project = p => ({
+    x: pl.px + (c1.x * p.x + c2.x * p.y) * PX,
+    y: pl.py + (c1.y * p.x + c2.y * p.y) * PX,
+  });
+  if (isTracedOutline(outline) && !MO.curve.x) {
+    return {
+      d:cubicPathD(tracedNodes(outline, Math.max(4, w), Math.max(4, h), MO.t.x * D2R), project),
+      alpha: pl.alpha * clamp(w / 4, 0, 1),
+    };
+  }
+  const pts = eyePoints(Math.max(4, w), Math.max(4, h), MO.t.x * D2R, 0, -MO.curve.x,
+    outlineDetail(w, h), outline);
+  const out = pts.map(project);
+  // eyePoints floors the stadium at 4 units, so fade the last stretch out by
+  // hand or a vanishing mouth would pop.
+  return { d: polyPath(out), alpha: pl.alpha * clamp(w / 4, 0, 1) };
 }
 
 /* wireframe (sphere / mickey main body) */
@@ -1653,76 +2538,69 @@ function buildWire(m) {
   return d;
 }
 
-/* gizmo */
-const GIZ = { r: 36, pts: { x: [], y: [], z: [] } };
-function buildGizmo(m) {
-  const gx = CW - 78, gy = 78, R = GIZ.r;
-  const rings = {
-    x: { col: '#f4f4f0', fn: t => ({ x: 0, y: Math.cos(t), z: Math.sin(t) }) },
-    y: { col: '#9a9a94', fn: t => ({ x: Math.sin(t), y: 0, z: Math.cos(t) }) },
-    z: { col: '#3d3d39', fn: t => ({ x: Math.cos(t), y: Math.sin(t), z: 0 }) },
-  };
-  let html = `<circle cx="${gx}" cy="${gy}" r="${R + 9}" fill="none" stroke="#6f6f69" stroke-opacity=".55" stroke-width="1.3"/>`;
-  for (const ax of ['x', 'y', 'z']) {
-    const ring = rings[ax], N = 40, front = [], back = [], cache = [];
-    for (let i = 0; i <= N; i++) {
-      const v = apply(m, ring.fn(i / N * TAU));
-      const q = { x: gx + v.x * R, y: gy - v.y * R, z: v.z };
-      cache.push(q);
-      (v.z >= 0 ? front : back).push(i);
-    }
-    GIZ.pts[ax] = cache;
-    let dF = '', dB = '', openF = false, openB = false;
-    for (let i = 0; i <= N; i++) {
-      const q = cache[i], seg = q.z >= 0;
-      if (seg) { dF += (openF ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); openF = true; openB = false; }
-      else { dB += (openB ? 'L' : 'M') + q.x.toFixed(1) + ' ' + q.y.toFixed(1); openB = true; openF = false; }
-    }
-    html += `<path d="${dB}" fill="none" stroke="${ring.col}" stroke-opacity=".28" stroke-width="1.5"/>`;
-    html += `<path d="${dF}" fill="none" stroke="${ring.col}" stroke-opacity=".95" stroke-width="1.8"/>`;
-  }
-  GIZ.cx = gx; GIZ.cy = gy;
-  gGizmo.innerHTML = html;
-}
 
 /* ---------- main loop ---------- */
+const MIRROR_POST_INTERVAL_MS = 12;
 let lastT = performance.now();
+let lastMirrorPost = 0;
 function frame(now) {
   const dt = clamp((now - lastT) / 1000, 0.001, 1 / 30);
   lastT = now;
-  schedule(dt);
+  const mirrorActive = AVATAR_ICON_MODE && AVATAR_MIRROR_MODE && avatarMirrorPose;
+  if (mirrorActive) {
+    applyAvatarMirrorPose(avatarMirrorPose);
+  } else {
+    schedule(dt);
 
-  const k = Math.pow(state.speed * 1.85, 2);
-  S.rx.t = state.userRot.x + S.wx.x + S.fx.x;
-  S.ry.t = state.userRot.y + S.wy.x + S.fy.x;
-  S.rz.t = state.userRot.z + S.wz.x;
-  for (const key in S) {
-    const sp = S[key];
-    if (key === 'blink') sp.step(dt, 620, 1);
-    else if (key === 'wx' || key === 'wy' || key === 'wz' || key === 'gx' || key === 'gy' ||
-             key === 'fx' || key === 'fy') sp.step(dt, k * 0.35, 0.95);
-    else sp.step(dt, k, 0.9);
+    const k = Math.pow(state.speed * 1.85, 2);
+    S.rx.t = state.userRot.x + S.wx.x + S.fx.x;
+    S.ry.t = state.userRot.y + S.wy.x + S.fy.x;
+    S.rz.t = state.userRot.z + S.wz.x + directWiggle;
+    S.mgx.t = S.gx.x; S.mgy.t = S.gy.x; S.mfx.t = S.fx.x; S.mfy.t = S.fy.x;
+    for (const key in S) {
+      const sp = S[key];
+      if (key === 'blink') {
+        // This high-stiffness spring becomes unstable with a single 30fps
+        // Euler step. Small fixed substeps keep one blink from ringing open
+        // and closed on the heavier Screen 2/3 previews.
+        const steps = Math.max(1, Math.ceil(dt * 120));
+        for (let step = 0; step < steps; step++) sp.step(dt / steps, 620, 1);
+      }
+      else if (key === 'mgx' || key === 'mgy' || key === 'mfx' || key === 'mfy') sp.step(dt, k * 0.09, 0.92);
+      else if (key === 'wx' || key === 'wy' || key === 'wz' || key === 'gx' || key === 'gy' ||
+               key === 'fx' || key === 'fy') sp.step(dt, k * 0.35, 0.95);
+      else sp.step(dt, k, 0.9);
+    }
+    // Critically damp eye morphs so wide presets never overshoot into the head clip.
+    for (const side of ['L', 'R']) for (const kk of EYE_KEYS) EX[side][kk].step(dt, k, 1.0);
+    for (const kk of MOUTH_KEYS) MO[kk].step(dt, k, 1.0);
   }
-  // Critically damp eye morphs so wide presets never overshoot into the head clip.
-  for (const side of ['L', 'R']) for (const kk of EYE_KEYS) EX[side][kk].step(dt, k, 1.0);
 
-  PX = Math.min(CW, CH) / 560;
   CX = CW / 2; CY = CH / 2;
-
   const m = rotMat(S.rx.x * D2R, S.ry.x * D2R, S.rz.x * D2R);
+  PX = AVATAR_ICON_MODE
+    ? (AVATAR_ICON_FIT
+      ? fittedIconProjectionScale(m)
+      : (AVATAR_ICON_VIEWPORT || Math.min(CW, CH) * .92) / 210)
+    : Math.min(CW, CH) / 560;
   const sil = buildSilhouette(m);
   gHead.setAttribute('d', sil.d);
   gEdge.setAttribute('d', sil.d);
-  gEdge.setAttribute('stroke-opacity', state.shape === 'cube' ? '.14' : state.shape === 'plane' ? '.07' : '0');
+  gEdge.setAttribute('stroke-opacity', state.shape === 'cube'
+    ? (AVATAR_ICON_MODE ? '.32' : '.14')
+    : state.shape === 'plane' ? (AVATAR_ICON_MODE ? '.18' : '.07') : '0');
   gCubeEdges.innerHTML = buildCubeEdges(m);
+  gCubeEdges.setAttribute('stroke-opacity', AVATAR_ICON_MODE ? '.28' : '.065');
   gEyes.setAttribute('clip-path', state.eyeDistance > 0 ? 'none' : 'url(#headclip)');
   clipEl.setAttribute('d', sil.d);
   const pop = S.pop.x;
+  updateIconSurface(sil.d, pop, now);
   const orbAlpha = updateSurface(now);
   const chess3DActive = isChessShape() && window.CHESS3D?.ready;
   if (chess3DActive) {
     gHead.setAttribute('fill-opacity', '0');
     orbCanvas.style.display = 'none';
+    if (iconFallbackStage) iconFallbackStage.style.display = 'none';
     window.CHESS3D.render({
       shape: state.shape,
       width: S.dw.x * PX * pop,
@@ -1758,14 +2636,19 @@ function frame(now) {
   const eL = eyePathD('L', m), eR = eyePathD('R', m);
   gEyeL.setAttribute('d', eL.d); gEyeL.setAttribute('fill-opacity', eL.alpha.toFixed(3));
   gEyeR.setAttribute('d', eR.d); gEyeR.setAttribute('fill-opacity', eR.alpha.toFixed(3));
+  const mo = mouthPathD(m);
+  gMouth.setAttribute('d', mo.d); gMouth.setAttribute('fill-opacity', mo.alpha.toFixed(3));
 
   gRoot.setAttribute('transform', `translate(${CX} ${CY}) scale(${pop.toFixed(4)}) translate(${-CX} ${-CY})`);
 
-  buildGizmo(m);
-  syncRotInputs();
+  if (!AVATAR_ICON_MODE) syncRotInputs();
   if (devInspector.classList.contains('open') && now - lastDevUpdate > 100) {
     updateDevInspector();
     lastDevUpdate = now;
+  }
+  if (AVATAR_MIRROR_SOURCE && window.parent !== window && now - lastMirrorPost >= MIRROR_POST_INTERVAL_MS) {
+    lastMirrorPost = now;
+    window.parent.postMessage({ type:'avatar-editor-pose', profile:AVATAR_PROFILE, pose:getLivePose() }, location.origin);
   }
   requestAnimationFrame(frame);
 }
@@ -1777,25 +2660,7 @@ let drag = null;
 stage.addEventListener('pointerdown', e => {
   const r = stage.getBoundingClientRect();
   const x = e.clientX - r.left, y = e.clientY - r.top;
-  const gd = Math.hypot(x - GIZ.cx, y - GIZ.cy);
-  if (gd < GIZ.r + 16) {
-    let best = null;
-    for (const ax of ['x', 'y', 'z']) {
-      GIZ.pts[ax].forEach((q, i) => {
-        const d = Math.hypot(q.x - x, q.y - y);
-        if (!best || d < best.d) best = { d, ax, i };
-      });
-    }
-    if (best && best.d < 14) {
-      const pts = GIZ.pts[best.ax];
-      const p0 = pts[Math.max(0, best.i - 1)], p1 = pts[Math.min(pts.length - 1, best.i + 1)];
-      const tl = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
-      drag = { kind: 'gizmo', ax: best.ax, tx: (p1.x - p0.x) / tl, ty: (p1.y - p0.y) / tl, lx: x, ly: y, moved: 0 };
-      stage.setPointerCapture(e.pointerId);
-      return;
-    }
-  }
-  drag = { kind: 'head', lx: x, ly: y, moved: 0 };
+  drag = { lx: x, ly: y, moved: 0 };
   stage.setPointerCapture(e.pointerId);
   S.wf.t = 1;
   stage.style.cursor = 'grabbing';
@@ -1807,13 +2672,8 @@ stage.addEventListener('pointermove', e => {
   const dx = x - drag.lx, dy = y - drag.ly;
   drag.lx = x; drag.ly = y;
   drag.moved += Math.abs(dx) + Math.abs(dy);
-  if (drag.kind === 'head') {
-    state.userRot.y += dx * 0.4;
-    state.userRot.x += dy * 0.4;
-  } else {
-    const along = dx * drag.tx + dy * drag.ty;
-    state.userRot[drag.ax] += along * 0.8;
-  }
+  state.userRot.y += dx * 0.4;
+  state.userRot.x += dy * 0.4;
 });
 stage.addEventListener('pointerup', e => {
   if (drag && drag.moved < 5) blinkNow();
@@ -1827,7 +2687,6 @@ stage.style.cursor = 'grab';
 const stagewrap = document.getElementById('stagewrap');
 const controlPanel = document.getElementById('panel');
 const devInspector = document.getElementById('devInspector');
-
 function setDevInspectorOpen(open) {
   devInspector.classList.toggle('open', open);
   devInspector.setAttribute('aria-hidden', String(!open));
@@ -1849,7 +2708,7 @@ function setMouseFollow(enabled) {
   if (devInspector.classList.contains('open')) updateDevInspector(true);
 }
 
-const RESET_HOLD_MS = 1500;
+const RESET_HOLD_MS = 1000;
 const resetHoldEl = document.getElementById('resetHold');
 const resetHoldBar = document.getElementById('resetHoldBar');
 const resetHoldTitle = document.getElementById('resetHoldTitle');
@@ -1869,7 +2728,7 @@ function beginResetHold() {
   resetHoldActive = true;
   resetHoldStarted = performance.now();
   resetHoldTitle.textContent = 'Reset avatar?';
-  resetHoldHint.textContent = 'Hold R to confirm';
+  resetHoldHint.textContent = 'Hold R for 1 second';
   resetHoldBar.style.width = '0%';
   resetHoldEl.classList.add('show');
   resetHoldEl.setAttribute('aria-hidden', 'false');
@@ -1905,6 +2764,12 @@ document.addEventListener('keydown', e => {
     target.matches('input, textarea, select') || target.isContentEditable
   );
 
+  if (e.key === 'Escape' && eyeShapePicked.length) {
+    e.preventDefault();
+    setEyeShapePicked([]);
+    return;
+  }
+
   if (e.key === 'Escape' && devInspector.classList.contains('open')) {
     e.preventDefault();
     setDevInspectorOpen(false);
@@ -1917,15 +2782,62 @@ document.addEventListener('keydown', e => {
     return;
   }
 
+  if (e.code === 'Space' && !AVATAR_ICON_MODE && state.shape === 'plane' &&
+      !isEditing && !target.closest('button, a') && !devInspector.classList.contains('open') &&
+      !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) {
+    e.preventDefault();
+    setPlaneMeshPreview(!state.planeMeshPreview);
+    return;
+  }
+
   if (e.key.toLowerCase() === 'r' && !isEditing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) {
     e.preventDefault();
     beginResetHold();
     return;
   }
 
+  if (e.key.toLowerCase() === 'p' && !AVATAR_ICON_MODE && !isEditing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) {
+    e.preventDefault();
+    saveAvatarProfile();
+    if (window.parent !== window) {
+      window.parent.postMessage({ type:'avatar-preview-request', profile:AVATAR_PROFILE }, location.origin);
+    } else {
+      const previewProfile = ['setup', 'live', 'result'].includes(AVATAR_PROFILE) ? AVATAR_PROFILE : 'setup';
+      if (AVATAR_PROFILE === 'default') {
+        localStorage.setItem(`ttt-avatar-profile:${previewProfile}`, JSON.stringify(authoredAvatarProfile()));
+      }
+      location.href = `prototype-tests.html?v=23#editor-${previewProfile}`;
+    }
+    return;
+  }
+
   if (e.key.toLowerCase() === 'e' && !isEditing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) {
     e.preventDefault();
     setMouseFollow(!state.mouseFollow);
+    return;
+  }
+
+  if (!isEditing && !e.metaKey && !e.ctrlKey && !e.repeat) {
+    // Backtick sticks the pad on the next ten presets, so 1-0 keeps reaching
+    // the whole sheet without a chord.
+    if (e.key === '`' && !e.altKey) {
+      e.preventDefault();
+      setExpressionBank(expressionBank + 1);
+      return;
+    }
+    const digit = /^[0-9]$/.test(e.key) ? (e.key === '0' ? 9 : +e.key - 1) : -1;
+    if (digit >= 0) {
+      // Shift reaches the next ten without moving the sticky bank.
+      const display = (expressionBank + (e.shiftKey ? 1 : 0)) * 10 + digit;
+      const sourceID = VISIBLE_EXPRESSIONS[display];
+      if (sourceID != null) {
+        e.preventDefault();
+        setExpression(sourceID, true);
+        document.querySelector(`.exprcard[data-expr="${sourceID}"]`)
+          ?.scrollIntoView({ block:'nearest' });
+      }
+      return;
+    }
   }
 });
 document.addEventListener('keyup', e => {
@@ -1945,17 +2857,31 @@ function updatePointerFocus(e) {
   }
 }
 stagewrap.addEventListener('pointermove', updatePointerFocus);
-controlPanel.addEventListener('pointermove', updatePointerFocus);
-devInspector.addEventListener('pointermove', updatePointerFocus);
+stagewrap.addEventListener('pointerleave', () => {
+  if (!drag) { S.fx.t = 0; S.fy.t = 0; }
+});
 document.getElementById('app').addEventListener('pointerleave', () => {
   S.fx.t = 0; S.fy.t = 0;
 });
+
+/* On a phone there is no cursor to follow, so device tilt drives the same
+   channel: lean the phone and the head leans with it. Skipped when this page
+   is embedded — the host preview owns the sensor and forwards `avatar-pointer`
+   so the two never fight over the same springs. */
+if (window.parent === window && typeof startGyroTilt === 'function') {
+  startGyroTilt(tilt => {
+    if (!state.mouseFollow || drag) return;
+    S.fy.t = tilt.x * 42;
+    S.fx.t = tilt.y * 28;
+  });
+}
 
 /* =============================================================
    PANEL UI
    ============================================================= */
 const scrubIcon = '<svg width="13" height="9" viewBox="0 0 13 9" fill="none"><path d="M3.5 1 L1 4.5 L3.5 8 M9.5 1 L12 4.5 L9.5 8" stroke="#b6b6c0" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const linkIcon = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5.8 8.2 L8.2 5.8 M4.6 6.4 L3 8 a2.4 2.4 0 0 0 3.4 3.4 L8 9.8 M9.4 7.6 L11 6 A2.4 2.4 0 0 0 7.6 2.6 L6 4.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+const planePreviewIcon = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.5 8s2.35-4 6.5-4 6.5 4 6.5 4-2.35 4-6.5 4-6.5-4-6.5-4Z" stroke="currentColor" stroke-width="1.35"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>';
 
 const FIELDS = {
   dimW: { label: 'Width',  unit: 'u', step: 1,  dec: 0, min: 60,  max: 420, get: () => state.dims.w, set: v => { state.dims.w = v; S.dw.t = v; } },
@@ -1985,11 +2911,74 @@ function fieldHTML(key) {
   </div>`;
 }
 
+function linkedEyeFieldsHTML(leftKey, rightKey, link, label) {
+  return `<div class="linked-eye-row">
+    ${fieldHTML(leftKey)}
+    <button class="linkbtn on" data-link="${link}" type="button" aria-label="Link ${label}">${linkIcon}</button>
+    ${fieldHTML(rightKey)}
+  </div>`;
+}
+
 function dimensionFieldHTML(key, axis) {
   const f = FIELDS[key];
-  return `<div class="frow"${key === 'dimD' ? ' id="depthField"' : ''}>
+  const depthAttributes = key === 'dimD'
+    ? ` id="depthField"${state.shape === 'plane' ? ' style="display:none"' : ''}`
+    : '';
+  return `<div class="frow"${depthAttributes}>
     <span class="flabel" data-scrub="${key}"><span class="dim-axis">${axis}</span>${f.label}</span>
     <span class="inpwrap"><input data-key="${key}" value="${f.get().toFixed(f.dec)}">${f.unit === 'u' ? '' : `<span class="unit">${f.unit}</span>`}</span>
+  </div>`;
+}
+
+function eyeShapeEditorHTML() {
+  return `<div class="card">
+    <div class="cardtop">
+      <div><h3>Face editor</h3><div class="sub" style="margin-bottom:0">Both eyes and the mouth, laid out as they sit on the head. Drag handles or apply Figma SVG only when this state needs its own outline; the preset's traced shape shows until then.</div></div>
+      <div class="eye-shape-toolbar">
+        <span id="eyeShapeLinkStatus">LINKED</span>
+        <button class="linkbtn on" id="eyeShapeLinkButton" type="button" aria-label="Unlink eye outlines" aria-pressed="true" title="Edit both eyes together">${linkIcon}</button>
+      </div>
+    </div>
+    <svg class="eye-shape-stage" id="eyeShapeEditor" data-handle-mode="simple" viewBox="0 0 578 348" aria-label="Editable eye and mouth outlines">
+      <path class="eye-shape-grid" d="M131.5 16.5H446.5V331.5H131.5ZM289 16.5V331.5"/>
+      <rect class="eye-shape-marquee" id="eyeShapeMarquee" style="display:none"/>
+      ${FACE_SHAPE_SLOTS.map(side => `<g data-eye-shape-side="${side}">
+        <path class="eye-shape-path" data-eye-shape-path="${side}"/>
+        <path class="eye-shape-control-line" data-eye-shape-controls="${side}"/>
+        <path class="eye-shape-tangent-line" data-eye-shape-tangent-line="${side}"/>
+        ${Array.from({ length:MAX_FACE_NODES }, (_, index) => `<circle class="eye-shape-handle ${index % 2 ? 'detail' : 'primary'}" data-eye-shape-handle="${side}" data-eye-shape-index="${index}" r="7" tabindex="0" role="group" aria-roledescription="two-dimensional outline point"/>`).join('')}
+        ${['in', 'out'].map(arm => `<circle class="eye-shape-tangent" data-eye-shape-tangent="${side}" data-eye-shape-arm="${arm}" data-eye-shape-index="0" r="5.5" tabindex="0" style="display:none" role="group" aria-roledescription="curve handle"/>`).join('')}
+      </g>`).join('')}
+    </svg>
+    <div class="eye-shape-actions">
+      <div class="eye-shape-mode" role="group" aria-label="Face outline control detail">
+        <button class="active" data-eye-shape-mode="simple" type="button">Simple</button>
+        <button data-eye-shape-mode="fine" type="button">Fine</button>
+      </div>
+      <button class="btn" id="eyeShapeResetButton" type="button">Restore preset face</button>
+      <span class="eye-shape-status" id="eyeShapeStatus" role="status" aria-live="polite">Simple mode · four smooth handles per shape</span>
+    </div>
+    <div class="eye-shape-import">
+      <textarea id="eyeShapeSvgInput" spellcheck="false" aria-label="Figma SVG code" placeholder="Paste Figma SVG code here…"></textarea>
+      <button class="btn" id="eyeShapeImportButton" type="button">Apply SVG</button>
+    </div>
+  </div>`;
+}
+
+const xyAxesSVG = `<svg class="xy-axes" viewBox="0 0 160 124" preserveAspectRatio="none" aria-hidden="true">
+  <path d="M12 62H148M80 12V112"/>
+  <path class="xy-arrow" d="M12 62l6-4m-6 4 6 4m130-4-6-4m6 4-6 4M80 12l-4 6m4-6 4 6m-4 94-4-6m4 6 4-6"/>
+  <circle class="xy-origin" cx="80" cy="62" r="3"/>
+</svg>`;
+
+function eyePositionControlHTML(side) {
+  const label = side === 'L' ? 'Left eye' : 'Right eye';
+  return `<div class="xy-control">
+    <div class="xy-head"><span>${label}</span><span class="xy-readout" data-xy-readout="${side}">X 0 · Y 0</span></div>
+    <div class="xy-pad" data-xy-eye="${side}" tabindex="0" role="group" aria-roledescription="two-dimensional position control"
+      aria-label="${label} position. Drag to move; use arrow keys; press Home to center.">
+      ${xyAxesSVG}<span class="xy-eye-handle" aria-hidden="true"></span>
+    </div>
   </div>`;
 }
 
@@ -2001,6 +2990,8 @@ function shapeButtonsHTML() {
 }
 
 document.getElementById('pane-manual').innerHTML = `
+  <div id="manualSetupHome"></div>
+  <div id="manualSetupContent">
   <div class="card">
     <h3>Head shape</h3>
     <div class="sub">The surface changes — expressions and states stay compatible.</div>
@@ -2018,57 +3009,111 @@ document.getElementById('pane-manual').innerHTML = `
         <input type="range" id="eyeDistanceSlider" min="0" max="50" step="1" value="${state.eyeDistance}">
       </div>
     </div>
+    <div class="eye-distance-control" id="planeMeshCard" style="display:${state.shape === 'plane' ? '' : 'none'}">
+      <div class="eye-distance-head">
+        <label>Plane mesh</label>
+        <div class="plane-mesh-head-tools">
+          <span id="planeMeshPreviewStatus">BASE</span>
+          <button class="linkbtn on" id="planeMeshLinkButton" type="button" aria-label="Unlink plane mesh points" aria-pressed="true" title="Linked symmetry">${linkIcon}</button>
+        </div>
+      </div>
+      <div class="sub">Drag any corner or midpoint. The chain keeps edits symmetric; unlink it for freeform shaping.</div>
+      <svg class="plane-mesh-editor" id="planeMeshEditor" viewBox="0 0 220 164" aria-label="Editable plane mesh">
+        <rect class="plane-mesh-boundary" x="48" y="20" width="124" height="124"/>
+        <g id="planeMeshSpokes"></g>
+        <path class="plane-mesh-shape" id="planeMeshTargetPath"/>
+        ${PLANE_MESH_NODES.map(node => `<circle class="plane-mesh-handle ${PLANE_MESH_CORNERS.includes(node) ? 'corner' : ''}" data-mesh-node="${node}" r="${PLANE_MESH_CORNERS.includes(node) ? 5 : 7}" tabindex="0" role="group" aria-roledescription="two-dimensional mesh point" aria-label="${node} point"/>`).join('')}
+      </svg>
+      <div class="plane-mesh-actions">
+        <button class="btn" id="planeMeshResetButton" type="button">Reset points</button>
+        <button class="btn" id="planeMeshPreviewButton" type="button" aria-pressed="false">${planePreviewIcon}<span>Preview</span></button>
+        <span class="plane-mesh-key">Toggle<kbd>SPACE</kbd></span>
+      </div>
+    </div>
   </div>
   <div class="card">
     <h3>Head rotation</h3>
     <div class="sub">The ↔ labels are scrubbable, like in Figma. Or drag the avatar directly.</div>
     ${fieldHTML('rotX')}${fieldHTML('rotY')}${fieldHTML('rotZ')}
   </div>
+  ${eyeShapeEditorHTML()}
   <div class="card">
-    <div class="cardtop"><h3>Width</h3><button class="linkbtn on" data-link="w">${linkIcon}</button></div>
-    <div class="fgrid2">${fieldHTML('eyeWL')}${fieldHTML('eyeWR')}</div>
-  </div>
-  <div class="card">
-    <div class="cardtop"><h3>Height</h3><button class="linkbtn on" data-link="h">${linkIcon}</button></div>
-    <div class="fgrid2">${fieldHTML('eyeHL')}${fieldHTML('eyeHR')}</div>
-  </div>
-  <div class="card">
-    <div class="cardtop"><h3>Proportional size</h3><button class="linkbtn on" data-link="p">${linkIcon}</button></div>
-    <div class="fgrid2">${fieldHTML('propL')}${fieldHTML('propR')}</div>
+    <h3>Eye dimensions</h3>
+    <div class="sub">Adjust width, height, or overall size.</div>
+    <div class="eye-measure-section">
+      <h4>Width</h4>
+      ${linkedEyeFieldsHTML('eyeWL', 'eyeWR', 'w', 'eye widths')}
+    </div>
+    <div class="eye-measure-section">
+      <h4>Height</h4>
+      ${linkedEyeFieldsHTML('eyeHL', 'eyeHR', 'h', 'eye heights')}
+    </div>
+    <div class="eye-measure-section">
+      <h4>Proportional size</h4>
+      ${linkedEyeFieldsHTML('propL', 'propR', 'p', 'proportional eye sizes')}
+    </div>
   </div>
   <div class="card">
     <h3>Eye position</h3>
-    <div class="sub">Independent local coordinates on the sphere.</div>
-    <div class="fgrid2">
-      <div><div class="colhead">LEFT EYE</div>${fieldHTML('posXL')}${fieldHTML('posYL')}</div>
-      <div><div class="colhead">RIGHT EYE</div>${fieldHTML('posXR')}${fieldHTML('posYR')}</div>
+    <div class="sub">Drag each eye on its local X/Y plane.</div>
+    <div class="eye-position-grid">
+      ${eyePositionControlHTML('L')}
+      ${eyePositionControlHTML('R')}
     </div>
+  </div>
   </div>
 `;
 
-/* expression thumbnails */
+let expressionBank = 0;
+const expressionBankCount = () => Math.max(1, Math.ceil(VISIBLE_EXPRESSIONS.length / 10));
+function setExpressionBank(next) {
+  expressionBank = ((next % expressionBankCount()) + expressionBankCount()) % expressionBankCount();
+  const badge = document.getElementById('expressionBank');
+  if (!badge) return;
+  const first = expressionBank * 10;
+  const last = Math.min(first + 9, VISIBLE_EXPRESSIONS.length - 1);
+  badge.textContent = `KEYS 1-0 → ${String(first).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+}
+
+/* expression thumbnails — a flat head-on tile, the same view the sheet was drawn in */
+const THUMB_TILE = 64;
+const THUMB_UNITS = 210;                       // one tile spans the whole head
+const THUMB_SCALE = THUMB_TILE / THUMB_UNITS;
+const THUMB_A = THUMB_UNITS / 2 * 0.92;        // plane face inset, matching SHAPES.plane
+const THUMB_LAT = 8, THUMB_ESC = 0.95;
+function thumbPlace(lonDegrees, latDegrees) {
+  const reach = value => clamp(Math.tan(value * D2R) * 0.9, -FACE_REACH, FACE_REACH);
+  return {
+    x:THUMB_TILE / 2 + reach(lonDegrees) * THUMB_A * THUMB_SCALE,
+    y:THUMB_TILE / 2 - reach(latDegrees) * THUMB_A * THUMB_SCALE,
+  };
+}
+function thumbMark(shape, w, h, tiltRad, lid, bend, place) {
+  const project = p => ({ x:place.x + p.x * THUMB_SCALE, y:place.y + p.y * THUMB_SCALE });
+  const d = isTracedOutline(shape) && !lid && !bend
+    ? cubicPathD(tracedNodes(shape, w, h, tiltRad), project)
+    : polyPath(eyePoints(w, h, tiltRad, lid, bend, outlineDetail(w, h), shape).map(project));
+  return `<path d="${d}" fill="#0e0e14"/>`;
+}
 function thumbSVG(i) {
-  const [l, r] = EXPRESSIONS[i];
-  // wobbly blob, deterministic per index
-  const pts = [];
-  for (let j = 0; j < 8; j++) {
-    const a = j / 8 * TAU + i * 0.7;
-    const rad = 26 * (1 + 0.055 * Math.sin(i * 3.1 + j * 2.3) + 0.045 * Math.cos(i * 1.7 + j * 4.1));
-    pts.push({ x: 32 + rad * Math.cos(a), y: 32 + rad * Math.sin(a) });
+  const [l, r, mouth = NO_MOUTH] = EXPRESSIONS[i];
+  let svg = `<svg viewBox="0 0 ${THUMB_TILE} ${THUMB_TILE}"><rect width="${THUMB_TILE}" height="${THUMB_TILE}" rx="2" fill="#d5d0e5"/>`;
+  for (const [sign, ex, slot] of [[-1, l, 'L'], [1, r, 'R']]) {
+    const place = thumbPlace(sign * 13 + (ex.dx || 0) * 0.35, THUMB_LAT - (ex.dy || 0) * 0.35);
+    svg += thumbMark(ex.shape, ex.w * THUMB_ESC, ex.h * THUMB_ESC, ex.t * D2R,
+      ex.lid || 0, ex.bend || 0, place);
   }
-  let svg = `<svg viewBox="0 0 64 64"><path d="${catmullClosed(pts)}" fill="#a7a7a1"/>`;
-  const sc = 0.5;
-  for (const [side, ex] of [[-1, l], [1, r]]) {
-    const epts = eyePoints(ex.w * sc, ex.h * sc, ex.t * D2R, ex.lid || 0, ex.bend || 0, 36);
-    const cx = 32 + side * 6.5 + (ex.dx || 0) * sc, cy = 28 + (ex.dy || 0) * sc;
-    svg += `<path d="${polyPath(epts.map(p => ({ x: cx + p.x, y: cy + p.y })))}" fill="#0e0e14"/>`;
+  if (mouth.w > 0) {
+    const place = thumbPlace((mouth.dx || 0) * 0.35, THUMB_LAT - mouth.drop);
+    svg += thumbMark(mouth.shape, mouth.w * THUMB_ESC, mouth.h * THUMB_ESC, mouth.t * D2R,
+      0, -mouth.curve, place);
   }
   return svg + '</svg>';
 }
 
 document.getElementById('pane-expr').innerHTML = `
   <div class="card">
-    <div class="eyebrow">${VISIBLE_EXPRESSIONS.length} PRESETS</div>
+    <div class="eyebrow">${VISIBLE_EXPRESSIONS.length} PRESETS · <span id="expressionBank">KEYS 1-0 → 00-09</span> · \` FOR MORE</div>
     <div class="cardtop" style="margin-bottom:12px"><h3 style="font-size:20px">Expressions</h3>
       <span style="font-size:12px;color:#9a9aa4;margin-top:5px">Morphs with springs</span></div>
     <div class="exprgrid">${VISIBLE_EXPRESSIONS.map((i, displayIndex) =>
@@ -2095,9 +3140,16 @@ document.getElementById('pane-states').innerHTML = `
     <div class="sub">States pick and chain expressions, gaze and micro-movements while motion is active.</div>
     ${Object.entries(STATES).map(([k, s]) => `
       <div class="staterow ${k === state.stateName ? 'sel' : ''}" data-state="${k}">
-        <span class="sname">${s.label}</span>
-        <div class="statebody">
+        <div class="state-summary" data-select-state="${k}" tabindex="0" role="button" aria-label="Select ${s.label} state">
+          <span class="sname">${s.label}</span>
           <div class="sdesc">${s.desc}</div>
+          <button class="state-edit-button" data-edit-state="${k}" type="button" aria-expanded="false">Edit default state</button>
+        </div>
+        <div class="state-editor-panel" data-state-editor="${k}">
+          <div class="state-editor-intro">
+            <strong>${s.label} default</strong>
+            <span>Changes save automatically and stay independent from every other state.</span>
+          </div>
           <div class="state-colors">
             ${['Primary', 'Secondary'].map((label, index) => `
               <div class="state-color">
@@ -2108,10 +3160,143 @@ document.getElementById('pane-states').innerHTML = `
                 </div>
               </div>`).join('')}
           </div>
+          <div class="state-manual-heading">Manual setup</div>
+          <div class="state-editor-host" data-state-editor-host="${k}"></div>
         </div>
       </div>`).join('')}
   </div>
+  <div class="card">
+    <div class="eyebrow">R&amp;D</div>
+    <h3>State defaults</h3>
+    <div class="sub">Capture the selected state’s current pose, mesh, colors, and motion as a reusable JSON default.</div>
+    <div class="btnrow">
+      <button class="btn primary" id="extractStateDefault" type="button">Extract Idle JSON</button>
+      <button class="btn" id="copyStateDefaults" type="button">Copy saved</button>
+    </div>
+    <div class="state-default-meta">
+      <span id="stateDefaultStatus" role="status" aria-live="polite"></span>
+      <strong id="stateDefaultCount">0 saved</strong>
+    </div>
+  </div>
 `;
+
+const extractStateDefaultButton = document.getElementById('extractStateDefault');
+const copyStateDefaultsButton = document.getElementById('copyStateDefaults');
+const stateDefaultStatus = document.getElementById('stateDefaultStatus');
+const stateDefaultCount = document.getElementById('stateDefaultCount');
+
+function readStateDefaultExtracts() {
+  try {
+    const value = JSON.parse(localStorage.getItem(AVATAR_STATE_DEFAULTS_KEY) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+let stateDefaultExtracts = readStateDefaultExtracts();
+let stateDefaultStatusTimer = 0;
+
+function currentStateDefaultSnapshot() {
+  const stateID = state.stateName;
+  const preset = STATES[stateID];
+  const eyeShape = activeEyeShape(stateID);
+  const eyeTarget = side => Object.fromEntries(EYE_KEYS.map(key => [key, EX[side][key].t]));
+  return {
+    version: 1,
+    eyeScaleVersion: 2,
+    state: stateID,
+    label: preset.label,
+    capturedAt: new Date().toISOString(),
+    shape: state.shape,
+    dimensions: { width:state.dims.w, height:state.dims.h, depth:state.dims.d },
+    rotation: { ...state.userRot },
+    expression: {
+      sourceID: state.expr,
+      left: eyeTarget('L'),
+      right: eyeTarget('R'),
+      mouth: mouthTarget(),
+      proportions: { left:state.eyes.pL, right:state.eyes.pR },
+      positions: {
+        left:{ x:state.eyes.xL, y:state.eyes.yL },
+        right:{ x:state.eyes.xR, y:state.eyes.yR },
+      },
+      outlines: {
+        linked:eyeShape.linked,
+        left:cloneEyeShape(effectiveOutline('L')),
+        right:cloneEyeShape(effectiveOutline('R')),
+        mouth:cloneEyeShape(effectiveOutline('M')),
+      },
+      distance: state.eyeDistance,
+      appearance: { color:preset.eyeColor || '#0e0e14', glow:!!preset.eyeGlow },
+    },
+    planeMesh: { linked:state.planeMeshLinked, points:clonePlaneMesh(state.planeMesh) },
+    motion: {
+      enabled: state.motion,
+      amplitude:[...preset.amp], frequency:preset.freq, bias:[...preset.bias],
+      gaze:preset.gaze, gazeInterval:[...preset.gItv], blinkInterval:[...preset.blink],
+      bounce:preset.bounce || 0, bounceFrequency:preset.bounceFreq || 0,
+      wiggle:preset.wiggle || 0, eyeJitter:preset.eyeJitter || 0,
+    },
+    surface: { mode:state.surface, palette:[...preset.palette], parameters:{ ...orbCfg, colors:[...orbCfg.colors] } },
+  };
+}
+
+function setStateDefaultStatus(message) {
+  stateDefaultStatus.textContent = message;
+  clearTimeout(stateDefaultStatusTimer);
+  stateDefaultStatusTimer = setTimeout(() => { stateDefaultStatus.textContent = ''; }, 2600);
+}
+
+function syncStateDefaultControls() {
+  const label = STATES[state.stateName]?.label || state.stateName;
+  extractStateDefaultButton.textContent = `Extract ${label} JSON`;
+  const count = Object.keys(stateDefaultExtracts).length;
+  stateDefaultCount.textContent = `${count} saved`;
+  copyStateDefaultsButton.disabled = count === 0;
+}
+
+function downloadStateDefault(snapshot) {
+  const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type:'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `maggie-${snapshot.state}-default.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    const temp = document.createElement('textarea');
+    temp.value = text;
+    temp.style.position = 'fixed';
+    temp.style.opacity = '0';
+    document.body.appendChild(temp);
+    temp.select();
+    document.execCommand('copy');
+    temp.remove();
+  }
+}
+
+extractStateDefaultButton.addEventListener('click', () => {
+  const snapshot = currentStateDefaultSnapshot();
+  stateDefaultExtracts[snapshot.state] = snapshot;
+  try { localStorage.setItem(AVATAR_STATE_DEFAULTS_KEY, JSON.stringify(stateDefaultExtracts)); } catch (_) {}
+  downloadStateDefault(snapshot);
+  syncStateDefaultControls();
+  setStateDefaultStatus(`${snapshot.label} saved + downloaded.`);
+});
+
+copyStateDefaultsButton.addEventListener('click', async () => {
+  await copyText(JSON.stringify({ version:1, states:stateDefaultExtracts }, null, 2));
+  setStateDefaultStatus('Saved defaults copied.');
+});
+syncStateDefaultControls();
 
 /* ---------- surface tab: the Orb Editor's exact controls ---------- */
 const ORB_SLIDERS = [
@@ -2197,12 +3382,14 @@ function refreshExportSummary() {
   const box = document.getElementById('exportSummary');
   if (!box) return;
   const stateID = exportStateSelect.value;
+  captureStateSetup(state.stateName);
+  const setup = stateSetups[stateID];
   const expressionID = +exportExpressionSelect.value;
   const expressionLabel = expressionID === 26
     ? 'Orbit'
     : displayExpressionID(expressionID) === null ? `Internal ${expressionID}` : displayExpressionID(expressionID);
   box.innerHTML = `
-    <div>Shape</div><div>${SHAPES[state.shape].label}</div>
+    <div>Shape</div><div>${SHAPES[setup.shape].label}</div>
     <div>State</div><div>${STATES[stateID].label}</div>
     <div>Expression</div><div>${expressionLabel}</div>
     <div>Surface</div><div>${state.surface === 'orb' ? 'Animated gradient' : 'Flat ink'}</div>`;
@@ -2211,7 +3398,13 @@ function refreshExportSummary() {
 function getExportSnapshot() {
   const stateID = exportStateSelect.value;
   const expressionID = +exportExpressionSelect.value;
-  const expression = EXPRESSIONS[expressionID];
+  captureStateSetup(state.stateName);
+  const setup = stateSetups[stateID];
+  const expression = expressionID === STATES[stateID].expr
+    ? [setup.expression.L, setup.expression.R]
+    : EXPRESSIONS[expressionID];
+  const mouth = expressionID === STATES[stateID].expr ? setup.expression.M : expressionMouth(expressionID);
+  const eyeShape = activeEyeShape(stateID);
   const makeEye = (eye, side) => {
     const left = side === 'L';
     return {
@@ -2222,26 +3415,39 @@ function getExportSnapshot() {
       offsetY: eye.dy,
       lid: eye.lid,
       bend: eye.bend,
-      proportion: left ? state.eyes.pL : state.eyes.pR,
-      positionX: left ? state.eyes.xL : state.eyes.xR,
-      positionY: left ? state.eyes.yL : state.eyes.yR,
+      proportion: left ? setup.eyes.pL : setup.eyes.pR,
+      positionX: left ? setup.eyes.xL : setup.eyes.xR,
+      positionY: left ? setup.eyes.yL : setup.eyes.yR,
+      outline: cloneEyeShape(effectiveOutline(side, stateID)),
     };
   };
   const authoredMotion = STATES[stateID];
   return {
-    name: 'KOZI Avatar',
-    shape: state.shape,
+    name: 'Maggie Studio Avatar',
+    shape: setup.shape,
     selection: { state: stateID, expressionSourceID: expressionID },
     expression: expressionID === 26 ? 'orbit' : 'pose',
-    dimensions: { width: state.dims.w, height: state.dims.h, depth: state.dims.d },
-    rotation: { ...state.userRot },
-    eyeDistance: state.eyeDistance,
-    eyeColor: '#0e0e14',
+    dimensions: { width:setup.dims.w, height:setup.dims.h, depth:setup.dims.d },
+    rotation: { ...setup.userRot },
+    eyeDistance: setup.eyeDistance,
+    eyeColor: authoredMotion.eyeColor || '#0e0e14',
+    planeMesh: stateID === 'shocked'
+      ? clonePlaneMesh(setup.planeMesh)
+      : clonePlaneMesh(BASE_PLANE_MESH),
     eyes: { left: makeEye(expression[0], 'L'), right: makeEye(expression[1], 'R') },
+    mouth: {
+      width: mouth.w || 0,
+      height: mouth.h || 0,
+      tilt: mouth.t || 0,
+      drop: mouth.drop || 0,
+      curve: mouth.curve || 0,
+      offsetX: mouth.dx || 0,
+      outline: cloneEyeShape(effectiveOutline('M', stateID)),
+    },
     motion: { enabled: state.motion, amplitude: [...authoredMotion.amp], frequency: authoredMotion.freq },
     orbit: { speed: state.orbitSpeed, latitudeAmplitude: 18, latitudeSpeed: 1.9 },
     surface: { mode: state.surface, colors: [...authoredMotion.palette] },
-    chessGeometry: CHESS_GEOMETRY[state.shape] || null,
+    chessGeometry: CHESS_GEOMETRY[setup.shape] || null,
   };
 }
 
@@ -2279,6 +3485,7 @@ document.getElementById('downloadAvatarPackage').addEventListener('click', () =>
   const filename = window.AvatarExporter.download(exportFormat, getExportSnapshot());
   status.textContent = `${filename} is ready.`;
 });
+setExpressionBank(0);
 syncDeveloperExportSelection();
 
 function renderOrbColors() {
@@ -2342,6 +3549,8 @@ function setField(key, v, fromLink) {
   f.set(v);
   const inp = inputEl(key);
   if (inp && document.activeElement !== inp) inp.value = v.toFixed(f.dec);
+  if (key.startsWith('pos')) updateEyePositionControls();
+  if (key.startsWith('eyeW') || key.startsWith('eyeH') || key.startsWith('prop')) updateEyeShapeEditor();
   if (!fromLink && f.link && state.links[f.link]) {
     const other = LINK_PAIRS[f.link].find(k => k !== key);
     setField(other, v, true);
@@ -2377,6 +3586,927 @@ document.querySelectorAll('[data-link]').forEach(btn => {
     if (state.links[g]) setField(LINK_PAIRS[g][0], FIELDS[LINK_PAIRS[g][0]].get());
   });
 });
+const EYE_POSITION_KEYS = {
+  L: { x: 'posXL', y: 'posYL' },
+  R: { x: 'posXR', y: 'posYR' },
+};
+
+function updateEyePositionControls() {
+  for (const [side, keys] of Object.entries(EYE_POSITION_KEYS)) {
+    const pad = document.querySelector(`[data-xy-eye="${side}"]`);
+    if (!pad) continue;
+    const x = FIELDS[keys.x].get();
+    const y = FIELDS[keys.y].get();
+    const xRatio = (x - FIELDS[keys.x].min) / (FIELDS[keys.x].max - FIELDS[keys.x].min);
+    const yRatio = (FIELDS[keys.y].max - y) / (FIELDS[keys.y].max - FIELDS[keys.y].min);
+    const handle = pad.querySelector('.xy-eye-handle');
+    handle.style.left = `${10 + xRatio * 80}%`;
+    handle.style.top = `${10 + yRatio * 80}%`;
+    const readout = document.querySelector(`[data-xy-readout="${side}"]`);
+    if (readout) readout.textContent = `X ${Math.round(x)} · Y ${Math.round(y)}`;
+    const label = side === 'L' ? 'Left eye' : 'Right eye';
+    pad.setAttribute('aria-label', `${label} position, X ${Math.round(x)}, Y ${Math.round(y)}. Drag to move; use arrow keys; press Home to center.`);
+  }
+}
+
+function setEyePositionFromPointer(pad, event) {
+  const keys = EYE_POSITION_KEYS[pad.dataset.xyEye];
+  const rect = pad.getBoundingClientRect();
+  const xRatio = clamp((event.clientX - rect.left - rect.width * 0.1) / (rect.width * 0.8), 0, 1);
+  const yRatio = clamp((event.clientY - rect.top - rect.height * 0.1) / (rect.height * 0.8), 0, 1);
+  setField(keys.x, Math.round(FIELDS[keys.x].min + xRatio * (FIELDS[keys.x].max - FIELDS[keys.x].min)));
+  setField(keys.y, Math.round(FIELDS[keys.y].max - yRatio * (FIELDS[keys.y].max - FIELDS[keys.y].min)));
+}
+
+document.querySelectorAll('[data-xy-eye]').forEach(pad => {
+  pad.addEventListener('pointerdown', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    pad.setPointerCapture(event.pointerId);
+    setEyePositionFromPointer(pad, event);
+    pad.focus();
+  });
+  pad.addEventListener('pointermove', event => {
+    if (!pad.hasPointerCapture(event.pointerId)) return;
+    event.stopPropagation();
+    setEyePositionFromPointer(pad, event);
+  });
+  const finish = event => {
+    if (pad.hasPointerCapture(event.pointerId)) pad.releasePointerCapture(event.pointerId);
+  };
+  pad.addEventListener('pointerup', finish);
+  pad.addEventListener('pointercancel', finish);
+  pad.addEventListener('keydown', event => {
+    const keys = EYE_POSITION_KEYS[pad.dataset.xyEye];
+    const step = event.shiftKey ? 10 : 2;
+    if (event.key === 'Home') {
+      event.preventDefault();
+      setField(keys.x, 0);
+      setField(keys.y, 0);
+      return;
+    }
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === 'ArrowLeft') setField(keys.x, FIELDS[keys.x].get() - step);
+    if (event.key === 'ArrowRight') setField(keys.x, FIELDS[keys.x].get() + step);
+    if (event.key === 'ArrowUp') setField(keys.y, FIELDS[keys.y].get() + step);
+    if (event.key === 'ArrowDown') setField(keys.y, FIELDS[keys.y].get() - step);
+  });
+});
+updateEyePositionControls();
+
+// The stage is a head-on view of the face, so handles sit where the marks
+// actually land on the head rather than in two abstract boxes.
+const FACE_EDITOR = { cx:289, cy:174, scale:1.5, a:210 / 2 * 0.92 };
+function faceEditorPlace(lonDegrees, latDegrees) {
+  const span = FACE_EDITOR.a * FACE_EDITOR.scale;
+  const reach = value => clamp(Math.tan(value * D2R) * 0.9, -FACE_REACH, FACE_REACH);
+  return {
+    cx:FACE_EDITOR.cx + reach(lonDegrees) * span,
+    cy:FACE_EDITOR.cy - reach(latDegrees) * span,
+  };
+}
+const eyeShapeEditor = document.getElementById('eyeShapeEditor');
+const eyeShapeLinkButton = document.getElementById('eyeShapeLinkButton');
+const eyeShapeResetButton = document.getElementById('eyeShapeResetButton');
+const eyeShapeSvgInput = document.getElementById('eyeShapeSvgInput');
+const eyeShapeImportButton = document.getElementById('eyeShapeImportButton');
+const eyeShapeStatus = document.getElementById('eyeShapeStatus');
+let eyeShapeLayouts = {};
+let eyeShapeDrag = null;
+let eyeShapeSelection = null;
+/* Points picked out with a marquee. They move together, and while they do the
+   link mirror stays out of the way — the picked set is what the user meant. */
+let eyeShapePicked = [];
+const eyeShapeIsPicked = (side, index) =>
+  eyeShapePicked.some(entry => entry.side === side && entry.index === index);
+function setEyeShapePicked(next) {
+  eyeShapePicked = next;
+  updateEyeShapeEditor();
+}
+function setEyeShapeSelection(next) {
+  if (eyeShapeSelection?.side === next?.side && eyeShapeSelection?.index === next?.index) return;
+  eyeShapeSelection = next;
+  updateEyeShapeEditor();
+}
+let activeEyeShapeSide = 'L';
+let eyeShapeHandleMode = 'simple';
+
+function eyeShapeLayout(side) {
+  const cfg = SHAPES[state.shape];
+  const esc = cfg.face.esc || 1;
+  let layout;
+  if (side === 'M') {
+    layout = {
+      ...faceEditorPlace(MO.dx.t * 0.35, cfg.face.lat - MO.drop.t),
+      side,
+      width:Math.max(4, MO.w.t * esc),
+      height:Math.max(4, MO.h.t * esc),
+      tilt:MO.t.t * D2R,
+      lid:0,
+      bend:-MO.curve.t,
+    };
+  } else {
+    const ex = EX[side];
+    const sign = side === 'L' ? -1 : 1;
+    const proportion = (side === 'L' ? state.eyes.pL : state.eyes.pR) / 50;
+    const positionX = side === 'L' ? state.eyes.xL : state.eyes.xR;
+    const positionY = side === 'L' ? state.eyes.yL : state.eyes.yR;
+    layout = {
+      ...faceEditorPlace(sign * 13 + (positionX + ex.dx.t) * 0.35,
+        cfg.face.lat + (positionY - ex.dy.t) * 0.35),
+      side,
+      width:Math.max(4, ex.w.t * proportion * esc),
+      height:Math.max(4, ex.h.t * proportion * esc),
+      tilt:ex.t.t * D2R,
+      lid:clamp(ex.lid.t, 0, 1),
+      bend:ex.bend.t,
+    };
+  }
+  layout.scaleX = FACE_EDITOR.scale;
+  layout.scaleY = FACE_EDITOR.scale;
+  layout.baseHandles = BASE_EYE_SHAPE.map((_, index) => eyeHandleAnchor(layout.width, layout.height, index));
+  return layout;
+}
+
+function finishEyeShapeHandle(point, layout) {
+  const p = { ...point };
+  const hw = layout.width / 2, hh = layout.height / 2;
+  const bend = clamp(layout.bend, -1.2, 1.2) * clamp((layout.height - 5) / 10, 0, 1);
+  if (bend) p.y += bend * hh * .9 * ((p.x / hw) ** 2 - .5);
+  if (layout.tilt) {
+    const x = p.x, y = p.y, ct = Math.cos(layout.tilt), st = Math.sin(layout.tilt);
+    p.x = x * ct - y * st;
+    p.y = x * st + y * ct;
+  }
+  if (layout.lid > 0) p.y = Math.max(p.y, -hh + layout.lid * 1.55 * hh);
+  return p;
+}
+
+function eyeShapeHandleLocalPoint(layout, index) {
+  const outline = effectiveOutline(layout.side);
+  if (isTracedOutline(outline)) {
+    const node = outline.nodes[index];
+    return finishEyeShapeHandle({ x:node.x * layout.width, y:node.y * layout.height }, layout);
+  }
+  const base = layout.baseHandles[index], offset = outline[index];
+  return finishEyeShapeHandle({
+    x:base.x + offset.x * layout.width,
+    y:base.y + offset.y * layout.height,
+  }, layout);
+}
+
+function eyeShapeOffsetFromDisplayPoint(layout, index, displayPoint) {
+  const rotatedX = (displayPoint.x - layout.cx) / layout.scaleX;
+  const rotatedY = (displayPoint.y - layout.cy) / layout.scaleY;
+  const ct = Math.cos(layout.tilt), st = Math.sin(layout.tilt);
+  const localX = rotatedX * ct + rotatedY * st;
+  let localY = -rotatedX * st + rotatedY * ct;
+  const hw = layout.width / 2, hh = layout.height / 2;
+  const bend = clamp(layout.bend, -1.2, 1.2) * clamp((layout.height - 5) / 10, 0, 1);
+  if (bend) localY -= bend * hh * .9 * ((localX / hw) ** 2 - .5);
+  if (isTracedOutline(effectiveOutline(layout.side))) {
+    return { x:localX / layout.width, y:localY / layout.height };
+  }
+  const base = layout.baseHandles[index];
+  return { x:(localX - base.x) / layout.width, y:(localY - base.y) / layout.height };
+}
+
+/* Effective tangent pair for a point, in the same fraction-of-the-eye-box units the
+   anchors use. Falls back to the Catmull-Rom default when nothing is stored. */
+function eyeShapeTangentVectors(layout, index) {
+  const outline = effectiveOutline(layout.side);
+  if (isTracedOutline(outline)) {
+    const node = outline.nodes[index];
+    return { out:{ x:node.ox, y:node.oy }, in:{ x:node.ix, y:node.iy } };
+  }
+  const total = outlineNodeCount(outline);
+  const localAt = at => {
+    const base = layout.baseHandles[at];
+    return { x:base.x + outline[at].x * layout.width, y:base.y + outline[at].y * layout.height };
+  };
+  const previous = localAt((index + total - 1) % total);
+  const next = localAt((index + 1) % total);
+  const auto = {
+    x:(next.x - previous.x) / 6 / layout.width,
+    y:(next.y - previous.y) / 6 / layout.height,
+  };
+  const point = outline[index];
+  return {
+    out:eyeTangent(point, 'ox', 'oy') || { ...auto },
+    in:eyeTangent(point, 'ix', 'iy') || { x:-auto.x, y:-auto.y },
+  };
+}
+
+function eyeShapeTangentLocalPoint(layout, index, arm) {
+  const outline = effectiveOutline(layout.side);
+  const vector = eyeShapeTangentVectors(layout, index)[arm];
+  const anchor = isTracedOutline(outline)
+    ? { x:outline.nodes[index].x, y:outline.nodes[index].y }
+    : outline[index];
+  const base = isTracedOutline(outline) ? { x:0, y:0 } : layout.baseHandles[index];
+  return finishEyeShapeHandle({
+    x:base.x + (anchor.x + vector.x) * layout.width,
+    y:base.y + (anchor.y + vector.y) * layout.height,
+  }, layout);
+}
+
+function smoothEyeShapeHandles(outline) {
+  for (const index of [1, 3, 5, 7]) {
+    const before = outline[(index + 7) % EYE_SHAPE_HANDLE_COUNT];
+    const after = outline[(index + 1) % EYE_SHAPE_HANDLE_COUNT];
+    outline[index] = { ...outline[index], x:(before.x + after.x) / 2, y:(before.y + after.y) / 2 };
+  }
+  return outline;
+}
+
+function setEyeShapeStatus(message, tone = '') {
+  eyeShapeStatus.textContent = message;
+  if (tone) eyeShapeStatus.dataset.tone = tone;
+  else delete eyeShapeStatus.dataset.tone;
+}
+
+function updateEyeShapeEditor() {
+  if (!eyeShapeEditor) return;
+  const eyeShape = activeEyeShape();
+  for (const side of FACE_SHAPE_SLOTS) {
+    const layout = eyeShapeLayout(side);
+    eyeShapeLayouts[side] = layout;
+    const group = eyeShapeEditor.querySelector(`[data-eye-shape-side="${side}"]`);
+    // A preset with no mouth has nothing to drag, so the whole group steps aside.
+    const hidden = side === 'M' && MO.w.t <= 0;
+    group.style.display = hidden ? 'none' : '';
+    if (hidden) { eyeShapeLayouts[side] = layout; continue; }
+    const outline = effectiveOutline(side);
+    const displayPoint = point => ({
+      x:layout.cx + point.x * layout.scaleX,
+      y:layout.cy + point.y * layout.scaleY,
+    });
+    const d = isTracedOutline(outline) && !layout.lid && !layout.bend
+      ? cubicPathD(tracedNodes(outline, layout.width, layout.height, layout.tilt), displayPoint)
+      : polyPath(eyePoints(layout.width, layout.height, layout.tilt, layout.lid, layout.bend,
+          outlineDetail(layout.width, layout.height), outline).map(displayPoint));
+    eyeShapeEditor.querySelector(`[data-eye-shape-path="${side}"]`).setAttribute('d', d);
+    const nodeCount = outlineNodeCount(outline);
+    const handlePoints = [];
+    for (let index = 0; index < MAX_FACE_NODES; index++) {
+      const handle = eyeShapeEditor.querySelector(`[data-eye-shape-handle="${side}"][data-eye-shape-index="${index}"]`);
+      if (index >= nodeCount) { handle.style.display = 'none'; continue; }
+      handle.style.display = '';
+      // A traced path has no odd "detail" points to fold away, so every node stays.
+      handle.classList.toggle('detail', !isTracedOutline(outline) && index % 2 === 1);
+      const point = displayPoint(eyeShapeHandleLocalPoint(layout, index));
+      handlePoints.push(point);
+      const value = isTracedOutline(outline) ? outline.nodes[index] : outline[index];
+      handle.classList.toggle('picked', eyeShapeIsPicked(side, index));
+      handle.setAttribute('cx', point.x.toFixed(2));
+      handle.setAttribute('cy', point.y.toFixed(2));
+      handle.setAttribute('aria-label', `${FACE_SLOT_LABELS[side]} outline point ${index + 1} of ${nodeCount}, X ${Math.round(value.x * 100)}, Y ${Math.round(value.y * 100)}. Drag or use arrow keys; press Home to reset.`);
+    }
+    eyeShapeEditor.querySelector(`[data-eye-shape-controls="${side}"]`).setAttribute('d', catmullClosed(handlePoints));
+    const selected = eyeShapeSelection?.side === side ? eyeShapeSelection.index : null;
+    const tangentLine = eyeShapeEditor.querySelector(`[data-eye-shape-tangent-line="${side}"]`);
+    const arms = ['in', 'out'].map(arm =>
+      eyeShapeEditor.querySelector(`[data-eye-shape-tangent="${side}"][data-eye-shape-arm="${arm}"]`));
+    if (selected == null) {
+      tangentLine.setAttribute('d', '');
+      for (const arm of arms) arm.style.display = 'none';
+    } else {
+      const anchor = handlePoints[selected];
+      const ends = ['in', 'out'].map(arm => displayPoint(eyeShapeTangentLocalPoint(layout, selected, arm)));
+      tangentLine.setAttribute('d', `M${ends[0].x.toFixed(2)} ${ends[0].y.toFixed(2)}L${anchor.x.toFixed(2)} ${anchor.y.toFixed(2)}L${ends[1].x.toFixed(2)} ${ends[1].y.toFixed(2)}`);
+      arms.forEach((arm, position) => {
+        arm.style.display = '';
+        arm.setAttribute('cx', ends[position].x.toFixed(2));
+        arm.setAttribute('cy', ends[position].y.toFixed(2));
+        arm.dataset.eyeShapeIndex = selected;
+        arm.setAttribute('aria-label', `${FACE_SLOT_LABELS[side]} curve handle ${position ? 'out' : 'in'} on point ${selected + 1}. Drag or use arrow keys, hold Alt to break the pair, press Home to reset.`);
+      });
+    }
+  }
+  const isNeutral = !FACE_SHAPE_SLOTS.some(side => eyeShapeIsCustom(eyeShape[side]));
+  const detail = eyeShapeHandleMode === 'simple' ? 'four smooth handles per shape' : 'eight detailed handles per shape';
+  const hint = eyeShapePicked.length > 1
+    ? ` · ${eyeShapePicked.length} points picked, drag any one to move them together`
+    : eyeShapeSelection ? ' · drag the blue curve handles, Alt to break the pair'
+    : ' · click a point to curve it, or drag a box to pick several';
+  setEyeShapeStatus(`${STATES[state.stateName].label} · ${isNeutral ? 'preset face' : 'custom outline'} · ${detail}${hint}`);
+}
+
+function syncEyeShapeLinkButton() {
+  const linked = activeEyeShape().linked;
+  eyeShapeLinkButton.classList.toggle('on', linked);
+  eyeShapeLinkButton.setAttribute('aria-pressed', String(linked));
+  eyeShapeLinkButton.setAttribute('aria-label', linked ? 'Unlink eye outlines' : 'Link eye outlines');
+  eyeShapeLinkButton.title = linked ? 'Editing both eyes together' : 'Editing each eye separately';
+  document.getElementById('eyeShapeLinkStatus').textContent = linked ? 'LINKED' : 'FREE';
+}
+
+function mirrorEyeShape(eyeShape, side) {
+  if (side === 'M' || !eyeShape.linked) return;
+  eyeShape[side === 'L' ? 'R' : 'L'] = cloneEyeShape(eyeShape[side]);
+}
+
+function applyEyeShapeHandle(side, index, x, y, mirror = true) {
+  const eyeShape = activeEyeShape();
+  const outline = ensureEditableOutline(side);
+  if (isTracedOutline(outline)) {
+    outline.nodes[index] = { ...outline.nodes[index], x:clamp(x, -2, 2), y:clamp(y, -2, 2) };
+  } else {
+    outline[index] = { ...outline[index], x:clamp(x, -EYE_OFFSET_LIMIT, EYE_OFFSET_LIMIT), y:clamp(y, -EYE_OFFSET_LIMIT, EYE_OFFSET_LIMIT) };
+    if (eyeShapeHandleMode === 'simple' && index % 2 === 0) smoothEyeShapeHandles(outline);
+  }
+  if (mirror) mirrorEyeShape(eyeShape, side);
+  activeEyeShapeSide = side;
+}
+
+function setEyeShapeHandle(side, index, x, y) {
+  const eyeShape = activeEyeShape();
+  const outline = ensureEditableOutline(side);
+  if (isTracedOutline(outline)) {
+    outline.nodes[index] = { ...outline.nodes[index], x:clamp(x, -2, 2), y:clamp(y, -2, 2) };
+  } else {
+    outline[index] = { ...outline[index], x:clamp(x, -EYE_OFFSET_LIMIT, EYE_OFFSET_LIMIT), y:clamp(y, -EYE_OFFSET_LIMIT, EYE_OFFSET_LIMIT) };
+    if (eyeShapeHandleMode === 'simple' && index % 2 === 0) smoothEyeShapeHandles(outline);
+  }
+  mirrorEyeShape(eyeShape, side);
+  activeEyeShapeSide = side;
+  updateEyeShapeEditor();
+}
+
+function setEyeShapeTangent(side, index, arm, x, y, mirror) {
+  const eyeShape = activeEyeShape();
+  const outline = ensureEditableOutline(side);
+  const traced = isTracedOutline(outline);
+  const list = traced ? outline.nodes : outline;
+  const point = { ...list[index] };
+  const vx = clamp(x, -EYE_TANGENT_LIMIT, EYE_TANGENT_LIMIT);
+  const vy = clamp(y, -EYE_TANGENT_LIMIT, EYE_TANGENT_LIMIT);
+  const near = arm === 'out' ? ['ox', 'oy'] : ['ix', 'iy'];
+  const far = arm === 'out' ? ['ix', 'iy'] : ['ox', 'oy'];
+  point[near[0]] = vx;
+  point[near[1]] = vy;
+  if (mirror) { point[far[0]] = -vx; point[far[1]] = -vy; }
+  list[index] = point;
+  mirrorEyeShape(eyeShape, side);
+  activeEyeShapeSide = side;
+  updateEyeShapeEditor();
+}
+
+function resetEyeShapeTangent(side, index) {
+  const eyeShape = activeEyeShape();
+  const outline = ensureEditableOutline(side);
+  const list = isTracedOutline(outline) ? outline.nodes : outline;
+  const point = { ...list[index] };
+  for (const key of EYE_TANGENT_KEYS) point[key] = isTracedOutline(outline) ? 0 : null;
+  list[index] = point;
+  mirrorEyeShape(eyeShape, side);
+  updateEyeShapeEditor();
+}
+
+function eyeShapeEditorPoint(event) {
+  const rect = eyeShapeEditor.getBoundingClientRect();
+  return {
+    x:(event.clientX - rect.left) / rect.width * 578,
+    y:(event.clientY - rect.top) / rect.height * 348,
+  };
+}
+
+eyeShapeEditor.addEventListener('pointerdown', event => {
+  const tangent = event.target.closest('[data-eye-shape-tangent]');
+  if (tangent) {
+    event.preventDefault();
+    event.stopPropagation();
+    const pointer = eyeShapeEditorPoint(event);
+    eyeShapeDrag = {
+      side:tangent.dataset.eyeShapeTangent,
+      index:+tangent.dataset.eyeShapeIndex,
+      arm:tangent.dataset.eyeShapeArm,
+      mirror:!event.altKey,
+      grabOffset:{ x:+tangent.getAttribute('cx') - pointer.x, y:+tangent.getAttribute('cy') - pointer.y },
+    };
+    tangent.focus();
+    eyeShapeEditor.setPointerCapture(event.pointerId);
+    return;
+  }
+  const handle = event.target.closest('[data-eye-shape-handle]');
+  if (!handle) {
+    event.preventDefault();
+    const pointer = eyeShapeEditorPoint(event);
+    eyeShapeDrag = { marquee:{ x0:pointer.x, y0:pointer.y, x1:pointer.x, y1:pointer.y } };
+    setEyeShapeSelection(null);
+    if (!event.shiftKey) eyeShapePicked = [];
+    drawEyeShapeMarquee(eyeShapeDrag.marquee);
+    eyeShapeEditor.setPointerCapture(event.pointerId);
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  const side = handle.dataset.eyeShapeHandle, index = +handle.dataset.eyeShapeIndex;
+  activeEyeShapeSide = side;
+  const pointer = eyeShapeEditorPoint(event);
+  if (eyeShapePicked.length > 1 && eyeShapeIsPicked(side, index)) {
+    eyeShapeDrag = {
+      group:eyeShapePicked.map(entry => {
+        const target = eyeShapeEditor.querySelector(
+          `[data-eye-shape-handle="${entry.side}"][data-eye-shape-index="${entry.index}"]`);
+        return { ...entry, x:+target.getAttribute('cx'), y:+target.getAttribute('cy') };
+      }),
+      origin:pointer,
+    };
+    handle.focus();
+    eyeShapeEditor.setPointerCapture(event.pointerId);
+    return;
+  }
+  if (!event.shiftKey) eyeShapePicked = [];
+  eyeShapeDrag = {
+    side, index,
+    grabOffset:{ x:+handle.getAttribute('cx') - pointer.x, y:+handle.getAttribute('cy') - pointer.y },
+  };
+  setEyeShapeSelection({ side, index });
+  handle.focus();
+  eyeShapeEditor.setPointerCapture(event.pointerId);
+});
+
+function drawEyeShapeMarquee(box) {
+  const rect = document.getElementById('eyeShapeMarquee');
+  if (!rect) return;
+  if (!box) { rect.style.display = 'none'; return; }
+  rect.style.display = '';
+  rect.setAttribute('x', Math.min(box.x0, box.x1).toFixed(1));
+  rect.setAttribute('y', Math.min(box.y0, box.y1).toFixed(1));
+  rect.setAttribute('width', Math.abs(box.x1 - box.x0).toFixed(1));
+  rect.setAttribute('height', Math.abs(box.y1 - box.y0).toFixed(1));
+}
+
+function pickInsideMarquee(box, additive) {
+  const left = Math.min(box.x0, box.x1), right = Math.max(box.x0, box.x1);
+  const top = Math.min(box.y0, box.y1), bottom = Math.max(box.y0, box.y1);
+  const found = additive ? eyeShapePicked.slice() : [];
+  for (const side of FACE_SHAPE_SLOTS) {
+    const layout = eyeShapeLayouts[side];
+    if (!layout || (side === 'M' && MO.w.t <= 0)) continue;
+    const outline = effectiveOutline(side);
+    const total = outlineNodeCount(outline);
+    for (let index = 0; index < total; index++) {
+      // Never pick a handle the user cannot see — simple mode folds the odd
+      // ones away on a hand-drawn outline.
+      if (!isTracedOutline(outline) && eyeShapeHandleMode === 'simple' && index % 2) continue;
+      const handle = eyeShapeEditor.querySelector(
+        `[data-eye-shape-handle="${side}"][data-eye-shape-index="${index}"]`);
+      const x = +handle.getAttribute('cx'), y = +handle.getAttribute('cy');
+      if (x >= left && x <= right && y >= top && y <= bottom && !eyeShapeIsPicked(side, index)) {
+        found.push({ side, index });
+      }
+    }
+  }
+  return found;
+}
+eyeShapeEditor.addEventListener('pointermove', event => {
+  if (!eyeShapeDrag) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const point = eyeShapeEditorPoint(event);
+  if (eyeShapeDrag.marquee) {
+    eyeShapeDrag.marquee.x1 = point.x;
+    eyeShapeDrag.marquee.y1 = point.y;
+    drawEyeShapeMarquee(eyeShapeDrag.marquee);
+    return;
+  }
+  if (eyeShapeDrag.group) {
+    const dx = point.x - eyeShapeDrag.origin.x, dy = point.y - eyeShapeDrag.origin.y;
+    for (const entry of eyeShapeDrag.group) {
+      const layout = eyeShapeLayouts[entry.side];
+      const offset = eyeShapeOffsetFromDisplayPoint(layout, entry.index, { x:entry.x + dx, y:entry.y + dy });
+      applyEyeShapeHandle(entry.side, entry.index, offset.x, offset.y, false);
+    }
+    updateEyeShapeEditor();
+    return;
+  }
+  const layout = eyeShapeLayouts[eyeShapeDrag.side];
+  const desired = {
+    x:point.x + eyeShapeDrag.grabOffset.x,
+    y:point.y + eyeShapeDrag.grabOffset.y,
+  };
+  const offset = eyeShapeOffsetFromDisplayPoint(layout, eyeShapeDrag.index, desired);
+  if (eyeShapeDrag.arm) {
+    const dragOutline = effectiveOutline(eyeShapeDrag.side);
+    const anchor = isTracedOutline(dragOutline)
+      ? dragOutline.nodes[eyeShapeDrag.index] : dragOutline[eyeShapeDrag.index];
+    setEyeShapeTangent(eyeShapeDrag.side, eyeShapeDrag.index, eyeShapeDrag.arm,
+      offset.x - anchor.x, offset.y - anchor.y, eyeShapeDrag.mirror);
+    return;
+  }
+  setEyeShapeHandle(eyeShapeDrag.side, eyeShapeDrag.index, offset.x, offset.y);
+});
+const finishEyeShapeDrag = event => {
+  if (!eyeShapeDrag) return;
+  if (eyeShapeDrag.marquee) {
+    const box = eyeShapeDrag.marquee;
+    const dragged = Math.abs(box.x1 - box.x0) > 2 || Math.abs(box.y1 - box.y0) > 2;
+    eyeShapePicked = dragged ? pickInsideMarquee(box, event.shiftKey) : [];
+    drawEyeShapeMarquee(null);
+    eyeShapeDrag = null;
+    updateEyeShapeEditor();
+    if (event.pointerId != null && eyeShapeEditor.hasPointerCapture(event.pointerId)) {
+      eyeShapeEditor.releasePointerCapture(event.pointerId);
+    }
+    return;
+  }
+  eyeShapeDrag = null;
+  if (eyeShapeEditor.hasPointerCapture(event.pointerId)) eyeShapeEditor.releasePointerCapture(event.pointerId);
+};
+eyeShapeEditor.addEventListener('pointerup', finishEyeShapeDrag);
+eyeShapeEditor.addEventListener('pointercancel', finishEyeShapeDrag);
+eyeShapeEditor.addEventListener('dblclick', event => {
+  const tangent = event.target.closest('[data-eye-shape-tangent]');
+  if (tangent) {
+    event.preventDefault();
+    resetEyeShapeTangent(tangent.dataset.eyeShapeTangent, +tangent.dataset.eyeShapeIndex);
+    return;
+  }
+  const handle = event.target.closest('[data-eye-shape-handle]');
+  if (!handle) return;
+  event.preventDefault();
+  setEyeShapeHandle(handle.dataset.eyeShapeHandle, +handle.dataset.eyeShapeIndex, 0, 0);
+});
+eyeShapeEditor.addEventListener('keydown', event => {
+  const tangent = event.target.closest('[data-eye-shape-tangent]');
+  if (tangent) {
+    const side = tangent.dataset.eyeShapeTangent, index = +tangent.dataset.eyeShapeIndex;
+    if (event.key === 'Home') {
+      event.preventDefault();
+      resetEyeShapeTangent(side, index);
+      return;
+    }
+    if (!['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'].includes(event.key)) return;
+    event.preventDefault();
+    const step = event.shiftKey ? .04 : .01;
+    const arm = tangent.dataset.eyeShapeArm;
+    const current = eyeShapeTangentVectors(eyeShapeLayouts[side], index)[arm];
+    setEyeShapeTangent(side, index, arm,
+      current.x + (event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0),
+      current.y + (event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0),
+      !event.altKey);
+    return;
+  }
+  const handle = event.target.closest('[data-eye-shape-handle]');
+  if (!handle) return;
+  const side = handle.dataset.eyeShapeHandle, index = +handle.dataset.eyeShapeIndex;
+  const currentOutline = effectiveOutline(side);
+  const current = isTracedOutline(currentOutline) ? currentOutline.nodes[index] : currentOutline[index];
+  if (event.key === 'Home') {
+    event.preventDefault();
+    setEyeShapeHandle(side, index, 0, 0);
+    return;
+  }
+  if (!['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'].includes(event.key)) return;
+  event.preventDefault();
+  const step = event.shiftKey ? .04 : .01;
+  const dx = event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0;
+  const dy = event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0;
+  if (eyeShapePicked.length > 1 && eyeShapeIsPicked(side, index)) {
+    for (const entry of eyeShapePicked) {
+      const outline = effectiveOutline(entry.side);
+      const node = isTracedOutline(outline) ? outline.nodes[entry.index] : outline[entry.index];
+      applyEyeShapeHandle(entry.side, entry.index, node.x + dx, node.y + dy, false);
+    }
+    updateEyeShapeEditor();
+    return;
+  }
+  setEyeShapeHandle(side, index, current.x + dx, current.y + dy);
+});
+
+function setEyeShapeHandleMode(mode) {
+  eyeShapeHandleMode = mode === 'fine' ? 'fine' : 'simple';
+  eyeShapeEditor.dataset.handleMode = eyeShapeHandleMode;
+  if (eyeShapeHandleMode === 'simple' && eyeShapeSelection && eyeShapeSelection.index % 2) eyeShapeSelection = null;
+  document.querySelectorAll('[data-eye-shape-mode]').forEach(button => {
+    const active = button.dataset.eyeShapeMode === eyeShapeHandleMode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  updateEyeShapeEditor();
+}
+
+document.querySelectorAll('[data-eye-shape-mode]').forEach(button => {
+  button.addEventListener('click', () => setEyeShapeHandleMode(button.dataset.eyeShapeMode));
+});
+
+function sampleSvgGeometry(source) {
+  let markup = source.trim();
+  if (!markup) throw new Error('Paste Figma SVG code into the field first.');
+  if (!markup.includes('<')) markup = `<svg xmlns="http://www.w3.org/2000/svg"><path d="${markup.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"/></svg>`;
+  else if (!/<svg[\s>]/i.test(markup)) markup = `<svg xmlns="http://www.w3.org/2000/svg">${markup}</svg>`;
+  const documentNode = new DOMParser().parseFromString(markup, 'image/svg+xml');
+  if (documentNode.querySelector('parsererror')) throw new Error('This is not valid SVG code.');
+  const sourceNodes = [...documentNode.querySelectorAll('path, ellipse, circle, rect, polygon, polyline')];
+  if (!sourceNodes.length) throw new Error('No SVG path or shape was found.');
+
+  const namespace = 'http://www.w3.org/2000/svg';
+  const scratch = document.createElementNS(namespace, 'svg');
+  scratch.setAttribute('width', '1200');
+  scratch.setAttribute('height', '1200');
+  Object.assign(scratch.style, { position:'fixed', left:'-10000px', top:'-10000px', visibility:'hidden' });
+  const allowedAttributes = ['d', 'x', 'y', 'width', 'height', 'rx', 'ry', 'cx', 'cy', 'r', 'points'];
+  const geometry = sourceNodes.map(sourceNode => {
+    const node = document.createElementNS(namespace, sourceNode.localName);
+    allowedAttributes.forEach(attribute => {
+      if (sourceNode.hasAttribute(attribute)) node.setAttribute(attribute, sourceNode.getAttribute(attribute));
+    });
+    const transforms = [];
+    for (let current = sourceNode; current && current !== documentNode.documentElement; current = current.parentElement) {
+      if (current.hasAttribute?.('transform')) transforms.unshift(current.getAttribute('transform'));
+    }
+    if (transforms.length) node.setAttribute('transform', transforms.join(' '));
+    scratch.appendChild(node);
+    return node;
+  });
+  document.body.appendChild(scratch);
+  try {
+    return geometry.map(node => {
+      const length = node.getTotalLength();
+      if (!Number.isFinite(length) || length <= 0) return null;
+      const matrix = node.getCTM();
+      const points = [];
+      for (let index = 0; index < 360; index++) {
+        const point = node.getPointAtLength(index / 360 * length);
+        const svgPoint = scratch.createSVGPoint();
+        svgPoint.x = point.x;
+        svgPoint.y = point.y;
+        const transformed = matrix ? svgPoint.matrixTransform(matrix) : svgPoint;
+        points.push({ x:transformed.x, y:transformed.y });
+      }
+      const xs = points.map(point => point.x), ys = points.map(point => point.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+      const width = maxX - minX, height = maxY - minY;
+      if (width < .001 || height < .001) return null;
+      return { points, minX, maxX, minY, maxY, width, height, centerX:(minX + maxX) / 2, centerY:(minY + maxY) / 2, area:width * height };
+    }).filter(Boolean);
+  } finally {
+    scratch.remove();
+  }
+}
+
+function eyeShapeFromSvgSamples(sample, side, svgScale, report = null) {
+  const layout = eyeShapeLayout(side);
+  const fitted = sample.points.map(point => ({
+    x:(point.x - sample.centerX) * svgScale,
+    y:(point.y - sample.centerY) * svgScale,
+    nx:(point.x - sample.centerX) / (sample.width / 2),
+    ny:(point.y - sample.centerY) / (sample.height / 2),
+  }));
+  return BASE_EYE_SHAPE.map((_, index) => {
+    const target = -Math.PI / 2 + index / EYE_SHAPE_HANDLE_COUNT * TAU;
+    let nearest = fitted[0], nearestDistance = Infinity, nearestRadius = -Infinity;
+    for (const point of fitted) {
+      const angle = Math.atan2(point.ny, point.nx);
+      const distance = Math.abs(Math.atan2(Math.sin(angle - target), Math.cos(angle - target)));
+      const radius = Math.hypot(point.nx, point.ny);
+      if (distance < nearestDistance - .002 || (Math.abs(distance - nearestDistance) <= .002 && radius > nearestRadius)) {
+        nearest = point;
+        nearestDistance = distance;
+        nearestRadius = radius;
+      }
+    }
+    const base = layout.baseHandles[index];
+    const offsetX = (nearest.x - base.x) / layout.width;
+    const offsetY = (nearest.y - base.y) / layout.height;
+    if (report && (Math.abs(offsetX) > .35 || Math.abs(offsetY) > .35)) report.clipped++;
+    return {
+      x:clamp(offsetX, -.35, .35),
+      y:clamp(offsetY, -.35, .35),
+    };
+  });
+}
+
+function importEyeShapeSvg(source) {
+  const sampled = sampleSvgGeometry(source).sort((a, b) => b.area - a.area).slice(0, 2);
+  if (!sampled.length) throw new Error('The SVG shapes have no measurable outline.');
+  sampled.sort((a, b) => a.centerX - b.centerX);
+  const targetSpan = (Math.max(eyeShapeLayout('L').width, eyeShapeLayout('L').height) +
+    Math.max(eyeShapeLayout('R').width, eyeShapeLayout('R').height)) / 2;
+  const sourceSpan = Math.max(...sampled.map(sample => Math.max(sample.width, sample.height)));
+  const svgScale = targetSpan / sourceSpan;
+  const pairs = sampled.length === 1
+    ? [['L', sampled[0]], ['R', sampled[0]]]
+    : [['L', sampled[0]], ['R', sampled[1]]];
+  // Resize each eye to the pasted silhouette before fitting it. A handle only carries
+  // +/-.35 of the eye box, so a shape with a different aspect ratio cannot be reached
+  // unless the box moves with it — every point would clip at the limit instead.
+  if (sampled.length > 1 && (state.links.w || state.links.h)) {
+    state.links.w = false;
+    state.links.h = false;
+    document.querySelectorAll('[data-link]').forEach(button =>
+      button.classList.toggle('on', !!state.links[button.dataset.link]));
+  }
+  let boxClamped = 0;
+  for (const [side, sample] of pairs) {
+    const proportion = ((side === 'L' ? state.eyes.pL : state.eyes.pR) / 50) || 1;
+    for (const [key, wanted] of [
+      [side === 'L' ? 'eyeWL' : 'eyeWR', sample.width * svgScale / proportion],
+      [side === 'L' ? 'eyeHL' : 'eyeHR', sample.height * svgScale / proportion],
+    ]) {
+      if (wanted < FIELDS[key].min - 1e-6 || wanted > FIELDS[key].max + 1e-6) boxClamped++;
+      setField(key, wanted, true);
+    }
+  }
+  const eyeShape = activeEyeShape();
+  const report = { clipped:0 };
+  if (sampled.length === 1) {
+    eyeShape.L = eyeShapeFromSvgSamples(sampled[0], 'L', svgScale, report);
+    eyeShape.R = cloneEyeShape(eyeShape.L);
+    eyeShape.linked = true;
+  } else {
+    eyeShape.L = eyeShapeFromSvgSamples(sampled[0], 'L', svgScale, report);
+    eyeShape.R = eyeShapeFromSvgSamples(sampled[1], 'R', svgScale, report);
+    eyeShape.linked = false;
+  }
+  setEyeShapeHandleMode('fine');
+  syncEyeShapeLinkButton();
+  const fitNote = `${sampled.length === 1 ? 'One SVG shape fitted to both eyes' : 'Two SVG shapes fitted left to right'} · fine handles enabled`;
+  if (boxClamped) setEyeShapeStatus(`${fitNote} · the two shapes are too far apart in size, so an eye hit its width/height limit and the fit is approximate`, 'warn');
+  else if (report.clipped) setEyeShapeStatus(`${fitNote} · ${report.clipped} point${report.clipped === 1 ? '' : 's'} clipped, so sharp corners are rounded off`, 'warn');
+  else setEyeShapeStatus(fitNote, 'success');
+}
+
+function tryImportEyeShapeSvg(source) {
+  try {
+    importEyeShapeSvg(source);
+    return true;
+  } catch (error) {
+    setEyeShapeStatus(error.message || 'Could not import this SVG.', 'error');
+    return false;
+  }
+}
+
+eyeShapeImportButton.addEventListener('click', () => {
+  if (tryImportEyeShapeSvg(eyeShapeSvgInput.value)) eyeShapeSvgInput.value = '';
+});
+eyeShapeSvgInput.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || (!event.metaKey && !event.ctrlKey)) return;
+  event.preventDefault();
+  if (tryImportEyeShapeSvg(eyeShapeSvgInput.value)) eyeShapeSvgInput.value = '';
+});
+
+eyeShapeLinkButton.addEventListener('click', () => {
+  const eyeShape = activeEyeShape();
+  eyeShape.linked = !eyeShape.linked;
+  if (eyeShape.linked) {
+    const from = activeEyeShapeSide === 'M' ? 'L' : activeEyeShapeSide;
+    eyeShape[from === 'L' ? 'R' : 'L'] = cloneEyeShape(eyeShape[from]);
+  }
+  syncEyeShapeLinkButton();
+  updateEyeShapeEditor();
+});
+eyeShapeResetButton.addEventListener('click', () => {
+  state.eyeShapes[state.stateName] = createEyeShapePreset();
+  eyeShapeSelection = null;
+  setExpression(STATES[state.stateName].expr);
+  setEyeShapeHandleMode('simple');
+  syncEyeShapeLinkButton();
+});
+setEyeShapeHandleMode('simple');
+syncEyeShapeLinkButton();
+
+const PLANE_MESH_EDITOR = { left: 48, top: 20, right: 172, bottom: 144, cx: 110, cy: 82, half: 62, limit: 1.25 };
+const planeMeshEditor = document.getElementById('planeMeshEditor');
+const planeMeshResetButton = document.getElementById('planeMeshResetButton');
+const planeMeshLinkButton = document.getElementById('planeMeshLinkButton');
+
+function updatePlaneMeshLinkButton() {
+  planeMeshLinkButton.classList.toggle('on', state.planeMeshLinked);
+  planeMeshLinkButton.setAttribute('aria-pressed', String(state.planeMeshLinked));
+  planeMeshLinkButton.setAttribute('aria-label', state.planeMeshLinked ? 'Unlink plane mesh points' : 'Link plane mesh points');
+  planeMeshLinkButton.title = state.planeMeshLinked ? 'Linked symmetry' : 'Independent points';
+}
+
+function planeMeshEditorPoint(node) {
+  const point = state.planeMesh[node], e = PLANE_MESH_EDITOR;
+  return { x:e.cx + point.x * e.half, y:e.cy - point.y * e.half };
+}
+
+function updatePlaneMeshEditor() {
+  const e = PLANE_MESH_EDITOR;
+  const points = Object.fromEntries(PLANE_MESH_NODES.map(node => [node, planeMeshEditorPoint(node)]));
+  const cornerNodes = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'];
+  const corners = cornerNodes.map(node => points[node]);
+  const controls = PLANE_MESH_EDGES.map((edge, index) => {
+    const midpoint = points[edge], start = corners[index], end = corners[(index + 1) % 4];
+    return { x:midpoint.x * 2 - (start.x + end.x) / 2, y:midpoint.y * 2 - (start.y + end.y) / 2 };
+  });
+  let path = `M${corners[0].x} ${corners[0].y}`;
+  for (let index = 0; index < 4; index++)
+    path += `Q${controls[index].x} ${controls[index].y} ${corners[(index + 1) % 4].x} ${corners[(index + 1) % 4].y}`;
+  document.getElementById('planeMeshTargetPath').setAttribute('d', path + 'Z');
+  document.getElementById('planeMeshSpokes').innerHTML = PLANE_MESH_NODES.map(node =>
+    `<line class="plane-mesh-spoke" x1="${e.cx}" y1="${e.cy}" x2="${points[node].x}" y2="${points[node].y}"/>`
+  ).join('');
+  for (const node of PLANE_MESH_NODES) {
+    const handle = planeMeshEditor.querySelector(`[data-mesh-node="${node}"]`);
+    handle.setAttribute('cx', points[node].x);
+    handle.setAttribute('cy', points[node].y);
+    handle.setAttribute('aria-label', `${node} point, X ${state.planeMesh[node].x.toFixed(2)}, Y ${state.planeMesh[node].y.toFixed(2)}`);
+  }
+}
+
+function rotatePlanePointClockwise(point, turns) {
+  let result = { ...point };
+  for (let index = 0; index < (turns + 4) % 4; index++) result = { x:result.y, y:-result.x };
+  return result;
+}
+
+function setPlaneMeshNode(node, x, y) {
+  const limit = PLANE_MESH_EDITOR.limit;
+  if (state.planeMeshLinked && PLANE_MESH_CORNERS.includes(node)) {
+    const magnitudeX = clamp(Math.abs(x), .35, limit);
+    const magnitudeY = clamp(Math.abs(y), .35, limit);
+    const signs = {
+      topLeft:[-1, 1], topRight:[1, 1], bottomRight:[1, -1], bottomLeft:[-1, -1],
+    };
+    for (const corner of PLANE_MESH_CORNERS) {
+      state.planeMesh[corner].x = signs[corner][0] * magnitudeX;
+      state.planeMesh[corner].y = signs[corner][1] * magnitudeY;
+    }
+  } else if (state.planeMeshLinked && PLANE_MESH_EDGES.includes(node)) {
+    const sourceIndex = PLANE_MESH_EDGES.indexOf(node);
+    const canonical = rotatePlanePointClockwise({ x, y }, 4 - sourceIndex);
+    canonical.x = clamp(canonical.x, -.6, .6);
+    canonical.y = clamp(canonical.y, .25, limit);
+    PLANE_MESH_EDGES.forEach((edge, index) => {
+      const point = rotatePlanePointClockwise(canonical, index);
+      state.planeMesh[edge].x = point.x;
+      state.planeMesh[edge].y = point.y;
+    });
+  } else {
+    state.planeMesh[node].x = clamp(x, -limit, limit);
+    state.planeMesh[node].y = clamp(y, -limit, limit);
+  }
+  if (state.planeMeshPreview) for (const meshNode of PLANE_MESH_NODES) for (const axis of ['x', 'y']) {
+    planeMeshSpring(meshNode, axis).t = state.planeMesh[meshNode][axis];
+  }
+  updatePlaneMeshEditor();
+}
+
+function planeMeshPointFromPointer(event) {
+  const rect = planeMeshEditor.getBoundingClientRect();
+  const svgX = (event.clientX - rect.left) / rect.width * 220;
+  const svgY = (event.clientY - rect.top) / rect.height * 164;
+  const e = PLANE_MESH_EDITOR;
+  return { x:(svgX - e.cx) / e.half, y:(e.cy - svgY) / e.half };
+}
+
+let planeMeshDrag = null;
+planeMeshEditor.addEventListener('pointerdown', event => {
+  const handle = event.target.closest('[data-mesh-node]');
+  if (!handle) return;
+  event.preventDefault();
+  event.stopPropagation();
+  planeMeshDrag = handle.dataset.meshNode;
+  if (!state.planeMeshPreview) setPlaneMeshPreview(true);
+  planeMeshEditor.setPointerCapture(event.pointerId);
+  const point = planeMeshPointFromPointer(event);
+  setPlaneMeshNode(planeMeshDrag, point.x, point.y);
+});
+planeMeshEditor.addEventListener('pointermove', event => {
+  if (!planeMeshDrag) return;
+  event.stopPropagation();
+  const point = planeMeshPointFromPointer(event);
+  setPlaneMeshNode(planeMeshDrag, point.x, point.y);
+});
+const finishPlaneMeshDrag = event => {
+  if (!planeMeshDrag) return;
+  planeMeshDrag = null;
+  if (planeMeshEditor.hasPointerCapture(event.pointerId)) planeMeshEditor.releasePointerCapture(event.pointerId);
+};
+planeMeshEditor.addEventListener('pointerup', finishPlaneMeshDrag);
+planeMeshEditor.addEventListener('pointercancel', finishPlaneMeshDrag);
+planeMeshEditor.querySelectorAll('[data-mesh-node]').forEach(handle => {
+  handle.addEventListener('keydown', event => {
+    if (!['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'].includes(event.key)) return;
+    event.preventDefault();
+    if (!state.planeMeshPreview) setPlaneMeshPreview(true);
+    const step = event.shiftKey ? .1 : .03;
+    const node = handle.dataset.meshNode, point = state.planeMesh[node];
+    const x = point.x + (event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0);
+    const y = point.y + (event.key === 'ArrowUp' ? step : event.key === 'ArrowDown' ? -step : 0);
+    setPlaneMeshNode(node, x, y);
+  });
+});
+planeMeshResetButton.addEventListener('click', () => {
+  state.planeMesh = clonePlaneMesh(DEFAULT_PLANE_MESH);
+  if (state.planeMeshPreview) setPlaneMeshPreview(true);
+  updatePlaneMeshEditor();
+});
+planeMeshLinkButton.addEventListener('click', () => {
+  state.planeMeshLinked = !state.planeMeshLinked;
+  updatePlaneMeshLinkButton();
+});
+document.getElementById('planeMeshPreviewButton').addEventListener('click', () => {
+  setPlaneMeshPreview(!state.planeMeshPreview);
+});
+updatePlaneMeshLinkButton();
+updatePlaneMeshEditor();
 const eyeDistanceSlider = document.getElementById('eyeDistanceSlider');
 eyeDistanceSlider.addEventListener('input', () => {
   state.eyeDistance = +eyeDistanceSlider.value;
@@ -2389,14 +4519,55 @@ document.querySelectorAll('[data-shape]').forEach(btn => {
     if (SHAPES[nextShape].defaultDepth != null) setField('dimD', SHAPES[nextShape].defaultDepth, true);
     document.querySelectorAll('[data-shape]').forEach(b => b.classList.toggle('sel', b === btn));
     document.getElementById('depthField').style.display = state.shape === 'plane' ? 'none' : '';
+    document.getElementById('planeMeshCard').style.display = state.shape === 'plane' ? '' : 'none';
     S.pop.x = 0.93; S.pop.v = 0;
   });
 });
+const manualSetupHome = document.getElementById('manualSetupHome');
+const manualSetupContent = document.getElementById('manualSetupContent');
+let editingStateID = null;
+
+function setStateEditorOpen(stateID = null) {
+  const nextState = STATES[stateID] ? stateID : null;
+  editingStateID = nextState;
+  document.querySelectorAll('[data-state]').forEach(row => row.classList.toggle('editing', row.dataset.state === nextState));
+  document.querySelectorAll('[data-edit-state]').forEach(button => {
+    const expanded = button.dataset.editState === nextState;
+    button.setAttribute('aria-expanded', String(expanded));
+    button.textContent = expanded ? 'Close default editor' : 'Edit default state';
+  });
+  if (nextState) {
+    document.querySelector(`[data-state-editor-host="${nextState}"]`)?.appendChild(manualSetupContent);
+  } else {
+    manualSetupHome.after(manualSetupContent);
+  }
+}
+
+function syncManualSetupControls() {
+  document.querySelectorAll('[data-shape]').forEach(button => button.classList.toggle('sel', button.dataset.shape === state.shape));
+  for (const [key, field] of Object.entries(FIELDS)) {
+    const input = inputEl(key);
+    if (input && document.activeElement !== input) input.value = field.get().toFixed(field.dec);
+  }
+  document.querySelectorAll('[data-link]').forEach(button => button.classList.toggle('on', !!state.links[button.dataset.link]));
+  document.getElementById('depthField').style.display = state.shape === 'plane' ? 'none' : '';
+  document.getElementById('planeMeshCard').style.display = state.shape === 'plane' ? '' : 'none';
+  eyeDistanceSlider.value = state.eyeDistance;
+  document.getElementById('eyeDistanceVal').textContent = state.eyeDistance;
+  updateEyePositionControls();
+  updatePlaneMeshLinkButton();
+  updatePlaneMeshEditor();
+  syncEyeShapeLinkButton();
+  updateEyeShapeEditor();
+}
+
 document.querySelectorAll('.tabs button').forEach(btn => {
   btn.addEventListener('click', () => {
+    if (btn.dataset.tab === 'manual') setStateEditorOpen(null);
     document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b === btn));
     for (const t of ['manual', 'expr', 'states', 'surface'])
       document.getElementById('pane-' + t).style.display = (btn.dataset.tab === t) ? '' : 'none';
+    setEditorStateEyeMotion(btn.dataset.tab === 'states');
   });
 });
 document.querySelectorAll('[data-expr]').forEach(card => {
@@ -2413,14 +4584,40 @@ document.querySelectorAll('input[data-orb]').forEach(inp => {
 });
 document.getElementById('modeFlat').addEventListener('click', () => setSurfaceMode(false));
 document.getElementById('modeOrb').addEventListener('click', () => setSurfaceMode(true));
-document.querySelectorAll('[data-state]').forEach(row => {
-  row.addEventListener('click', e => {
-    if (e.target.closest('.state-colors')) return;
-    beginStateTransition(row.dataset.state);
-    document.querySelectorAll('[data-state]').forEach(r => r.classList.toggle('sel', r === row));
-    applyStatePalette(state.stateName);
-    setExpression(STATES[state.stateName].expr, true);
-    nextGaze = 0;
+function activateState(stateID, instant = false) {
+  if (!STATES[stateID]) return;
+  captureStateSetup(state.stateName);
+  applyStateSetup(stateID, instant);
+  beginStateTransition(stateID, instant);
+  document.querySelectorAll('[data-state]').forEach(row => row.classList.toggle('sel', row.dataset.state === stateID));
+  applyStatePalette(stateID);
+  syncManualSetupControls();
+  syncStateDefaultControls();
+  if (editingStateID && editingStateID !== stateID) setStateEditorOpen(stateID);
+  nextGaze = 0;
+}
+document.querySelectorAll('[data-select-state]').forEach(summary => {
+  summary.addEventListener('click', event => {
+    if (event.target.closest('[data-edit-state]')) return;
+    activateState(summary.dataset.selectState);
+  });
+  summary.addEventListener('keydown', event => {
+    if (event.target !== summary || !['Enter', ' '].includes(event.key)) return;
+    event.preventDefault();
+    activateState(summary.dataset.selectState);
+  });
+});
+document.querySelectorAll('[data-edit-state]').forEach(button => {
+  button.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const stateID = button.dataset.editState;
+    if (editingStateID === stateID) {
+      setStateEditorOpen(null);
+      return;
+    }
+    activateState(stateID);
+    setStateEditorOpen(stateID);
   });
 });
 function setStateColor(stateID, index, value) {
@@ -2447,7 +4644,7 @@ document.querySelectorAll('[data-state-hex]').forEach(input => {
 });
 document.getElementById('btnBlink').addEventListener('click', blinkNow);
 function resetAvatar() {
-  state.shape = 'sphere';
+  state.shape = DEFAULT_SHAPE;
   beginStateTransition('idle');
   state.userRot = { x: -4, y: -14, z: 0 };
   state.links = { w: true, h: true, p: true };
@@ -2455,7 +4652,12 @@ function resetAvatar() {
   state.speed = 7;
   state.orbitSpeed = 220;
   state.eyeDistance = 7;
+  state.eyeShapes = createStateEyeShapes();
+  stateSetups = createStateSetups();
+  state.planeMesh = clonePlaneMesh(DEFAULT_PLANE_MESH);
+  state.planeMeshLinked = true;
   setMouseFollow(true);
+  applyStateSetup('idle', true);
 
   setField('dimW', 210, true); setField('dimH', 210, true); setField('dimD', 210, true);
   for (const [k, v] of Object.entries({ propL: 50, propR: 53, posXL: 0, posYL: 0, posXR: 0, posYR: 0 }))
@@ -2463,12 +4665,19 @@ function resetAvatar() {
 
   for (const key of ['gx', 'gy', 'fx', 'fy', 'wx', 'wy', 'wz', 'blink']) S[key].snap(0);
   S.pop.snap(1);
-  document.querySelectorAll('[data-shape]').forEach(btn => btn.classList.toggle('sel', btn.dataset.shape === 'sphere'));
+  document.querySelectorAll('[data-shape]').forEach(btn => btn.classList.toggle('sel', btn.dataset.shape === DEFAULT_SHAPE));
   document.querySelectorAll('[data-state]').forEach(row => row.classList.toggle('sel', row.dataset.state === 'idle'));
+  syncStateDefaultControls();
   document.querySelectorAll('[data-link]').forEach(btn => btn.classList.add('on'));
-  document.getElementById('depthField').style.display = '';
+  document.getElementById('depthField').style.display = DEFAULT_SHAPE === 'plane' ? 'none' : '';
   eyeDistanceSlider.value = 7;
   document.getElementById('eyeDistanceVal').textContent = '7';
+  document.getElementById('planeMeshCard').style.display = '';
+  setPlaneMeshPreview(false, true);
+  updatePlaneMeshLinkButton();
+  updatePlaneMeshEditor();
+  syncEyeShapeLinkButton();
+  updateEyeShapeEditor();
   orbitSpeedSlider.value = 220;
   document.getElementById('orbitSpeedVal').textContent = '220°/s';
   orbitBurstStart = -1e9;
@@ -2522,6 +4731,17 @@ function eyeSpec(eye) {
   };
 }
 
+function mouthSpec(mouth) {
+  return {
+    width: mouth.w,
+    height: mouth.h,
+    tiltDegrees: mouth.t,
+    dropDegrees: mouth.drop,
+    curve: mouth.curve,
+    offsetX: mouth.dx,
+  };
+}
+
 function currentEyeAnchor(side) {
   const sign = side === 'L' ? -1 : 1;
   const ex = EX[side];
@@ -2535,16 +4755,24 @@ function currentEyeAnchor(side) {
       latitude: orbitEntry[side].lat + (Math.sin(elapsed * 1.9 + phase) - Math.sin(phase)) * 18,
     };
   }
-  return {
-    longitude: sign * 13 + (posX + ex.dx.x) * 0.35 + S.gx.x + S.fy.x * MOUSE_EYE_LONGITUDE,
-    latitude: SHAPES[state.shape].face.lat + (posY - ex.dy.x) * 0.35 + S.gy.x - S.fx.x * MOUSE_EYE_LATITUDE,
-  };
+  let longitude = sign * 13 + (posX + ex.dx.x) * 0.35 + S.gx.x + S.fy.x * MOUSE_EYE_LONGITUDE;
+  let latitude = SHAPES[state.shape].face.lat + (posY - ex.dy.x) * 0.35 + S.gy.x - S.fx.x * MOUSE_EYE_LATITUDE;
+  const eyeJitter = state.motion && stateEyeMotionEnabled() ? blendedMotionProfile().eyeJitter : 0;
+  if (eyeJitter) {
+    const phase = side === 'L' ? 0.35 : 2.15;
+    longitude += eyeJitter * (0.62 * Math.sin(clock * TAU * 5.2 + phase) +
+      0.38 * Math.sin(clock * TAU * 8.3 + phase * 1.7));
+    latitude += eyeJitter * 0.55 * (0.68 * Math.sin(clock * TAU * 6.1 + phase * 1.3) +
+      0.32 * Math.sin(clock * TAU * 9.4 + phase * 2.4));
+  }
+  return { longitude, latitude };
 }
 
 function liveEyePose(side) {
   const ex = EX[side];
   const anchor = currentEyeAnchor(side);
   const proportion = (side === 'L' ? S.pL.x : S.pR.x) / 50;
+  const eyeShape = activeEyeShape();
   return {
     anchorDegrees: {
       longitude: devRound(anchor.longitude),
@@ -2563,18 +4791,31 @@ function liveEyePose(side) {
       width: devRound(ex.w.x * proportion / Math.max(S.dw.x, 1)),
       height: devRound(ex.h.x * proportion / Math.max(S.dh.x, 1)),
     },
+    outline: cloneEyeShape(effectiveOutline(side)),
     proportionalScale: devRound(proportion),
   };
 }
 
 function getLivePose() {
+  const eyeStyle = STATES[state.stateName] || STATES.idle;
+  const eyeShape = activeEyeShape();
   return {
+    mirrorVersion: 1,
     selection: {
       state: state.stateName,
       displayExpression: displayExpressionID(state.expr),
       sourceExpression: state.expr,
       shape: state.shape,
       surface: state.surface,
+    },
+    surface: {
+      mode: state.surface,
+      colors: [...orbCfg.colors],
+      presentationColors: presentedPaletteHex(),
+      parameters: Object.fromEntries(Object.entries(orbCfg)
+        .filter(([key, value]) => key !== 'colors' && Number.isFinite(value))),
+      animationClockSeconds: devRound(clock),
+      shaderPhaseNormalized: devRound(orbPhase),
     },
     head: {
       dimensionsUnits: {
@@ -2592,17 +4833,41 @@ function getLivePose() {
         y: devRound(S.ry.x),
         z: devRound(S.rz.x),
       },
+      presentationScale: devRound(S.pop.x),
       mouseFollowEnabled: state.mouseFollow,
       mouseFollowPositionNormalized: {
         x: devRound(S.fy.x / 42),
         y: devRound(S.fx.x / 28),
       },
       eyeDistanceUnits: devRound(state.eyeDistance),
+      planeMesh: {
+        previewingTarget: state.planeMeshPreview,
+        targetPoints: Object.fromEntries(PLANE_MESH_NODES.map(node => [node, {
+          x:devRound(state.planeMesh[node].x), y:devRound(state.planeMesh[node].y),
+        }])),
+        presentationPoints: Object.fromEntries(PLANE_MESH_NODES.map(node => [node, {
+          x:devRound(planeMeshSpring(node, 'x').x), y:devRound(planeMeshSpring(node, 'y').x),
+        }])),
+      },
+    },
+    mouth: {
+      width: devRound(MO.w.x),
+      height: devRound(MO.h.x),
+      tilt: devRound(MO.t.x),
+      drop: devRound(MO.drop.x),
+      curve: devRound(MO.curve.x),
+      offsetX: devRound(MO.dx.x),
+      outline: cloneEyeShape(effectiveOutline('M')),
     },
     eyes: {
       left: liveEyePose('L'),
       right: liveEyePose('R'),
+      outlineLinked: eyeShape.linked,
       blinkProgress: devRound(clamp(S.blink.x, 0, 1)),
+      appearance: {
+        color: eyeStyle.eyeColor || '#0e0e14',
+        glow: !!eyeStyle.eyeGlow,
+      },
     },
     orbit: state.expr === 26 ? {
       phaseDegrees: devRound(orbitAngle),
@@ -2612,10 +4877,93 @@ function getLivePose() {
   };
 }
 
+function applyAvatarMirrorPose(pose) {
+  if (!pose || pose.mirrorVersion !== 1) return;
+  const selection = pose.selection || {};
+  const head = pose.head || {};
+  if (SHAPES[selection.shape]) state.shape = selection.shape;
+  if (selection.surface === 'flat' || selection.surface === 'orb') state.surface = selection.surface;
+  if (STATES[selection.state]) state.stateName = selection.state;
+  if (EXPRESSIONS[selection.sourceExpression]) state.expr = Number(selection.sourceExpression);
+  state.motion = false;
+  state.mouseFollow = !!head.mouseFollowEnabled;
+  state.eyeDistance = profileNumber(head.eyeDistanceUnits, state.eyeDistance, 0, 50);
+
+  const material = pose.surface || {};
+  const mirrorColors = Array.isArray(material.colors)
+    ? material.colors.filter(color => typeof color === 'string').slice(0, 4)
+    : [];
+  const mirrorParameters = material.parameters && typeof material.parameters === 'object'
+    ? material.parameters
+    : {};
+  const materialSignature = JSON.stringify([mirrorColors, mirrorParameters]);
+  if (materialSignature !== appliedMirrorMaterialSignature) {
+    appliedMirrorMaterialSignature = materialSignature;
+    if (mirrorColors.length >= 2) orbCfg.colors = mirrorColors;
+    for (const [key, value] of Object.entries(mirrorParameters)) {
+      if (key !== 'colors' && key in orbCfg && Number.isFinite(Number(value))) orbCfg[key] = Number(value);
+    }
+    paletteTransition.active = false;
+    paletteTransition.from = paletteLabs(orbCfg.colors);
+    paletteTransition.to = paletteLabs(orbCfg.colors);
+    paletteTransition.count = orbCfg.colors.length;
+    iconPaletteSignature = '';
+    renderOrbColors();
+    orbUpdate();
+  }
+  const presentationColors = Array.isArray(material.presentationColors)
+    ? material.presentationColors.filter(color => typeof color === 'string').slice(0, 4)
+    : [];
+  if (presentationColors.length >= 2) orbUpdate(paletteLabs(presentationColors), presentationColors.length);
+  clock = profileNumber(material.animationClockSeconds, clock, 0);
+  orbPhase = profileNumber(material.shaderPhaseNormalized, orbPhase, 0, 1);
+
+  const dimensions = head.dimensionsUnits || {};
+  S.dw.snap(profileNumber(dimensions.width, S.dw.x, 1));
+  S.dh.snap(profileNumber(dimensions.height, S.dh.x, 1));
+  S.dd.snap(profileNumber(dimensions.depth, S.dd.x, 1));
+  const rotation = head.presentationRotationDegrees || {};
+  S.rx.snap(profileNumber(rotation.x, S.rx.x));
+  S.ry.snap(profileNumber(rotation.y, S.ry.x));
+  S.rz.snap(profileNumber(rotation.z, S.rz.x));
+  S.pop.snap(profileNumber(head.presentationScale, S.pop.x, 0.1, 2));
+  for (const key of ['wx', 'wy', 'wz', 'gx', 'gy', 'fx', 'fy', 'mgx', 'mgy', 'mfx', 'mfy']) S[key].snap(0);
+
+  const presentationPoints = head.planeMesh?.presentationPoints;
+  if (presentationPoints) for (const node of PLANE_MESH_NODES) for (const axis of ['x', 'y'])
+    planeMeshSpring(node, axis).snap(profileNumber(presentationPoints[node]?.[axis], planeMeshSpring(node, axis).x, -1.35, 1.35));
+  state.planeMeshPreview = !!head.planeMesh?.previewingTarget;
+
+  const geometryKeys = { w:'width', h:'height', t:'tilt', dx:'localOffsetX', dy:'localOffsetY', lid:'lid', bend:'bend' };
+  const eyeShape = activeEyeShape();
+  for (const [side, label] of [['L', 'left'], ['R', 'right']]) {
+    const eye = pose.eyes?.[label];
+    if (!eye) continue;
+    const proportion = profileNumber(eye.proportionalScale, 1, 0.1, 3) * 50;
+    (side === 'L' ? S.pL : S.pR).snap(proportion);
+    for (const [key, source] of Object.entries(geometryKeys))
+      EX[side][key].snap(profileNumber(eye.geometryUnits?.[source], EX[side][key].x));
+    if (Array.isArray(eye.outline)) eyeShape[side] = normalizeEyeShape(eye.outline);
+  }
+  const mouthKeys = { w:'width', h:'height', t:'tilt', drop:'drop', curve:'curve', dx:'offsetX' };
+  for (const [key, source] of Object.entries(mouthKeys))
+    MO[key].snap(profileNumber(pose.mouth?.[source], MO[key].x));
+  if (Array.isArray(pose.mouth?.outline)) eyeShape.M = normalizeEyeShape(pose.mouth.outline);
+  if (typeof pose.eyes?.outlineLinked === 'boolean') eyeShape.linked = pose.eyes.outlineLinked;
+  S.blink.snap(profileNumber(pose.eyes?.blinkProgress, S.blink.x, 0, 1));
+  const eyeAppearance = pose.eyes?.appearance;
+  if (eyeAppearance?.color) {
+    gEyeL.setAttribute('fill', eyeAppearance.color);
+    gEyeR.setAttribute('fill', eyeAppearance.color);
+    gMouth.setAttribute('fill', eyeAppearance.color);
+  }
+  gEyes.setAttribute('filter', eyeAppearance?.glow ? 'url(#eyeGlow)' : 'none');
+}
+
 function getImplementationSpec() {
   const expressions = {};
   for (const [id, pair] of Object.entries(EXPRESSIONS)) {
-    expressions[id] = { left: eyeSpec(pair[0]), right: eyeSpec(pair[1]) };
+    expressions[id] = { left: eyeSpec(pair[0]), right: eyeSpec(pair[1]), mouth: mouthSpec(pair[2] || NO_MOUTH) };
   }
   const expressionOrder = VISIBLE_EXPRESSIONS.map((sourceID, index) => ({
     displayID: String(index).padStart(2, '0'),
@@ -2624,7 +4972,7 @@ function getImplementationSpec() {
   }));
   return {
     schemaVersion: 1,
-    product: '2D/3D Avatar',
+    product: 'Maggie Studio',
     coordinateSystem: {
       units: 'avatarUnits',
       angles: 'degrees',
@@ -2638,6 +4986,29 @@ function getImplementationSpec() {
       endRule: 'The selected expression supplies eye targets; the selected state continues to supply procedural head and gaze targets.',
       stateMotionBlendSeconds: STATE_TRANSITION_SECONDS,
       stateMotionBlendEasing: 'easeInOutCubic',
+      planeIdleToNervousSquish: {
+        durationSeconds: AVATAR_ICON_MODE ? 0.38 : 0.72,
+        maximumUniformEdgeCompression: 0.2,
+        maximumInwardEdgeBend: 0.08,
+        rebound: 0.22,
+      },
+      planeMeshPreview: {
+        pointOrder: PLANE_MESH_NODES,
+        coordinateRange: [-PLANE_MESH_EDITOR.limit, PLANE_MESH_EDITOR.limit],
+        pointRule: 'All four corners and all four curve midpoints move freely in local X/Y coordinates.',
+        curveRule: 'Each movable midpoint resolves to one quadratic Bezier control between its neighboring movable corners.',
+        previewToggle: 'Space key or Preview button',
+        transition: 'spring-driven and interruptible',
+        shockedStateUsesAuthoredTarget: true,
+      },
+      eyeOutline: {
+        pointCount: EYE_SHAPE_HANDLE_COUNT,
+        pointOrder: ['top', 'topRight', 'right', 'bottomRight', 'bottom', 'bottomLeft', 'left', 'topLeft'],
+        coordinateRange: [-.35, .35],
+        coordinateRule: 'Each point stores a local X/Y offset normalized to the current eye width and height.',
+        interpolation: 'Non-neutral offsets resolve to eight absolute handles joined by a closed Catmull-Rom curve before bend, tilt, and lid clipping.',
+        neutralRule: 'Eight zero offsets reproduce the original capsule path without changing any sampled point.',
+      },
       paletteBlendMilliseconds: PALETTE_TRANSITION_MS,
       paletteColorSpace: 'OkLab',
       renderOrder: ['resolveState', 'advanceContinuousLayers', 'stepSprings', 'projectToShape', 'clipToHead', 'draw'],
@@ -2682,7 +5053,7 @@ function getImplementationSpec() {
       sphere: { projection: 'ellipsoidSurface', clipEyesToHead: true },
       mickey: { projection: 'ellipsoidSurfaceWithCompoundSilhouette', clipEyesToHead: true },
       cube: { projection: 'normalizedFrontFaceForPose; smoothEllipsoidPathForOrbit', clipEyesToHead: true, depthAffectsEyes: false },
-      plane: { projection: 'normalizedFrontFaceForPose; filletedVirtualCarrierForOrbit', clipEyesToHead: false, maximumGeometryHalfDepthUnits: 2, orbitCarrierHalfDepth: 'max(10, min(width,height) * 0.16)', eyeDistanceRangeUnits: [0, 50] },
+      plane: { projection: 'editableFourEdgeQuadraticMesh; filletedVirtualCarrierForOrbit', clipEyesToHead: false, orbitCarrierHalfDepth: 'max(10, min(width,height) * 0.16)', eyeDistanceRangeUnits: [0, 50] },
       pawn: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
       rook: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
       knight: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
@@ -2691,12 +5062,15 @@ function getImplementationSpec() {
       king: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
     },
     defaults: {
-      shape: 'sphere',
+      shape: DEFAULT_SHAPE,
       dimensionsUnits: { width: 210, height: 210, depth: 210 },
       rotationDegrees: { x: -4, y: -14, z: 0 },
       state: 'idle',
       expressionSourceID: 1,
       eyeDistanceUnits: 7,
+      manualSetupByState: cloneStateSetups(createStateSetups()),
+      eyeOutlinesByState: cloneStateEyeShapes(createStateEyeShapes()),
+      planeMeshPoints: clonePlaneMesh(DEFAULT_PLANE_MESH),
       surfaceColors: ['#3f19c8', '#ffffff'],
     },
     expressionOrder,
@@ -2747,6 +5121,293 @@ document.getElementById('copyLivePose').addEventListener('click', () => copyDevJ
 document.getElementById('copyLivePoseInline').addEventListener('click', () => copyDevJSON('live'));
 document.getElementById('copyImplementation').addEventListener('click', () => copyDevJSON('implementation'));
 document.getElementById('copyImplementationInline').addEventListener('click', () => copyDevJSON('implementation'));
+
+/* ---------- per-screen avatar profiles ---------- */
+const PROFILE_SPRINGS = {
+  dimW: S.dw, dimH: S.dh, dimD: S.dd,
+  rotX: S.rx, rotY: S.ry, rotZ: S.rz,
+  propL: S.pL, propR: S.pR,
+  posXL: S.xL, posYL: S.yL, posXR: S.xR, posYR: S.yR,
+};
+
+function readAvatarProfile() {
+  // The root editor is the clean R&D entry point: refreshing it should always
+  // return to the authored Plane + Idle baseline instead of reopening a draft.
+  if (AVATAR_PROFILE === 'default') return null;
+  try {
+    const value = JSON.parse(localStorage.getItem(AVATAR_PROFILE_KEY) || 'null');
+    return value && value.version === 1 ? value : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function authoredAvatarProfile() {
+  captureStateSetup(state.stateName);
+  const eyes = side => Object.fromEntries(EYE_KEYS.map(key => [key, EX[side][key].t]));
+  return {
+    version: 1,
+    eyeScaleVersion: 2,
+    screenBaselineVersion: 2,
+    shape: state.shape,
+    dims: { ...state.dims },
+    userRot: { ...state.userRot },
+    eyes: { ...state.eyes },
+    links: { ...state.links },
+    motion: state.motion,
+    mouseFollow: state.mouseFollow,
+    speed: state.speed,
+    orbitSpeed: state.orbitSpeed,
+    eyeDistance: state.eyeDistance,
+    eyeShapeVersion: 2,
+    eyeShapes: cloneStateEyeShapes(state.eyeShapes),
+    stateSetupVersion: 1,
+    stateSetups: cloneStateSetups(stateSetups),
+    planeMesh: clonePlaneMesh(state.planeMesh),
+    planeMeshLinked: state.planeMeshLinked,
+    stateName: state.stateName,
+    expr: state.expr,
+    expression: { L: eyes('L'), R: eyes('R'), M: mouthTarget() },
+    surface: state.surface,
+    orb: { ...orbCfg, colors: [...orbCfg.colors] },
+    statePalettes: Object.fromEntries(Object.entries(STATES).map(([id, preset]) => [id, [...preset.palette]])),
+  };
+}
+
+function seededScreenProfile() {
+  const stateID = 'idle';
+  const expressionID = STATES[stateID].expr;
+  const seed = authoredAvatarProfile();
+  seed.stateName = stateID;
+  seed.expr = expressionID;
+  seed.expression = {
+    L: Object.fromEntries(EYE_KEYS.map(key => [key, EXPRESSIONS[expressionID][0][key] || 0])),
+    R: Object.fromEntries(EYE_KEYS.map(key => [key, EXPRESSIONS[expressionID][1][key] || 0])),
+    M: Object.fromEntries(MOUTH_KEYS.map(key => [key, expressionMouth(expressionID)[key] || 0])),
+  };
+  seed.orb.colors = [...STATES[stateID].palette];
+  return seed;
+}
+
+function profileNumber(value, fallback, min = -Infinity, max = Infinity) {
+  const number = Number(value);
+  return Number.isFinite(number) ? clamp(number, min, max) : fallback;
+}
+
+function applyAvatarProfile(profile, instant = true) {
+  if (!profile || profile.version !== 1) return false;
+
+  const legacyScreenEyeScale = !profile.eyeScaleVersion && ['setup', 'live', 'result'].includes(AVATAR_PROFILE) &&
+    Number(profile.eyes?.pL) === 82 && Number(profile.eyes?.pR) === 87;
+  const legacyScreenBaseline = !profile.screenBaselineVersion && ['setup', 'live', 'result'].includes(AVATAR_PROFILE);
+
+  if (profile.statePalettes) {
+    for (const [id, colors] of Object.entries(profile.statePalettes)) {
+      if (STATES[id] && Array.isArray(colors) && colors.length >= 2) STATES[id].palette = colors.slice(0, 2);
+    }
+  }
+  if (legacyScreenBaseline) state.shape = DEFAULT_SHAPE;
+  else if (SHAPES[profile.shape]) state.shape = profile.shape;
+  const profileState = legacyScreenBaseline ? 'idle' : (STATES[profile.stateName] ? profile.stateName : 'idle');
+  stateSetups = normalizeStateSetups(profile.stateSetups);
+  state.eyeShapes = normalizeStateEyeShapes(
+    profile.eyeShapes,
+    legacyScreenBaseline ? null : profile.eyeShape,
+    typeof profile.eyeShapeLinked === 'boolean' ? profile.eyeShapeLinked : true,
+    profileState
+  );
+
+  const fieldValues = {
+    dimW: profile.dims?.w, dimH: profile.dims?.h, dimD: profile.dims?.d,
+    rotX: profile.userRot?.x, rotY: profile.userRot?.y, rotZ: profile.userRot?.z,
+    propL: legacyScreenEyeScale ? 50 : profile.eyes?.pL,
+    propR: legacyScreenEyeScale ? 53 : profile.eyes?.pR,
+    posXL: profile.eyes?.xL, posYL: profile.eyes?.yL,
+    posXR: profile.eyes?.xR, posYR: profile.eyes?.yR,
+  };
+  for (const [key, raw] of Object.entries(fieldValues)) {
+    const field = FIELDS[key];
+    const value = profileNumber(raw, field.get(), field.min, field.max);
+    field.set(value);
+    const spring = PROFILE_SPRINGS[key];
+    if (instant && spring) spring.snap(value);
+  }
+
+  if (profile.links) state.links = { ...state.links, ...profile.links };
+  if (typeof profile.motion === 'boolean') state.motion = profile.motion;
+  state.speed = profileNumber(profile.speed, state.speed, 1, 30);
+  state.orbitSpeed = profileNumber(profile.orbitSpeed, state.orbitSpeed, 10, 1080);
+  state.eyeDistance = profileNumber(profile.eyeDistance, state.eyeDistance, 0, 50);
+  state.planeMesh = normalizePlaneMesh(profile.planeMesh);
+  state.planeMeshLinked = typeof profile.planeMeshLinked === 'boolean' ? profile.planeMeshLinked : true;
+  if (typeof profile.mouseFollow === 'boolean') setMouseFollow(profile.mouseFollow);
+
+  beginStateTransition(profileState, instant);
+  const expressionID = legacyScreenBaseline
+    ? STATES.idle.expr
+    : (EXPRESSIONS[profile.expr] ? Number(profile.expr) : STATES[profileState].expr);
+  setExpression(expressionID, !instant);
+  for (const side of ['L', 'R']) for (const key of EYE_KEYS) {
+    const authoredEye = EXPRESSIONS[expressionID][side === 'L' ? 0 : 1];
+    const value = legacyScreenBaseline
+      ? (authoredEye[key] || 0)
+      : profileNumber(profile.expression?.[side]?.[key], EX[side][key].t);
+    EX[side][key].t = value;
+    if (instant) EX[side][key].snap(value);
+  }
+  setMouth(legacyScreenBaseline || !profile.expression?.M
+    ? expressionMouth(expressionID)
+    : Object.fromEntries(MOUTH_KEYS.map(key => [key, profileNumber(profile.expression.M[key], MO[key].t)])), instant);
+  captureStateSetup(profileState);
+
+  if (profile.orb && typeof profile.orb === 'object') {
+    for (const key of Object.keys(orbCfg)) {
+      if (key === 'colors') continue;
+      orbCfg[key] = profileNumber(profile.orb[key], orbCfg[key]);
+    }
+    if (legacyScreenBaseline) orbCfg.colors = [...STATES.idle.palette];
+    else if (Array.isArray(profile.orb.colors) && profile.orb.colors.length >= 2)
+      orbCfg.colors = profile.orb.colors.slice(0, 4);
+  }
+  setSurfaceMode(profile.surface !== 'flat');
+  if (instant) {
+    orbMix.live = orbMix.from = orbMix.to;
+    renderOrbColors();
+    orbUpdate();
+  } else {
+    beginPaletteTransition(orbCfg.colors);
+  }
+
+  document.querySelectorAll('[data-shape]').forEach(button => button.classList.toggle('sel', button.dataset.shape === state.shape));
+  document.querySelectorAll('[data-state]').forEach(row => row.classList.toggle('sel', row.dataset.state === state.stateName));
+  syncEyeShapeLinkButton();
+  updateEyeShapeEditor();
+  syncStateDefaultControls();
+  document.querySelectorAll('[data-link]').forEach(button => button.classList.toggle('on', !!state.links[button.dataset.link]));
+  document.getElementById('depthField').style.display = state.shape === 'plane' ? 'none' : '';
+  document.getElementById('planeMeshCard').style.display = state.shape === 'plane' ? '' : 'none';
+  for (const [key, field] of Object.entries(FIELDS)) {
+    const input = inputEl(key);
+    if (input) input.value = field.get().toFixed(field.dec);
+  }
+  updateEyePositionControls();
+  eyeDistanceSlider.value = state.eyeDistance;
+  document.getElementById('eyeDistanceVal').textContent = state.eyeDistance;
+  updatePlaneMeshLinkButton();
+  updatePlaneMeshEditor();
+  orbitSpeedSlider.value = state.orbitSpeed;
+  document.getElementById('orbitSpeedVal').textContent = `${state.orbitSpeed}°/s`;
+  document.querySelectorAll('input[data-orb]').forEach(input => {
+    input.value = orbCfg[input.dataset.orb];
+    const output = document.querySelector(`[data-orbval="${input.dataset.orb}"]`);
+    if (output) output.textContent = orbCfg[input.dataset.orb] + (ORB_UNITS[input.dataset.orb] || '');
+  });
+  for (const [id, preset] of Object.entries(STATES)) preset.palette.forEach((color, index) => {
+    document.querySelectorAll(`[data-state-color="${id}"][data-color-index="${index}"], [data-state-hex="${id}"][data-color-index="${index}"]`)
+      .forEach(input => { input.value = color; });
+  });
+  nextGaze = 0;
+  return true;
+}
+
+let activeAvatarProfile = readAvatarProfile();
+if (!activeAvatarProfile && ['setup', 'live', 'result'].includes(AVATAR_PROFILE))
+  activeAvatarProfile = seededScreenProfile();
+if (activeAvatarProfile) applyAvatarProfile(activeAvatarProfile);
+
+let lastSavedProfile = '';
+function saveAvatarProfile() {
+  if (AVATAR_ICON_MODE) return;
+  const serialized = JSON.stringify(authoredAvatarProfile());
+  if (serialized === lastSavedProfile) return;
+  localStorage.setItem(AVATAR_PROFILE_KEY, serialized);
+  lastSavedProfile = serialized;
+}
+
+if (!AVATAR_ICON_MODE) {
+  saveAvatarProfile();
+  window.setInterval(saveAvatarProfile, 150);
+  document.addEventListener('input', () => queueMicrotask(saveAvatarProfile), true);
+  document.addEventListener('change', () => queueMicrotask(saveAvatarProfile), true);
+  window.addEventListener('pagehide', saveAvatarProfile);
+  window.addEventListener('message', event => {
+    if (event.origin !== location.origin || event.data?.type !== 'avatar-state') return;
+    activateState(event.data.state);
+  });
+}
+
+if (AVATAR_ICON_MODE) {
+  S.pop.snap(0.18);
+  S.pop.t = 1;
+  if (!activeAvatarProfile) {
+    S.pL.snap(state.eyes.pL);
+    S.pR.snap(state.eyes.pR);
+  }
+  let iconStateTimer = 0;
+  const applyIconState = stateID => {
+    activateState(stateID);
+  };
+  const restoreIconProfile = () => {
+    if (activeAvatarProfile) applyAvatarProfile(activeAvatarProfile, false);
+    else applyIconState('idle');
+  };
+  window.addEventListener('message', event => {
+    if (event.origin !== location.origin || !event.data || typeof event.data !== 'object') return;
+    if (event.data.type === 'avatar-mirror-pose' && AVATAR_MIRROR_MODE && event.data.pose?.mirrorVersion === 1) {
+      clearTimeout(iconStateTimer);
+      if (!avatarMirrorPose) appliedMirrorMaterialSignature = '';
+      avatarMirrorPose = event.data.pose;
+      return;
+    }
+    if (event.data.type === 'avatar-mirror-stop' && AVATAR_MIRROR_MODE) {
+      avatarMirrorPose = null;
+      appliedMirrorMaterialSignature = '';
+      clearTimeout(iconStateTimer);
+      restoreIconProfile();
+      return;
+    }
+    if (avatarMirrorPose) return;
+    if (event.data.type === 'avatar-pointer') {
+      S.fy.t = clamp(Number(event.data.x) || 0, -1, 1) * 42;
+      S.fx.t = clamp(Number(event.data.y) || 0, -1, 1) * 28;
+      return;
+    }
+    if (event.data.type === 'avatar-proportions') {
+      const scale = clamp(Number(event.data.scale) || 1, 0.5, 2);
+      S.pL.t = 82 * scale;
+      S.pR.t = 87 * scale;
+      return;
+    }
+    if (event.data.type === 'avatar-excited') {
+      clearTimeout(iconStateTimer);
+      applyIconState('excited');
+      iconStateTimer = window.setTimeout(() => {
+        restoreIconProfile();
+      }, Math.max(0, Number(event.data.duration) || 1000));
+      return;
+    }
+    if (event.data.type === 'avatar-default-state' && STATES[event.data.state] && !activeAvatarProfile) {
+      clearTimeout(iconStateTimer);
+      applyIconState(event.data.state);
+      return;
+    }
+    if (event.data.type === 'avatar-state' && STATES[event.data.state]) {
+      clearTimeout(iconStateTimer);
+      applyIconState(event.data.state);
+    }
+  });
+  window.addEventListener('storage', event => {
+    if (event.key !== AVATAR_PROFILE_KEY || !event.newValue) return;
+    try {
+      const nextProfile = JSON.parse(event.newValue);
+      if (nextProfile?.version !== 1) return;
+      activeAvatarProfile = nextProfile;
+      clearTimeout(iconStateTimer);
+      if (avatarMirrorPose) return;
+      applyAvatarProfile(activeAvatarProfile, false);
+    } catch (_) {}
+  });
+}
 
 orbUpdate();
 requestAnimationFrame(frame);

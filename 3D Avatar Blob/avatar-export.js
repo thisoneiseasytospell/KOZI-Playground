@@ -108,9 +108,12 @@
       surface: { ...DEFAULT_CONFIG.surface, ...(options.surface || {}) },
       motion: { ...DEFAULT_CONFIG.motion, ...(options.motion || {}) },
       orbit: { ...DEFAULT_CONFIG.orbit, ...(options.orbit || {}) },
+      planeMesh: { ...(DEFAULT_CONFIG.planeMesh || {}), ...(options.planeMesh || {}) },
     };
     const TAU = Math.PI * 2;
     const D2R = Math.PI / 180;
+    const FACE_REACH = 1.06;   // how far out on a flat face a mark may sit
+    const EYE_SHAPE_HANDLE_COUNT = 8;
     const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
     const norm = v => {
       const length = Math.hypot(v.x, v.y, v.z) || 1;
@@ -180,7 +183,51 @@
         angle: difference < 1e-5 * mid ? 0 : 0.5 * Math.atan2(2 * s01, s00 - s11),
       };
     };
-    const eyePoints = (width, height, tilt, lid = 0, bend = 0, count = 96) => {
+    const eyeHandleAnchor = (width, height, index) => {
+      width = Math.max(4, width); height = Math.max(4, height);
+      const swap = width > height;
+      const W = swap ? height : width, H = swap ? width : height;
+      const radius = W / 2, side = Math.max(0, H / 2 - radius);
+      const target = -Math.PI / 2 + index / EYE_SHAPE_HANDLE_COUNT * TAU;
+      const ray = { x:width / 2 * Math.cos(target), y:height / 2 * Math.sin(target) };
+      const d = swap ? { x:ray.y, y:-ray.x } : ray;
+      const flankY = Math.abs(d.x) > 1e-9 ? radius / Math.abs(d.x) * d.y : Infinity;
+      let point;
+      if (Math.abs(flankY) <= side) point = { x:Math.sign(d.x) * radius, y:flankY };
+      else {
+        const cy = d.y >= 0 ? side : -side;
+        const dd = d.x * d.x + d.y * d.y, dc = d.y * cy;
+        const u = (dc + Math.sqrt(Math.max(0, dc * dc - dd * (cy * cy - radius * radius)))) / dd;
+        point = { x:u * d.x, y:u * d.y };
+      }
+      return swap ? { x:-point.y, y:point.x } : point;
+    };
+    // A traced outline is a closed cubic path in fractions of the shape's box.
+    // The surface frame is affine, so it can be written straight out as curves.
+    const isTraced = outline => outline?.v === 2 && Array.isArray(outline.nodes);
+    const tracedNodes = (outline, width, height, tilt) => {
+      const ct = Math.cos(tilt), st = Math.sin(tilt);
+      const put = (x, y) => tilt ? { x:x * ct - y * st, y:x * st + y * ct } : { x, y };
+      return outline.nodes.map(node => ({
+        p:put(node.x * width, node.y * height),
+        out:put(node.ox * width, node.oy * height),
+        in:put(node.ix * width, node.iy * height),
+      }));
+    };
+    const cubicPath = (nodes, project) => {
+      const total = nodes.length;
+      const start = project(nodes[0].p);
+      let d = `M${start.x.toFixed(2)} ${start.y.toFixed(2)}`;
+      for (let index = 0; index < total; index++) {
+        const a = nodes[index], b = nodes[(index + 1) % total];
+        const c1 = project({ x:a.p.x + a.out.x, y:a.p.y + a.out.y });
+        const c2 = project({ x:b.p.x + b.in.x, y:b.p.y + b.in.y });
+        const end = project(b.p);
+        d += `C${c1.x.toFixed(2)} ${c1.y.toFixed(2)} ${c2.x.toFixed(2)} ${c2.y.toFixed(2)} ${end.x.toFixed(2)} ${end.y.toFixed(2)}`;
+      }
+      return d + 'Z';
+    };
+    const eyePoints = (width, height, tilt, lid = 0, bend = 0, count = 96, outline = null) => {
       width = Math.max(4, width); height = Math.max(4, height);
       const swap = width > height;
       const W = swap ? height : width, H = swap ? width : height;
@@ -189,14 +236,66 @@
       const points = [];
       for (let index = 0; index < count; index++) {
         let progress = index / count * total, x, y;
-        if (progress < side) { x = radius; y = -side + progress; }
-        else if ((progress -= side) < arc) { const t = progress / arc * Math.PI; x = radius * Math.cos(t); y = side + radius * Math.sin(t); }
+        if (progress < 2 * side) { x = radius; y = -side + progress; }
+        else if ((progress -= 2 * side) < arc) { const t = progress / arc * Math.PI; x = radius * Math.cos(t); y = side + radius * Math.sin(t); }
         else if ((progress -= arc) < 2 * side) { x = -radius; y = side - progress; }
         else { progress -= 2 * side; const t = Math.PI + progress / arc * Math.PI; x = radius * Math.cos(t); y = -side + radius * Math.sin(t); }
         if (swap) { const previousX = x; x = -y; y = previousX; }
         points.push({ x, y });
       }
       const halfWidth = width / 2, halfHeight = height / 2;
+      const tangentOf = (point, xKey, yKey) =>
+        point?.[xKey] == null || point?.[yKey] == null ? null : { x:point[xKey] * width, y:point[yKey] * height };
+      const isCustom = outline?.some?.(point =>
+        point?.x || point?.y || ['ox', 'oy', 'ix', 'iy'].some(key => point?.[key] != null));
+      if (isTraced(outline)) {
+        const nodes = tracedNodes(outline, width, height, 0);
+        points.splice(0, points.length, ...Array.from({ length:count }, (_, sampleIndex) => {
+          const progress = sampleIndex / count * nodes.length;
+          const segment = Math.floor(progress) % nodes.length;
+          const t = progress - Math.floor(progress);
+          const a = nodes[segment], b = nodes[(segment + 1) % nodes.length];
+          const u = 1 - t, k0 = u * u * u, k1 = 3 * u * u * t, k2 = 3 * u * t * t, k3 = t * t * t;
+          return {
+            x:k0 * a.p.x + k1 * (a.p.x + a.out.x) + k2 * (b.p.x + b.in.x) + k3 * b.p.x,
+            y:k0 * a.p.y + k1 * (a.p.y + a.out.y) + k2 * (b.p.y + b.in.y) + k3 * b.p.y,
+          };
+        }));
+      } else if (outline?.length === EYE_SHAPE_HANDLE_COUNT && isCustom) {
+        const nodes = Array.from({ length:EYE_SHAPE_HANDLE_COUNT }, (_, handleIndex) => {
+          const anchor = eyeHandleAnchor(width, height, handleIndex);
+          const point = outline[handleIndex];
+          return {
+            p:{
+              x:anchor.x + (Number(point?.x) || 0) * width,
+              y:anchor.y + (Number(point?.y) || 0) * height,
+            },
+            out:tangentOf(point, 'ox', 'oy'),
+            in:tangentOf(point, 'ix', 'iy'),
+          };
+        });
+        // a uniform Catmull-Rom segment is the Bezier with controls +/-(neighbour)/6,
+        // so points left on auto keep the exact curve the editor drew before tangents
+        const total = nodes.length, outs = [], ins = [];
+        for (let nodeIndex = 0; nodeIndex < total; nodeIndex++) {
+          const previous = nodes[(nodeIndex + total - 1) % total].p, next = nodes[(nodeIndex + 1) % total].p;
+          const auto = { x:(next.x - previous.x) / 6, y:(next.y - previous.y) / 6 };
+          outs.push(nodes[nodeIndex].out || auto);
+          ins.push(nodes[nodeIndex].in || { x:-auto.x, y:-auto.y });
+        }
+        points.splice(0, points.length, ...Array.from({ length:count }, (_, sampleIndex) => {
+          const progress = sampleIndex / count * total;
+          const segment = Math.floor(progress) % total;
+          const t = progress - Math.floor(progress);
+          const start = nodes[segment].p, end = nodes[(segment + 1) % total].p;
+          const c1 = outs[segment], c2 = ins[(segment + 1) % total];
+          const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+          return {
+            x:a * start.x + b * (start.x + c1.x) + c * (end.x + c2.x) + d * end.x,
+            y:a * start.y + b * (start.y + c1.y) + c * (end.y + c2.y) + d * end.y,
+          };
+        }));
+      }
       const effectiveBend = clamp(bend, -1.2, 1.2) * clamp((height - 5) / 10, 0, 1);
       const top = -halfHeight + clamp(lid, 0, 0.92) * 1.55 * halfHeight;
       const ct = Math.cos(tilt), st = Math.sin(tilt);
@@ -218,15 +317,16 @@
       svg{display:block;width:100%;height:100%;overflow:visible;touch-action:none;user-select:none}
       .head{fill:${config.surface.mode === 'flat' ? colors[0] : 'url(#avatar-surface)'}}
       .eye{fill:${config.eyeColor || '#0e0e14'};shape-rendering:geometricPrecision}
-    </style><svg viewBox="0 0 560 560" role="img" aria-label="Animated KOZI avatar">
+    </style><svg viewBox="0 0 560 560" role="img" aria-label="Animated Maggie Studio avatar">
       <defs><linearGradient id="avatar-surface" x1="0" y1="0" x2="1" y2="1">${stops}</linearGradient></defs>
-      <path class="head"></path><path class="eye eye-left"></path><path class="eye eye-right"></path>
+      <path class="head"></path><path class="eye eye-left"></path><path class="eye eye-right"></path><path class="eye mouth"></path>
     </svg>`;
     container.appendChild(host);
     const svg = shadow.querySelector('svg');
     const head = shadow.querySelector('.head');
     const leftEye = shadow.querySelector('.eye-left');
     const rightEye = shadow.querySelector('.eye-right');
+    const mouth = shadow.querySelector('.mouth');
     const gradient = shadow.querySelector('#avatar-surface');
     let width = 560, height = 560, animationFrame = 0, previousTime = performance.now();
     let elapsed = 0, orbitAngle = 0, blink = 0, blinkTarget = 0, blinkTimer = 0;
@@ -260,11 +360,46 @@
         }
         return path;
       }
-      if (config.shape === 'cube' || config.shape === 'plane') {
+      if (config.shape === 'plane') {
+        const base = {
+          topLeft:{x:-1,y:1}, top:{x:0,y:1}, topRight:{x:1,y:1}, right:{x:1,y:0},
+          bottomRight:{x:1,y:-1}, bottom:{x:0,y:-1}, bottomLeft:{x:-1,y:-1}, left:{x:-1,y:0},
+        };
+        const legacy = typeof config.planeMesh?.top === 'number';
+        const meshNode = name => {
+          if (legacy) {
+            const inset = clamp(Number(config.planeMesh?.[name]) || 0, -0.35, 0.75);
+            if (name === 'top') return { x:0, y:1 - inset };
+            if (name === 'right') return { x:1 - inset, y:0 };
+            if (name === 'bottom') return { x:0, y:-1 + inset };
+            if (name === 'left') return { x:-1 + inset, y:0 };
+          }
+          const value = config.planeMesh?.[name];
+          return value && typeof value === 'object'
+            ? { x:clamp(Number(value.x) || 0, -1.35, 1.35), y:clamp(Number(value.y) || 0, -1.35, 1.35) }
+            : base[name];
+        };
+        const cornerNames = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'];
+        const edgeNames = ['top', 'right', 'bottom', 'left'];
+        const localCorners = cornerNames.map(meshNode).map(point => ({ x:point.x * a, y:point.y * b, z:0 }));
+        const localMidpoints = edgeNames.map(meshNode).map(point => ({ x:point.x * a, y:point.y * b, z:0 }));
+        const localControls = localMidpoints.map((midpoint, index) => {
+          const start = localCorners[index], end = localCorners[(index + 1) % 4];
+          return { x:midpoint.x * 2 - (start.x + end.x) / 2, y:midpoint.y * 2 - (start.y + end.y) / 2, z:0 };
+        });
+        const corners = localCorners.map(project);
+        const controls = localControls.map(project);
+        let path = `M${corners[0].x.toFixed(2)} ${corners[0].y.toFixed(2)}`;
+        for (let index = 0; index < 4; index++) {
+          const next = corners[(index + 1) % 4], control = controls[index];
+          path += `Q${control.x.toFixed(2)} ${control.y.toFixed(2)} ${next.x.toFixed(2)} ${next.y.toFixed(2)}`;
+        }
+        return path + 'Z';
+      }
+      if (config.shape === 'cube') {
         const points = [];
-        const depth = config.shape === 'plane' ? Math.min(Math.max(c, 0.5), 2) : c;
         for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1])
-          points.push(project({ x: sx * a, y: sy * b, z: sz * depth }));
+          points.push(project({ x: sx * a, y: sy * b, z: sz * c }));
         return polyPath(hull(points));
       }
       const silhouette = ellipsoid(matrix, a, b, c);
@@ -296,8 +431,8 @@
       const u = { x: Math.cos(lat) * Math.sin(lon), y: Math.sin(lat), z: Math.cos(lat) * Math.cos(lon) };
       let position, tangentX, tangentY, normal;
       if (!orbiting && (config.shape === 'cube' || config.shape === 'plane' || config.chessGeometry?.length)) {
-        const nx = clamp(Math.tan(lon) * 0.9, -0.78, 0.78);
-        const ny = clamp(Math.tan(lat) * 0.9, -0.72, 0.72);
+        const nx = clamp(Math.tan(lon) * 0.9, -FACE_REACH, FACE_REACH);
+        const ny = clamp(Math.tan(lat) * 0.9, -FACE_REACH, FACE_REACH);
         position = apply(matrix, { x: a * nx, y: b * ny, z: c + config.eyeDistance });
         normal = norm(apply(matrix, { x: 0, y: 0, z: 1 }));
         tangentX = norm(apply(matrix, { x: 1, y: 0, z: 0 }));
@@ -316,15 +451,78 @@
       const point = { x: width / 2 + position.x * scale, y: height / 2 - position.y * scale };
       const proportion = eye.proportion / 50;
       const eyeHeight = Math.max(3.5, eye.height * proportion * (1 - 0.93 * blink));
-      const points = eyePoints(eye.width * proportion, eyeHeight, eye.tilt * D2R, eye.lid, eye.bend, orbiting ? 128 : 72);
-      const output = points.map(local => ({
+      const toScreen = local => ({
         x: point.x + (tangentX.x * local.x - tangentY.x * local.y) * scale,
         y: point.y + (-tangentX.y * local.x + tangentY.y * local.y) * scale,
-      }));
+      });
+      const liftRatioEarly = config.eyeDistance / Math.max(1, Math.min(a, b, c));
+      if (isTraced(eye.outline) && !orbiting && !eye.lid && !eye.bend) {
+        const rearEdge = -Math.sqrt(Math.max(0, 1 - 1 / ((1 + liftRatioEarly) ** 2)));
+        const seen = clamp((normal.z - rearEdge) / 0.16, 0, 1);
+        return {
+          path: cubicPath(tracedNodes(eye.outline, eye.width * proportion, eyeHeight, eye.tilt * D2R), toScreen),
+          opacity: seen * seen * (3 - 2 * seen),
+        };
+      }
+      const points = eyePoints(eye.width * proportion, eyeHeight, eye.tilt * D2R, eye.lid, eye.bend,
+        orbiting ? 128 : 160, eye.outline);
+      const output = points.map(toScreen);
       const liftRatio = config.eyeDistance / Math.max(1, Math.min(a, b, c));
       const rearHorizon = -Math.sqrt(Math.max(0, 1 - 1 / ((1 + liftRatio) ** 2)));
       const visibility = clamp((normal.z - rearHorizon) / 0.16, 0, 1);
       return { path: smoothPath(output), opacity: visibility * visibility * (3 - 2 * visibility) };
+    }
+    function mouthPath(matrix, scale) {
+      const spec = config.mouth;
+      if (!spec || spec.width <= 0 || spec.height <= 0 || config.expression === 'orbit') {
+        return { path: '', opacity: 0 };
+      }
+      const longitude = (spec.offsetX * 0.35 + pointerX * 14) * D2R;
+      const latitude = (9 - spec.drop - pointerY * 10) * D2R;
+      const a = config.dimensions.width / 2 * 0.92;
+      const b = config.dimensions.height / 2 * 0.92;
+      let c = config.dimensions.depth / 2 * 0.92;
+      if (config.shape === 'plane') c = Math.min(c, 2);
+      const u = {
+        x: Math.cos(latitude) * Math.sin(longitude),
+        y: Math.sin(latitude),
+        z: Math.cos(latitude) * Math.cos(longitude),
+      };
+      let position, tangentX, tangentY, normal;
+      if (config.shape === 'cube' || config.shape === 'plane' || config.chessGeometry?.length) {
+        const nx = clamp(Math.tan(longitude) * 0.9, -FACE_REACH, FACE_REACH);
+        const ny = clamp(Math.tan(latitude) * 0.9, -FACE_REACH, FACE_REACH);
+        position = apply(matrix, { x: a * nx, y: b * ny, z: c + config.eyeDistance });
+        normal = norm(apply(matrix, { x: 0, y: 0, z: 1 }));
+        tangentX = norm(apply(matrix, { x: 1, y: 0, z: 0 }));
+        tangentY = norm(apply(matrix, { x: 0, y: 1, z: 0 }));
+      } else {
+        const localNormal = norm({ x: u.x / a, y: u.y / b, z: u.z / c });
+        position = apply(matrix, {
+          x: a * u.x + localNormal.x * config.eyeDistance,
+          y: b * u.y + localNormal.y * config.eyeDistance,
+          z: c * u.z + localNormal.z * config.eyeDistance,
+        });
+        normal = norm(apply(matrix, localNormal));
+        tangentX = norm(apply(matrix, { x: a * Math.cos(longitude), y: 0, z: -c * Math.sin(longitude) }));
+        tangentY = norm(apply(matrix, {
+          x: -a * Math.sin(latitude) * Math.sin(longitude),
+          y: b * Math.cos(latitude),
+          z: -c * Math.sin(latitude) * Math.cos(longitude),
+        }));
+      }
+      const point = { x: width / 2 + position.x * scale, y: height / 2 - position.y * scale };
+      const toScreen = local => ({
+        x: point.x + (tangentX.x * local.x - tangentY.x * local.y) * scale,
+        y: point.y + (-tangentX.y * local.x + tangentY.y * local.y) * scale,
+      });
+      const visibility = clamp((normal.z - 0.02) / 0.14, 0, 1);
+      const opacity = visibility * visibility * (3 - 2 * visibility);
+      if (isTraced(spec.outline) && !spec.curve) {
+        return { path: cubicPath(tracedNodes(spec.outline, spec.width, spec.height, spec.tilt * D2R), toScreen), opacity };
+      }
+      const points = eyePoints(spec.width, spec.height, spec.tilt * D2R, 0, -spec.curve, 160, spec.outline);
+      return { path: smoothPath(points.map(toScreen)), opacity };
     }
     function render(time) {
       const dt = clamp((time - previousTime) / 1000, 0.001, 1 / 30);
@@ -348,6 +546,8 @@
       const right = eyePath('right', matrix, project, scale);
       leftEye.setAttribute('d', left.path); leftEye.setAttribute('fill-opacity', left.opacity.toFixed(3));
       rightEye.setAttribute('d', right.path); rightEye.setAttribute('fill-opacity', right.opacity.toFixed(3));
+      const mouthGeometry = mouthPath(matrix, scale);
+      mouth.setAttribute('d', mouthGeometry.path); mouth.setAttribute('fill-opacity', mouthGeometry.opacity.toFixed(3));
       if (gradient) gradient.setAttribute('gradientTransform', `rotate(${(elapsed * 12) % 360} .5 .5)`);
       animationFrame = requestAnimationFrame(render);
     }
@@ -388,10 +588,10 @@
       }, null, 2) + '\n',
       'kozi-avatar-js/avatar.js': runtimeSource(snapshot),
       'kozi-avatar-js/index.html': `<!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KOZI Avatar</title>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Maggie Studio Avatar</title>
 <style>*{box-sizing:border-box}html,body,#avatar{width:100%;height:100%;margin:0}body{background:#d9d9d3}#avatar{min-height:420px}</style></head>
 <body><main id="avatar"></main><script type="module">import { createAvatar } from './avatar.js'; createAvatar(document.querySelector('#avatar'));</script></body></html>`,
-      'kozi-avatar-js/README.md': `# KOZI Avatar — JavaScript module
+      'kozi-avatar-js/README.md': `# Maggie Studio Avatar — JavaScript module
 
 The exported avatar is dependency-free and carries the configuration that was active at export time.
 
@@ -417,7 +617,7 @@ Open \`index.html\` through a local web server. For example, run \`npm run dev\`
         dependencies: { '@vitejs/plugin-react': '^5.0.0', vite: '^7.0.0', typescript: '^5.8.0', react: '^19.0.0', 'react-dom': '^19.0.0' },
         devDependencies: { '@types/react': '^19.0.0', '@types/react-dom': '^19.0.0' },
       }, null, 2) + '\n',
-      'kozi-avatar-react/index.html': '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KOZI Avatar</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
+      'kozi-avatar-react/index.html': '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Maggie Studio Avatar</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
       'kozi-avatar-react/tsconfig.json': JSON.stringify({
         compilerOptions: { target: 'ES2022', useDefineForClassFields: true, lib: ['ES2022', 'DOM', 'DOM.Iterable'], allowJs: true, skipLibCheck: true, esModuleInterop: true, allowSyntheticDefaultImports: true, strict: true, forceConsistentCasingInFileNames: true, module: 'ESNext', moduleResolution: 'Bundler', resolveJsonModule: true, isolatedModules: true, noEmit: true, jsx: 'react-jsx' }, include: ['src']
       }, null, 2) + '\n',
@@ -458,7 +658,7 @@ import './style.css';
 createRoot(document.getElementById('root')!).render(<StrictMode><Avatar /></StrictMode>);
 `,
       'kozi-avatar-react/src/style.css': `*{box-sizing:border-box}html,body,#root{width:100%;height:100%;margin:0}body{background:#d9d9d3;font-family:Arial,sans-serif}#root{min-height:420px}`,
-      'kozi-avatar-react/README.md': `# KOZI Avatar — React + TypeScript
+      'kozi-avatar-react/README.md': `# Maggie Studio Avatar — React + TypeScript
 
 \`Avatar.tsx\` is a reusable component with the current studio configuration embedded in \`avatar.js\`.
 

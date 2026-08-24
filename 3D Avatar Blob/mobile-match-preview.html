@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Take Take Take — Match frames</title>
+  <script>if (new URLSearchParams(location.search).get('compact') === '1') document.documentElement.classList.add('compact-preview');</script>
+  <script src="gyro-tilt.js"></script>
+  <style>
+    @font-face {
+      font-family: "ABC Diatype";
+      src: url("fonts/ABCDiatype-Regular.otf") format("opentype");
+      font-weight: 400;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "ABC Diatype";
+      src: url("fonts/ABCDiatype-Bold.otf") format("opentype");
+      font-weight: 700;
+      font-display: swap;
+    }
+
+    :root {
+      --ink:#303033;
+      --muted:#77777b;
+      --purple:#5d00ff;
+      --board-light:#d8d3e8;
+      --board-dark:#aaa1bf;
+      --board-mark:#c8c0ff;
+      --danger:#ff5f53;
+      --paper:#f4f4f4;
+    }
+
+    * { box-sizing:border-box; }
+    html, body { height:100%; margin:0; }
+    body {
+      display:grid; place-items:center; overflow:hidden;
+      background:#cecece; color:var(--ink);
+      font-family:"ABC Diatype", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-font-smoothing:antialiased;
+    }
+    button { color:inherit; font:inherit; }
+
+    .phone {
+      position:relative;
+      width:min(100vw, calc(100svh * .462), 430px);
+      height:min(100svh, 931px);
+      overflow:hidden;
+      background:var(--paper);
+      box-shadow:0 22px 70px rgb(0 0 0 / .16);
+    }
+
+    html.compact-preview body { background:#cecece; }
+    html.compact-preview .phone { transform:scale(.86); }
+
+    .phone::before {
+      position:absolute; z-index:0; inset:0 0 auto; height:240px;
+      background:linear-gradient(#ff6955 0%, #ff8a78 37%, rgb(255 163 150 / .5) 68%, transparent 100%);
+      opacity:0; content:""; pointer-events:none;
+    }
+    .phone[data-state="result"]::before { opacity:1; }
+
+    .status-bar {
+      position:absolute; z-index:8; top:max(18px, env(safe-area-inset-top)); right:27px; left:42px;
+      display:flex; align-items:center; justify-content:space-between;
+      color:#050505; font-size:18px; font-weight:700; line-height:1;
+    }
+    .status-icons { display:flex; align-items:center; gap:9px; }
+    .status-icons svg { display:block; overflow:visible; }
+
+    .round-control {
+      position:absolute; z-index:7; top:47px; display:grid; width:44px; height:44px;
+      place-items:center; border:1px solid rgb(255 255 255 / .9); border-radius:50%;
+      background:rgb(255 255 255 / .72); box-shadow:0 14px 28px rgb(0 0 0 / .12);
+      cursor:pointer; backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px);
+    }
+    .settings { right:16px; }
+    .back { left:16px; display:none; }
+    .phone[data-state="result"] .back { display:grid; }
+    .round-control svg { width:25px; height:25px; fill:none; stroke:currentColor; stroke-width:2.1; }
+
+    .result-heading {
+      position:absolute; z-index:2; top:58px; right:80px; left:80px;
+      display:none; text-align:center;
+    }
+    .phone[data-state="result"] .result-heading { display:block; }
+    .result-heading strong { display:block; font-size:20px; font-style:italic; line-height:1; }
+    .result-heading span { display:block; margin-top:6px; color:#646469; font-size:13px; }
+
+    .player-row {
+      position:absolute; z-index:3; right:12px; left:12px;
+      display:flex; height:43px; align-items:center; gap:12px;
+    }
+    .bot-row { top:151px; }
+    .phone[data-state="result"] .bot-row { top:127px; }
+    .human-row { top:602px; }
+    .phone[data-state="result"] .human-row { top:538px; left:13px; }
+
+    .bot-avatar-card { position:relative; width:40px; height:40px; flex:none; overflow:visible; background:transparent !important; }
+    .human-avatar { position:relative; width:40px; height:40px; flex:none; overflow:hidden; }
+    .bot-avatar-frame {
+      position:absolute; top:50%; left:50%; width:168px; height:146px;
+      border:0; background:transparent; pointer-events:none;
+      transform:translate(-50%, -50%) scale(.52); transform-origin:center;
+      transition:transform .18s ease;
+    }
+    .human-avatar {
+      border-radius:50%;
+      background:
+        radial-gradient(circle at 50% 49%, #d29b78 0 23%, transparent 24%),
+        radial-gradient(circle at 50% 36%, #302621 0 25%, transparent 26%),
+        linear-gradient(145deg, #536c7c, #c7d4d8);
+      box-shadow:inset 0 0 0 1px rgb(0 0 0 / .08);
+    }
+    .human-avatar::after {
+      position:absolute; right:10px; bottom:3px; left:10px; height:13px;
+      border-radius:50% 50% 35% 35%; background:#342824; content:"";
+    }
+
+    .player-copy { min-width:0; }
+    .player-copy strong { display:block; font-size:17px; line-height:1.05; }
+    .captures { display:flex; align-items:center; gap:4px; margin-top:5px; font-size:12px; line-height:1; }
+    .captures .piece-char { font-size:13px; }
+    .captures .score { margin-left:2px; color:#66666a; font-size:13px; }
+    .human-row .player-copy strong { font-size:17px; }
+    .human-row .captures { margin-top:4px; }
+
+    .board {
+      position:absolute; z-index:2; top:203px; left:0;
+      display:grid; width:100%; aspect-ratio:1; grid-template-columns:repeat(8, 1fr);
+      overflow:hidden; background:var(--board-light);
+    }
+    .phone[data-state="result"] .board { top:179px; left:24px; width:calc(100% - 48px); }
+
+    .square {
+      position:relative; display:grid; place-items:center; aspect-ratio:1;
+      background:var(--board-light);
+    }
+    .square.dark { background:var(--board-dark); }
+    .square.mark { background:var(--board-mark); }
+    .square.danger {
+      background:radial-gradient(circle, #ffb8ae 0%, #ff7b6e 50%, var(--danger) 100%);
+    }
+    .square .rank,
+    .square .file {
+      position:absolute; color:#857a9e; font-size:9px; line-height:1; opacity:.9;
+    }
+    .square .rank { top:3px; right:3px; }
+    .square .file { bottom:2px; left:3px; }
+
+    .piece-white {
+      display:block; width:91%; height:91%; object-fit:contain; user-select:none;
+      filter:drop-shadow(1px 2px 0 rgb(84 70 105 / .14));
+    }
+    .piece-black {
+      display:block; width:80%; height:80%;
+      background:#40364f;
+      filter:drop-shadow(1px 2px 0 rgb(255 255 255 / .25));
+      -webkit-mask:var(--piece) center / contain no-repeat;
+      mask:var(--piece) center / contain no-repeat;
+    }
+    .piece-black.king, .piece-black.queen, .piece-black.rook { width:86%; height:86%; }
+    .piece-black.knight, .piece-black.bishop { width:88%; height:88%; }
+
+    .event-badge {
+      position:absolute; z-index:4; top:-4px; right:-4px;
+      display:none; width:23px; height:23px; place-items:center;
+      border:3px solid #fff; border-radius:5px; color:#fff; font-size:12px; font-weight:700;
+      box-shadow:0 2px 4px rgb(0 0 0 / .16);
+    }
+    .event-badge.trophy { background:var(--purple); }
+    .event-badge.skull { background:#ff503f; }
+    .phone[data-state="result"] .event-badge { display:grid; }
+
+    .live-actions,
+    .result-actions { position:absolute; z-index:3; right:17px; left:17px; }
+    .live-actions { bottom:max(48px, calc(env(safe-area-inset-bottom) + 31px)); display:flex; align-items:center; justify-content:space-between; }
+    .live-left { display:flex; align-items:center; gap:41px; }
+    .flag-icon { width:29px; height:27px; fill:#333; }
+    .handshake { color:#aaa; font-size:34px; filter:grayscale(1); }
+    .move-buttons { display:flex; gap:10px; }
+    .move-button {
+      display:grid; width:44px; height:44px; place-items:center;
+      border:1px solid #cfcfd1; border-radius:50%; background:transparent; cursor:pointer;
+    }
+    .move-button:disabled { color:#bdbdbf; opacity:.55; }
+    .move-button svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:2.2; }
+
+    .result-actions { top:592px; display:none; }
+    .phone[data-state="result"] .result-actions { display:block; }
+    .phone[data-state="result"] .live-actions { display:none; }
+    .review-banner {
+      display:grid; height:61px; grid-template-columns:43px 1fr 36px; align-items:center;
+      padding:0 16px; border-radius:34px; background:var(--purple); color:#fff;
+    }
+    .review-banner .review-icon { font-size:27px; }
+    .review-copy strong { display:block; font-size:17px; line-height:1; }
+    .review-copy span { display:block; margin-top:7px; color:#ddd1ff; font-size:13px; }
+    .review-next { display:grid; width:30px; height:30px; place-items:center; border-radius:50%; background:#7834ff; font-size:25px; }
+    .result-nav { display:flex; align-items:center; justify-content:flex-end; gap:10px; margin-top:28px; }
+    .result-color-swatch { position:absolute; left:19px; width:25px; height:25px; background:#6730ff; }
+    .result-buttons { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:45px; }
+    .result-buttons button { height:33px; border:1px solid #d0d0d3; border-radius:20px; background:transparent; font-size:14px; font-weight:700; }
+    .result-buttons .primary { border-color:#d9d4e8; background:#d9d4e8; }
+
+    .home-indicator {
+      position:absolute; z-index:8; right:0; bottom:max(7px, env(safe-area-inset-bottom)); left:0;
+      width:139px; height:5px; margin:auto; border-radius:99px; background:#111;
+    }
+
+    @media (min-width:431px) { .phone { border-radius:34px; } }
+    @media (max-height:820px) {
+      .bot-row { top:132px; }
+      .board { top:183px; }
+      .human-row { top:553px; }
+      .phone[data-state="result"] .bot-row { top:113px; }
+      .phone[data-state="result"] .board { top:164px; }
+      .phone[data-state="result"] .human-row { top:502px; }
+      .result-actions { top:552px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="phone" id="phone" data-state="live" aria-label="Live game mobile frame">
+    <div class="status-bar">
+      <span id="clock">12:19</span>
+      <span class="status-icons">
+        <svg width="20" height="14" viewBox="0 0 20 14" aria-hidden="true"><rect x="0" y="9" width="3.5" height="5" rx="1" fill="currentColor"/><rect x="5.4" y="6" width="3.5" height="8" rx="1" fill="currentColor"/><rect x="10.8" y="3" width="3.5" height="11" rx="1" fill="currentColor"/><rect x="16.2" width="3.5" height="14" rx="1" fill="currentColor" opacity=".2"/></svg>
+        <svg width="19" height="14" viewBox="0 0 19 14" aria-hidden="true"><path d="M1 4.5C5.9.1 13.1.1 18 4.5L15.9 6.8C12.3 3.7 6.7 3.7 3.1 6.8L1 4.5Zm4 4.2c2.5-2.1 6.5-2.1 9 0l-2.2 2.2c-1.3-1.1-3.3-1.1-4.6 0L5 8.7Zm3.2 3.5c.7-.7 1.9-.7 2.6 0L9.5 14l-1.3-1.8Z" fill="currentColor"/></svg>
+        <svg width="28" height="14" viewBox="0 0 28 14" aria-hidden="true"><rect x=".5" y=".5" width="24" height="13" rx="4" fill="none" stroke="currentColor" opacity=".45"/><rect x="2.5" y="2.5" width="11" height="9" rx="2.5" fill="currentColor"/><path d="M26 4.5v5c1.3-.2 2-.9 2-2.5s-.7-2.3-2-2.5Z" fill="currentColor" opacity=".45"/></svg>
+      </span>
+    </div>
+
+    <button class="round-control back" type="button" aria-label="Back to game">
+      <svg viewBox="0 0 32 32"><path d="m20.5 6-10 10 10 10"/></svg>
+    </button>
+    <button class="round-control settings" type="button" aria-label="Game settings">
+      <svg viewBox="0 0 32 32"><path d="M5 10h22M5 22h22M12 6v8M21 18v8"/><circle cx="12" cy="10" r="3" fill="#fff"/><circle cx="21" cy="22" r="3" fill="#fff"/></svg>
+    </button>
+
+    <div class="result-heading"><strong>YOU LOST</strong><span>By checkmate</span></div>
+
+    <section class="player-row bot-row" aria-label="Opponent">
+      <div class="bot-avatar-card">
+        <iframe class="bot-avatar-frame" id="match-avatar-frame" src="about:blank" title="" tabindex="-1" aria-hidden="true"></iframe>
+      </div>
+      <div class="player-copy">
+        <strong>Bot · Level 16</strong>
+        <span class="captures" id="bot-captures"><span class="piece-char">♞</span><span class="piece-char">♟</span><span class="piece-char">♟</span><span class="score">+2</span></span>
+      </div>
+    </section>
+
+    <div class="board" id="board" aria-label="Chess position"></div>
+
+    <section class="player-row human-row" aria-label="Player">
+      <div class="human-avatar" aria-hidden="true"></div>
+      <div class="player-copy"><strong>Mats</strong><span class="captures">♘</span></div>
+    </section>
+
+    <div class="live-actions">
+      <div class="live-left">
+        <svg class="flag-icon" viewBox="0 0 36 36" aria-label="Resign"><path d="M5 3h4v30H5V3Zm7 2h19l-5 8 5 8H12V5Z"/></svg>
+        <span class="handshake" aria-label="Offer draw">🤝</span>
+      </div>
+      <div class="move-buttons">
+        <button class="move-button" type="button" aria-label="Previous move"><svg viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></svg></button>
+        <button class="move-button" type="button" aria-label="Next move" disabled><svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg></button>
+      </div>
+    </div>
+
+    <section class="result-actions" aria-label="Post-game actions">
+      <div class="review-banner">
+        <span class="review-icon">♚</span>
+        <span class="review-copy"><strong>Game review</strong><span>Find where it slipped</span></span>
+        <span class="review-next">›</span>
+      </div>
+      <div class="result-nav">
+        <span class="result-color-swatch" aria-hidden="true"></span>
+        <button class="move-button" type="button" aria-label="First move"><span>Ⅰ◀</span></button>
+        <button class="move-button" type="button" aria-label="Previous move"><svg viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></svg></button>
+        <button class="move-button" type="button" aria-label="Next move" disabled><svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg></button>
+      </div>
+      <div class="result-buttons"><button type="button">Rematch</button><button class="primary" type="button">Game review</button></div>
+    </section>
+
+    <div class="home-indicator" aria-hidden="true"></div>
+  </main>
+
+  <script>
+    const PIECES = {
+      r: '3D Chess Pieces/pieces/wr.svg',
+      n: '3D Chess Pieces/pieces/wn.svg',
+      b: '3D Chess Pieces/pieces/wb.svg',
+      q: '3D Chess Pieces/pieces/wq.svg',
+      k: '3D Chess Pieces/pieces/wk.svg',
+      p: '3D Chess Pieces/pieces/wp.svg',
+    };
+
+    const positions = {
+      live: [
+        ['wr',0,0],['wb',0,2],['wk',0,3],['wb',0,5],['wn',0,6],['wr',0,7],
+        ['wp',1,0],['wp',1,1],['wp',1,2],['wp',1,4],['wp',1,5],['wp',1,6],['wp',1,7],
+        ['bp',5,3],['bp',5,4],['bp',5,5],
+        ['bp',6,0],['bk',6,4],['wq',6,6],['bp',6,7],
+        ['br',7,0],['bn',7,1],['bb',7,2],['bq',7,4],['bn',7,6],['br',7,7],
+      ],
+      result: [
+        ['wr',0,0],['wk',0,3,'trophy'],['wb',0,5],['wr',0,7],
+        ['wp',1,0],['wp',1,2],['wp',1,4],['wp',1,5],['wp',1,6],['wp',1,7],
+        ['wp',2,1],['bk',3,0,'skull'],['wq',4,2],['bp',4,4],['bp',4,5],
+        ['bb',5,0],['wn',5,4],['bp',6,0],
+      ],
+    };
+
+    const phone = document.getElementById('phone');
+    const board = document.getElementById('board');
+    const avatarFrame = document.getElementById('match-avatar-frame');
+    const requestedState = new URLSearchParams(location.search).get('state');
+    const frameState = requestedState === 'result' ? 'result' : 'live';
+    const files = ['H','G','F','E','D','C','B','A'];
+
+    phone.dataset.state = frameState;
+    phone.setAttribute('aria-label', frameState === 'result' ? 'Game result mobile frame' : 'Live game mobile frame');
+    document.getElementById('clock').textContent = frameState === 'result' ? '12:24' : '12:19';
+    if (frameState === 'result') {
+      document.getElementById('bot-captures').innerHTML = '<span>♛</span><span>♜</span><span>♜</span><span>♞</span><span>♟</span><span>♟</span><span>♟</span><span>♟</span><span class="score">+26</span>';
+    }
+
+    function createPiece(code, badge) {
+      const color = code[0];
+      const type = code[1];
+      const names = { r:'rook', n:'knight', b:'bishop', q:'queen', k:'king', p:'pawn' };
+      const node = color === 'w' ? document.createElement('img') : document.createElement('span');
+      node.className = color === 'w' ? 'piece-white' : `piece-black ${names[type]}`;
+      if (color === 'w') {
+        node.src = PIECES[type];
+        node.alt = `White ${names[type]}`;
+        node.draggable = false;
+      } else {
+        node.style.setProperty('--piece', `url("${PIECES[type]}")`);
+        node.setAttribute('role', 'img');
+        node.setAttribute('aria-label', `Black ${names[type]}`);
+      }
+      const fragment = document.createDocumentFragment();
+      fragment.appendChild(node);
+      if (badge) {
+        const marker = document.createElement('span');
+        marker.className = `event-badge ${badge}`;
+        marker.textContent = badge === 'trophy' ? '♜' : '☠';
+        fragment.appendChild(marker);
+      }
+      return fragment;
+    }
+
+    function renderBoard(state) {
+      board.replaceChildren();
+      const occupied = new Map(positions[state].map(item => [`${item[1]}-${item[2]}`, item]));
+      for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+          const square = document.createElement('div');
+          square.className = `square ${(row + col) % 2 ? 'dark' : ''}`;
+          if (state === 'live' && row === 4 && col === 6) square.classList.add('mark');
+          if (state === 'live' && row === 6 && col === 6) square.classList.add('mark');
+          if (state === 'live' && row === 6 && col === 4) square.classList.add('danger');
+          if (state === 'result' && row === 2 && col === 1) square.classList.add('mark');
+          if (state === 'result' && row === 3 && col === 0) square.classList.add('danger');
+          const item = occupied.get(`${row}-${col}`);
+          if (item) square.appendChild(createPiece(item[0], item[3]));
+          if (col === 7) {
+            const rank = document.createElement('span'); rank.className = 'rank'; rank.textContent = row + 1; square.appendChild(rank);
+          }
+          if (row === 7) {
+            const file = document.createElement('span'); file.className = 'file'; file.textContent = files[col]; square.appendChild(file);
+          }
+          board.appendChild(square);
+        }
+      }
+    }
+
+    let mirrorActive = false;
+    let lastMirrorPose = null;
+    function sendAvatar(message) { avatarFrame.contentWindow?.postMessage(message, location.origin); }
+    function setAvatarFrameState() {
+      if (mirrorActive && lastMirrorPose) {
+        sendAvatar({ type:'avatar-mirror-pose', pose:lastMirrorPose });
+        return;
+      }
+      sendAvatar({ type:'avatar-default-state', state:'idle' });
+    }
+    avatarFrame.addEventListener('load', setAvatarFrameState);
+    avatarFrame.src = `index.html?avatar-icon=1&profile=${encodeURIComponent(frameState)}&icon-viewport=90&avatar-mirror=1&v=23`;
+    window.addEventListener('pointermove', event => {
+      if (mirrorActive) return;
+      const bounds = phone.getBoundingClientRect();
+      sendAvatar({
+        type:'avatar-pointer',
+        x:Math.max(-1, Math.min(1, (event.clientX - bounds.left - bounds.width / 2) / (bounds.width / 2))),
+        y:Math.max(-1, Math.min(1, (event.clientY - bounds.top - bounds.height / 2) / (bounds.height / 2))),
+      });
+    }, { passive:true });
+
+    /* Phones have no cursor: device tilt feeds the avatar the same look vector
+       the pointer would. Only when this page is the real screen — inside the
+       test workbench the editor drives the pose. */
+    if (window.parent === window && typeof startGyroTilt === 'function') {
+      startGyroTilt(tilt => {
+        if (mirrorActive) return;
+        sendAvatar({ type:'avatar-pointer', x:tilt.x, y:tilt.y });
+      });
+    }
+
+    window.addEventListener('message', event => {
+      if (event.origin !== location.origin || !event.data || typeof event.data !== 'object') return;
+      if (event.data.type === 'avatar-mirror-pose' && event.data.pose) {
+        mirrorActive = true;
+        lastMirrorPose = event.data.pose;
+        sendAvatar({ type:'avatar-mirror-pose', pose:lastMirrorPose });
+        return;
+      }
+      if (event.data.type === 'avatar-mirror-stop') {
+        mirrorActive = false;
+        lastMirrorPose = null;
+        sendAvatar({ type:'avatar-mirror-stop' });
+        setAvatarFrameState();
+      }
+    });
+
+    document.addEventListener('keydown', event => {
+      if (event.key.toLowerCase() !== 'p' || event.metaKey || event.ctrlKey || event.altKey || event.repeat) return;
+      event.preventDefault();
+      if (window.parent !== window) {
+        window.parent.postMessage({ type:'generator-home-request', profile:frameState }, location.origin);
+      } else {
+        location.href = `index.html?profile=${encodeURIComponent(frameState)}&v=23`;
+      }
+    });
+
+    renderBoard(frameState);
+  </script>
+</body>
+</html>

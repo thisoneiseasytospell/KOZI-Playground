@@ -244,10 +244,17 @@
   }
   .phead-help:hover,
   .phead-help[aria-expanded="true"] { background:var(--ink); color:var(--paper); }
-  .credits { margin:0 0 20px; padding:12px; border:1px solid var(--ink); background:var(--quiet); }
-  .credits-line { font-size:11px; font-weight:700; letter-spacing:.04em; }
-  .credits-note { margin:6px 0 0; color:var(--muted); font-size:11px; line-height:1.45; }
-  .credits-note a { color:var(--ink); }
+  .credits { margin:0 0 20px; padding:14px; border:1px solid var(--ink); background:var(--quiet); }
+  .credits-list {
+    display:grid; grid-template-columns:auto 1fr; gap:8px 14px;
+    font-size:11px; line-height:1.4;
+  }
+  .credits-list dt {
+    padding-top:1px; color:var(--muted); font-size:9px; font-weight:700;
+    letter-spacing:.12em; text-transform:uppercase; white-space:nowrap;
+  }
+  .credits-list a { color:var(--ink); text-underline-offset:2px; }
+  .credits-list a:hover { background:var(--ink); color:var(--paper); text-decoration:none; }
   .tabs {
     background:transparent; border:1px solid var(--ink); padding:0; margin-bottom:18px;
     box-shadow:none;
@@ -748,8 +755,14 @@ blink()</pre>
       </div>
     </div>
     <div class="credits" id="credits" hidden>
-      <div class="credits-line">Development KOZI Studio, Albert Kozikowski for Studio Blunt and TakeTakeTake</div>
-      <p class="credits-note">Inspired by <a href="https://orb-pg.vercel.app/" target="_blank" rel="noopener noreferrer">orb-pg.vercel.app</a> and <a href="https://avatars.bible-strong.app/" target="_blank" rel="noopener noreferrer">avatars.bible-strong.app</a>.</p>
+      <dl class="credits-list">
+        <dt>Development</dt>
+        <dd><a href="https://kozi.studio/" target="_blank" rel="noopener noreferrer">KOZI Studio</a>, Albert Kozikowski</dd>
+        <dt>For</dt>
+        <dd>Studio Blunt and TakeTakeTake</dd>
+        <dt>Inspired by</dt>
+        <dd><a href="https://orb-pg.vercel.app/" target="_blank" rel="noopener noreferrer">orb-pg.vercel.app</a>, <a href="https://avatars.bible-strong.app/" target="_blank" rel="noopener noreferrer">avatars.bible-strong.app</a></dd>
+      </dl>
     </div>
     <div class="tabs">
       <button data-tab="manual" class="active">Manual</button>

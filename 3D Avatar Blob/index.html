@@ -225,11 +225,18 @@
     color:var(--muted); font-size:10px; font-weight:700; letter-spacing:.15em;
     text-transform:uppercase; margin-bottom:8px;
   }
-  .phead { align-items:center; margin-bottom:20px; }
+  .phead { align-items:center; gap:12px; margin-bottom:20px; }
   .phead h1 {
     display:flex; gap:.16em; font-size:30px; line-height:1;
     font-weight:700; letter-spacing:-.04em;
   }
+  .phead-actions { display:flex; flex:none; align-items:center; gap:8px; }
+  .phead-back {
+    border:1px solid var(--ink); padding:6px 9px; color:var(--ink); font-size:10px;
+    font-weight:700; letter-spacing:.08em; line-height:1; text-transform:uppercase;
+    text-decoration:none; white-space:nowrap;
+  }
+  .phead-back:hover { background:var(--ink); color:var(--paper); }
   .phead-help {
     flex:none; width:26px; height:26px; padding:0; border:1px solid var(--ink);
     background:var(--paper); color:var(--ink); font:inherit; font-size:13px;
@@ -735,10 +742,13 @@ blink()</pre>
   <div id="panel">
     <div class="phead">
       <h1><span>Maggie</span><span>Studio</span></h1>
-      <button type="button" id="creditsToggle" class="phead-help" aria-controls="credits" aria-expanded="false" title="Credits">?</button>
+      <div class="phead-actions">
+        <a class="phead-back" href="../index.html">← Playground</a>
+        <button type="button" id="creditsToggle" class="phead-help" aria-controls="credits" aria-expanded="false" title="Credits">?</button>
+      </div>
     </div>
     <div class="credits" id="credits" hidden>
-      <div class="credits-line">KOZI x Blunt for Take Take Take</div>
+      <div class="credits-line">Development KOZI Studio, Albert Kozikowski for Studio Blunt and TakeTakeTake</div>
       <p class="credits-note">Inspired by <a href="https://orb-pg.vercel.app/" target="_blank" rel="noopener noreferrer">orb-pg.vercel.app</a> and <a href="https://avatars.bible-strong.app/" target="_blank" rel="noopener noreferrer">avatars.bible-strong.app</a>.</p>
     </div>
     <div class="tabs">

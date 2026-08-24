@@ -2811,7 +2811,7 @@ function updateShapeUI() {
     const el = document.createElement('div');
     el.className = 'mini-shape-dot';
     el.dataset.pt = i;
-    el.title = 'Drag to move · double-click to remove';
+    el.title = 'Drag to move · drag outside or double-click to remove';
     positionShapeDot(el, p);
     miniFlagRect.appendChild(el);
   });
@@ -2841,17 +2841,22 @@ function insertShapePoint(u, v, pxW, pxH) {
 
 (function initShapeEditor() {
   let sdrag = null;
-  const rectUV = e => {
+  const rectPosition = e => {
     const r = miniFlagRect.getBoundingClientRect();
-    return [
-      clamp(Math.round((e.clientX - r.left) / r.width * 100) / 100, 0, 1),
-      clamp(Math.round((e.clientY - r.top) / r.height * 100) / 100, 0, 1),
-    ];
+    const rawU = (e.clientX - r.left) / r.width;
+    const rawV = (e.clientY - r.top) / r.height;
+    return {
+      u: clamp(Math.round(rawU * 100) / 100, 0, 1),
+      v: clamp(Math.round(rawV * 100) / 100, 0, 1),
+      outside: rawU < 0 || rawU > 1 || rawV < 0 || rawV > 1,
+    };
   };
   const onMove = e => {
     if (!sdrag) return;
     materializeShape();
-    const [u, v] = rectUV(e);
+    const { u, v, outside } = rectPosition(e);
+    sdrag.remove = outside && shapePoints.length > 3;
+    sdrag.el.classList.toggle('removing', sdrag.remove);
     const p = shapePoints[sdrag.idx];
     if (p[0] === u && p[1] === v) return;
     p[0] = u; p[1] = v;
@@ -2862,11 +2867,20 @@ function insertShapePoint(u, v, pxW, pxH) {
   };
   const onUp = e => {
     if (!sdrag) return;
+    const remove = rectPosition(e).outside && (shapePoints || RECT_POINTS()).length > 3;
     sdrag.el.releasePointerCapture?.(e.pointerId);
     const moved = sdrag.moved;
+    const removeIdx = sdrag.idx;
     sdrag = null;
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
+    if (remove) {
+      materializeShape();
+      shapePoints.splice(removeIdx, 1);
+      applyShape();
+      updateShapeUI();
+      return;
+    }
     if (!moved) return; // plain click (e.g. half of a dblclick) — nothing to do
     // Final apply — also snaps the UI back if the polygon went degenerate.
     applyShape();
@@ -2893,7 +2907,10 @@ function insertShapePoint(u, v, pxW, pxH) {
       updateShapeUI();
       return;
     }
-    if (e.target.closest('.mini-edge, [data-handle], .mini-dim')) return;
+    // Edge hit areas serve two gestures: drag to resize the ratio, and
+    // double-click to add a polygon point. Do not discard the double-click
+    // just because it landed on an edge overlay.
+    if (e.target.closest('[data-handle], .mini-dim')) return;
     const r = miniFlagRect.getBoundingClientRect();
     const u = clamp((e.clientX - r.left) / r.width, 0, 1);
     const v = clamp((e.clientY - r.top) / r.height, 0, 1);

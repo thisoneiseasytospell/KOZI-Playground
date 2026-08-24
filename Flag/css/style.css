@@ -394,6 +394,11 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .mini-flag-rect.shaped .mini-shape-dot,
 .mini-shape-dot:hover { opacity: 1; }
 .mini-shape-dot:active { cursor: grabbing; }
+.mini-shape-dot.removing {
+  background: #d94b43;
+  border-color: #d94b43;
+  opacity: 0.45;
+}
 
 /* ── Dropzone ───────────────────────────────────────────── */
 

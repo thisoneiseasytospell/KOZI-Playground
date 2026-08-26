@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-const PIECES = ['pawn', 'rook', 'knight', 'bishop', 'queen', 'king'];
+const PIECES = ['queen', 'king'];
 const canvas = document.getElementById('chessCanvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -138,7 +138,7 @@ new GLTFLoader().load(
       if (source) preparePiece(source, name);
     }
     api.ready = PIECES.every(name => models[name]);
-    if (!api.ready) api.error = 'The GLB did not contain all six named chess pieces.';
+    if (!api.ready) api.error = 'The GLB did not contain the named queen and king pieces.';
   },
   undefined,
   error => {

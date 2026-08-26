@@ -1285,10 +1285,6 @@ const SHAPES = {
   mickey: { label: 'Mickey', face: { lat: 6,  scale: 1,    esc: 1 },    orbR: 1.5 },
   cube:   { label: 'Cube',   face: { lat: 8,  scale: 0.92, esc: 0.95 }, orbR: 1.45 },
   plane:  { label: 'Plane',  face: { lat: 8,  scale: 0.92, esc: 0.95 }, orbR: 1.45 },
-  pawn:   { label: 'Pawn',   face: { lat: 12, scale: 0.9,  esc: 0.88 }, orbR: 1.55, chess: true, defaultDepth: 90 },
-  rook:   { label: 'Rook',   face: { lat: 10, scale: 0.9,  esc: 0.88 }, orbR: 1.55, chess: true, defaultDepth: 90 },
-  knight: { label: 'Knight', face: { lat: 9,  scale: 0.9,  esc: 0.86 }, orbR: 1.55, chess: true, defaultDepth: 90 },
-  bishop: { label: 'Bishop', face: { lat: 10, scale: 0.9,  esc: 0.88 }, orbR: 1.55, chess: true, defaultDepth: 90 },
   queen:  { label: 'Queen',  face: { lat: 7,  scale: 0.9,  esc: 0.84 }, orbR: 1.55, chess: true, defaultDepth: 90 },
   king:   { label: 'King',   face: { lat: 8,  scale: 0.9,  esc: 0.86 }, orbR: 1.55, chess: true, defaultDepth: 90 },
 };
@@ -1300,7 +1296,7 @@ const SHAPE_ICONS = {
   plane:  '<path d="M3 10 L25 6 L25 18 L3 22 Z" class="ic" stroke-width="0"/>',
 };
 
-const CHESS_KEYS = ['pawn', 'rook', 'knight', 'bishop', 'queen', 'king'];
+const CHESS_KEYS = ['queen', 'king'];
 const CHESS_GEOMETRY = {};
 const isChessShape = (shape = state.shape) => !!SHAPES[shape]?.chess;
 
@@ -5100,10 +5096,6 @@ function getImplementationSpec() {
       mickey: { projection: 'ellipsoidSurfaceWithCompoundSilhouette', clipEyesToHead: true },
       cube: { projection: 'normalizedFrontFaceForPose; smoothEllipsoidPathForOrbit', clipEyesToHead: true, depthAffectsEyes: false },
       plane: { projection: 'editableFourEdgeQuadraticMesh; filletedVirtualCarrierForOrbit', clipEyesToHead: false, orbitCarrierHalfDepth: 'max(10, min(width,height) * 0.16)', eyeDistanceRangeUnits: [0, 50] },
-      pawn: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
-      rook: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
-      knight: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
-      bishop: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
       queen: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
       king: { projection: 'glbMesh; normalizedFrontFaceForPose', clipEyesToHead: false, defaultDepthUnits: 90 },
     },

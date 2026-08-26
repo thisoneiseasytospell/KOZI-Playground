@@ -43,8 +43,7 @@ head-motion profile, and chains them while motion is running.
 
 ## Shapes
 
-Sphere, Mickey, Cube, Plane (the default), and the six chess pieces — Pawn,
-Rook, Knight, Bishop, Queen, King.
+Sphere, Mickey, Cube, Plane, and two chess pieces — Queen and King.
 
 ## The face
 

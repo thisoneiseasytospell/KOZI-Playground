@@ -303,9 +303,10 @@ function drawLabel(ctx, item, t, W, H, k) {
 // passing each other.
 const SWAP_PERIOD = 2;      // seconds from one swap to the next
 const SWAP_MOVE = 0.65;     // seconds the travel itself takes
-const SWAP_RUN = 0.055;     // how far an element runs before the mask takes it, in frame widths
-const SWAP_STAGGER = 0.11;  // seconds each element waits on the one to its left
+const SWAP_RUN = 0.16;      // the belt an element travels, in frame widths (most of it masked)
+const SWAP_STAGGER = 0.11;  // seconds each element waits on the one to its right
 const SWAP_TIMES = 3;       // swaps the loop runs before it settles for good
+const SWAP_BITE = 0.3;      // fraction of that belt you actually see before the mask shuts
 
 // Offset and opacity for each looping element at time t. `items` is sorted by x, `sizes` holds
 // their measured boxes in the same order.
@@ -317,9 +318,12 @@ function swapPlan(items, sizes, t, W, H) {
   const width = i => (sizes[i]?.w || 0) / W;
   const slots = items.map((it, i) => ({ y: it.y, grip: grip(i), edge: it.x + width(i) * grip(i) }));
 
-  // Each element leaves a beat after the one to its left, so the pair reads as a sequence
-  // rather than a single sliding object. The window is pulled back by the whole stagger, which
-  // keeps the last one landing on the beat however many are riding.
+  // Each element leaves a beat after the one to its right, so the pair reads as a sequence
+  // rather than a single sliding object. The rightmost goes first on purpose: it is the one
+  // that wraps, and leading with it clears the slot before the element behind arrives there.
+  // Lead with the left one instead and the two are briefly in the same corner at once, which
+  // reads as a doubled, misaligned element rather than a swap. The window is pulled back by
+  // the whole stagger, so the last one still lands on the beat however many are riding.
   // The loop is a flourish, not a metronome: it trades places SWAP_TIMES and then holds,
   // rather than running for as long as the clip does.
   const done = Math.floor(t / SWAP_PERIOD);      // swaps behind us
@@ -330,14 +334,21 @@ function swapPlan(items, sizes, t, W, H) {
 
   const plan = new Map();
   items.forEach((it, i) => {
-    const u = held ? 0 : (t - done * SWAP_PERIOD - lead - SWAP_STAGGER * i) / SWAP_MOVE;
+    const u = held ? 0 : (t - done * SWAP_PERIOD - lead - SWAP_STAGGER * (last - i)) / SWAP_MOVE;
     const d = easeInOut(u) * run * 2;   // how far along the belt this one has carried
     const near = d < run;               // still on the near side of the mask
     const slot = slots[(i + n + (near ? 0 : 1)) % items.length];
+    // Distance from its own slot — the one it is leaving, or the one it is joining. The mask
+    // is keyed off that, so an element is only ever seen near a slot and is shut for the whole
+    // middle of the belt, however long the belt is.
+    const gap = near ? d : run * 2 - d;
     plan.set(it.id, {
       ox: (slot.edge - width(i) * slot.grip - it.x) * W + (near ? d : d - run * 2),
       oy: (slot.y - it.y) * H,
-      alpha: near ? 1 - d / run : (d - run) / run,
+      // The shut window has to outlast the stagger: while one element is arriving in a corner
+      // the one it is relieving is still leaving it, and if either is still faintly there they
+      // read as one doubled, misaligned element rather than as a swap.
+      alpha: Math.max(0, Math.min(1, 1 - gap / (run * SWAP_BITE))),
     });
   });
   return plan;

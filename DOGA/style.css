@@ -598,7 +598,8 @@ body.editing #ptl { display: none; }
 
 /* The type hands itself over to a real input in place: same face, size and position, so the
    only thing that changes when the keyboard comes up is that there is now a caret. */
-#editScrim { position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 15; }
+#editScrim { position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 15; display: none; }
+body.editing #editScrim { display: block; }
 #tapEdit {
   position: fixed;
   z-index: 16;
@@ -611,4 +612,16 @@ body.editing #ptl { display: none; }
   user-select: text;
   -webkit-user-select: text;
   caret-color: #2f7cff;
+}
+/* Between edits the input stays in the page — iOS will not raise the keyboard for an element
+   that was created by the same tap that focuses it — so it waits here: a focusable speck in
+   the middle of the screen, invisible and out of the way of the thumb. */
+#tapEdit.parked {
+  top: 50%;
+  left: 50%;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
 }

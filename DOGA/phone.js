@@ -191,6 +191,8 @@ function wireStrip() {
 
 let editing = null;
 let tap = null;
+let ta = null;      // the one real input, built once and parked between edits
+let scrim = null;
 
 function canvasPos(e) {
   const r = api.canvas.getBoundingClientRect();
@@ -211,12 +213,16 @@ function hitText(x, y) {
 
 function wireCanvas() {
   const stage = $('stage');
+  ensureInput();   // the input has to predate the tap that focuses it, so build it at boot
   stage.addEventListener('pointerdown', e => {
     if (editing) return;
     const p = canvasPos(e);
     const id = hitText(p.x, p.y);
     tap = { id, x: e.clientX, y: e.clientY, at: performance.now() };
-    if (id != null) { e.stopPropagation(); e.preventDefault(); }
+    // Stopping the event is enough to keep app.js's drag off the type; preventing its default
+    // would also cancel the touch WebKit needs in order to raise the keyboard later. The canvas
+    // is touch-action: none on a phone, so nothing scrolls or zooms out from under the tap.
+    if (id != null) e.stopPropagation();
   }, true);
 
   stage.addEventListener('pointerup', e => {
@@ -225,7 +231,7 @@ function wireCanvas() {
     if (!t || editing) return;
     if (Math.hypot(e.clientX - t.x, e.clientY - t.y) > 10) return;   // that was a drag
     if (performance.now() - t.at > 600) return;                     // that was a hold
-    if (t.id != null) { e.stopPropagation(); beginEdit(t.id); }
+    if (t.id != null) { e.stopPropagation(); armEdit(t.id); }
     else api.setPlaying(!api.state.playing);
   }, true);
 
@@ -233,16 +239,54 @@ function wireCanvas() {
   window.visualViewport?.addEventListener('scroll', fitKeyboard);
 }
 
-function beginEdit(id) {
+// iOS raises the keyboard only for a focus() that happens inside the touch that asked for it,
+// on an element that was already in the page when the thumb went down. So the input is built
+// once, parked invisible between edits, and takes focus as the very first thing a tap does —
+// seeking, hiding and measuring all happen after, with the keyboard already on its way up.
+function ensureInput() {
+  if (ta) return;
+
+  scrim = document.createElement('div');
+  scrim.id = 'editScrim';
+
+  ta = document.createElement('textarea');
+  ta.id = 'tapEdit';
+  ta.className = 'parked';
+  ta.rows = 1;
+  ta.enterKeyHint = 'done';
+  ta.spellcheck = false;
+  ta.autocapitalize = 'sentences';
+  ta.autocomplete = 'off';
+
+  ta.addEventListener('input', () => {
+    if (!editing) return;
+    editing.item.text = ta.value;
+    grow();
+    api.draw();
+  });
+  ta.addEventListener('blur', endEdit);
+  scrim.addEventListener('pointerdown', endEdit);
+
+  document.body.append(scrim, ta);
+}
+
+function armEdit(id) {
   const item = api.state.texts.find(t => t.id === id);
   if (!item || !KIND_INFO[item.kind]?.text) return;
 
+  ensureInput();
+  ta.value = item.text;
+  ta.focus({ preventScroll: true });
+  beginEdit(item);
+}
+
+function beginEdit(item) {
   // Park where the type-on has finished, so what you edit is the whole line rather than
   // whatever the typewriter had reached when your thumb landed.
   api.setPlaying(false);
   api.applySeek(item.start + item.dur * 0.55);
-  const box = api.boxes().get(id);
-  if (!box) return;
+  const box = api.boxes().get(item.id);
+  if (!box) { ta.blur(); return; }
 
   // The canvas hands the type over to a real input: same face, same size, same place.
   item.hide = true;
@@ -254,15 +298,7 @@ function beginEdit(id) {
   const size = Math.max(16, item.size * r.width / REF_W);   // under 16px iOS zooms the page
   const weight = item.kind === 'wordmark' ? 500 : 400;
 
-  const scrim = document.createElement('div');
-  scrim.id = 'editScrim';
-
-  const ta = document.createElement('textarea');
-  ta.id = 'tapEdit';
-  ta.value = item.text;
-  ta.rows = 1;
-  ta.enterKeyHint = 'done';
-  ta.spellcheck = false;
+  ta.className = '';
   Object.assign(ta.style, {
     left: (r.left + box.x * s) + 'px',
     width: Math.max(box.w * s, (item.maxW || 0.4) * r.width) + 'px',
@@ -273,21 +309,11 @@ function beginEdit(id) {
     padding: cap ? `0 ${size * 0.18}px` : '0',
   });
 
-  document.body.append(scrim, ta);
   editing = { item, ta, scrim, top: r.top + box.y * s };
   ta.style.top = editing.top + 'px';
   document.body.classList.add('editing');
   grow();
 
-  ta.addEventListener('input', () => {
-    item.text = ta.value;
-    grow();
-    api.draw();
-  });
-  ta.addEventListener('blur', endEdit);
-  scrim.addEventListener('pointerdown', endEdit);
-
-  ta.focus();
   ta.setSelectionRange(ta.value.length, ta.value.length);
   fitKeyboard();
 }
@@ -315,11 +341,12 @@ function applyShift(n) {
 
 function endEdit() {
   if (!editing) return;
-  const { item, ta, scrim } = editing;
+  const { item } = editing;
   editing = null;
   item.hide = false;
-  ta.remove();
-  scrim.remove();
+  ta.blur();                 // a tap on the scrim has to put the keyboard away too
+  ta.className = 'parked';
+  ta.removeAttribute('style');
   document.body.classList.remove('editing');
   applyShift(0);
   api.rebuildTimeline();

@@ -1488,20 +1488,23 @@ $('exportBtn').addEventListener('click', async () => {
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
     $('exportTitle').textContent = 'Done';
     $('exportInfo').textContent = `${W}×${H} · ${(blob.size / 1e6).toFixed(1)} MB · ${secs}s`;
-    // iOS Safari won't honour <a download> for a blob, and navigator.share() needs a gesture
-    // of its own — an export takes too long to still be holding one. So the finished file sits
-    // behind a button: tapping it opens the share sheet, where Save to Photos lives.
+    // Desktop should behave like a normal download and put the MP4 in the browser's Downloads
+    // folder. Only the phone interface uses the share sheet: iOS Safari does not reliably honour
+    // <a download> for blob URLs, and Save to Photos lives in that sheet.
     const file = new File([blob], 'doga-export.mp4', { type: 'video/mp4' });
     const a = $('exportSave');
     if (a.href) URL.revokeObjectURL(a.href);
-    if (navigator.canShare?.({ files: [file] })) {
+    const shareOnPhone = document.body.classList.contains('phone')
+      && navigator.canShare?.({ files: [file] });
+    if (shareOnPhone) {
       a.textContent = 'Save video';
       a.removeAttribute('href');
       a.removeAttribute('download');
       a.onclick = () => { navigator.share({ files: [file] }).catch(() => {}); };
     } else {
-      a.textContent = 'Save MP4';
+      a.textContent = 'Download MP4';
       a.href = URL.createObjectURL(blob);
+      a.download = 'doga-export.mp4';
       a.onclick = null;
     }
     a.hidden = false;

@@ -49,7 +49,7 @@
         <strong>Drop media</strong>
         <span>video or images — or click to browse</span>
       </div>
-      <div class="label">On the timeline</div>
+      <div class="label">Media · drag to timeline</div>
       <div id="assetList"></div>
     </div>
 
@@ -63,6 +63,7 @@
   <div id="tlHead">
     <button id="playBtn" class="btn">Play</button>
     <button id="loopBtn" class="btn on" title="Loop playback">Loop</button>
+    <button id="undoBtn" class="btn" title="Nothing to undo" disabled>Undo</button>
     <span id="timecode">0:00.0 / 0:00.0</span>
   </div>
   <div id="tlScroll">
@@ -108,6 +109,7 @@
         <option value="down">Pan down</option>
         <option value="none">Hold still</option>
       </select></label>
+      <button id="replaceBtn" class="btn wide">Replace media…</button>
       <button id="muteBtn" class="btn wide">Mute audio</button>
     </div>
     <div class="insp-foot"><button id="deleteBtn" class="btn danger">Delete layer</button></div>
@@ -125,6 +127,7 @@
 </div>
 
 <input type="file" id="fileInput" accept="video/*,image/*" multiple hidden>
+<input type="file" id="replaceInput" accept="video/*,image/*" hidden>
 <script type="module" src="app.js"></script>
 <script type="module" src="phone.js"></script>
 </body>

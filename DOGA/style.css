@@ -161,6 +161,8 @@ body.dragover #dropZone { border-color: var(--accent); background: #ebebec; }
   cursor: pointer;
   min-width: 0;
 }
+.asset[draggable="true"] { cursor: grab; }
+.asset.dragging { opacity: 0.45; }
 .asset:hover { background: #f1f1f2; }
 .asset.selected { border-color: var(--accent); background: #f1f1f2; }
 .asset .thumb { width: 40px; height: 40px; flex: none; display: block; background: #e2e2e4; }
@@ -361,6 +363,22 @@ body.dragover #dropZone { border-color: var(--accent); background: #ebebec; }
   margin-top: 8px;
   min-width: 100%;
   min-height: 40px;
+}
+#clipTrack.media-dragover {
+  background: rgba(17,17,19,0.035);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+}
+#clipTrack.media-dragover::after {
+  content: "";
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  bottom: 0;
+  left: var(--drop-x, 46px);
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
 }
 .trackLabel {
   position: absolute;

@@ -44,9 +44,74 @@ const state = {
   sel: new Set(),   // 'clip:3' / 'text:12' — one selection set across both tracks
 };
 let uid = 1;
-let pickReplaces = false;   // does the next file pick replace the clips, or add to them?
+let pickReplaces = false;   // does the phone picker replace its current picture, or add media?
 let textBoxes = new Map();
 let snapEdges = null;
+
+// ---------- undo history ----------
+// Snapshots keep File and decoded Media objects by reference, while copying every editable
+// field. That makes undo instant even after deleting or replacing a large video: no re-read and
+// no re-decode is needed. DOM handles are deliberately left behind and rebuilt on restore.
+
+const undoStack = [];
+const HISTORY_LIMIT = 40;
+
+const copyClip = c => ({ ...c, el: null, assetEl: null, thumbEl: null });
+const captureSnapshot = () => ({
+  clips: state.clips.map(copyClip),
+  texts: state.texts.map(t => ({ ...t })),
+  selection: [...state.sel],
+  ratio: state.ratio,
+  t: state.t,
+});
+
+function mediaInUse(media) {
+  if (!media) return true;
+  if (state.clips.some(c => c.media === media)) return true;
+  return undoStack.some(s => s.clips.some(c => c.media === media));
+}
+
+function releaseForgotten(snapshot) {
+  for (const c of snapshot.clips) if (c.media && !mediaInUse(c.media)) c.media.destroy();
+}
+
+function updateUndoButton() {
+  const button = $('undoBtn');
+  if (!button) return;
+  const latest = undoStack[undoStack.length - 1];
+  button.disabled = !latest;
+  button.title = latest ? `Undo ${latest.label}` : 'Nothing to undo';
+}
+
+function commitSnapshot(snapshot, label) {
+  snapshot.label = label;
+  undoStack.push(snapshot);
+  if (undoStack.length > HISTORY_LIMIT) releaseForgotten(undoStack.shift());
+  updateUndoButton();
+}
+
+function checkpoint(label) {
+  commitSnapshot(captureSnapshot(), label);
+}
+
+function undo() {
+  const snapshot = undoStack.pop();
+  if (!snapshot) return;
+  const displaced = state.clips;
+  setPlaying(false);
+  state.clips = snapshot.clips.map(copyClip);
+  state.texts = snapshot.texts.map(t => ({ ...t }));
+  state.sel = new Set(snapshot.selection);
+  state.t = snapshot.t;
+  assetSig = ''; // force fresh media rows and poster canvases
+  setRatio(snapshot.ratio);
+  state.t = Math.min(state.t, totalDur());
+  syncInspector();
+  rebuildTimeline();
+  draw();
+  for (const c of displaced) if (c.media && !mediaInUse(c.media)) c.media.destroy();
+  updateUndoButton();
+}
 
 // ---------- sidebar tabs ----------
 // Two panels behind one strip: what you lay in, and what media is loaded. Controls for the
@@ -335,10 +400,15 @@ function tick(ts) {
 // Videos and stills land on the same track and behave the same once they are there: a still is
 // just a clip whose source happens to hold one frame and no sound, given a default length you
 // then trim like any other block.
-async function addFiles(files) {
-  for (const file of files) {
+async function addFiles(files, { at = null, history = true } = {}) {
+  const accepted = [...files].filter(file =>
+    file.type.startsWith('image/') || file.type.startsWith('video/'));
+  if (!accepted.length) return;
+  if (history) checkpoint('add media');
+  let dropAt = Number.isFinite(at) ? Math.max(0, at) : null;
+
+  for (const file of accepted) {
     const still = file.type.startsWith('image/');
-    if (!still && !file.type.startsWith('video/')) continue;
     const clip = {
       id: uid++, file, still,
       name: file.name.replace(/\.[^.]+$/, ''),
@@ -351,24 +421,76 @@ async function addFiles(files) {
 
     const media = still ? await new ImageMedia(file).load()
                         : await new ClipMedia(file).load(audioCtx);
-    clip.media = media;
-    clip.loading = false;
+    // The user may have undone the import while a decoder was opening the file.
+    const current = state.clips.find(c => c.id === clip.id);
+    if (!current) { media.destroy(); continue; }
+    current.media = media;
+    current.loading = false;
     if (media.error) { rebuildTimeline(); continue; }
 
-    clip.srcDur = media.duration;
-    clip.out = still ? STILL_DUR : media.duration;
-    clip.start = state.clips.filter(c => c !== clip && !c.media?.error)
+    current.srcDur = media.duration;
+    current.out = still ? STILL_DUR : media.duration;
+    current.start = dropAt ?? state.clips.filter(c => c !== current && !c.media?.error)
       .reduce((m, c) => Math.max(m, clipEnd(c)), 0);
+    if (dropAt !== null) dropAt += clipDur(current);
     $('dropHint').classList.add('hidden');
-    media.ensure(clip.in);
+    media.ensure(current.in);
     rebuildTimeline();
     draw();
     // audio decodes in the background; fold it in when it lands
     media.audioPromise?.then(() => {
-      if (selectedClipId() === clip.id) updateMuteBtn(clip);
+      const live = state.clips.find(c => c.id === clip.id);
+      if (live && selectedClipId() === live.id) updateMuteBtn(live);
       if (state.playing) startAudio();
     });
   }
+}
+
+// Swap the source beneath a clip while preserving where it starts, how long it lasts, and its
+// crop/motion settings. A shorter video is the one exception: it cannot extend past its source.
+async function replaceClipMedia(clip, file, { history = true } = {}) {
+  if (!clip || !file || !(file.type.startsWith('image/') || file.type.startsWith('video/'))) return;
+  if (history) checkpoint('replace media');
+
+  const id = clip.id;
+  const token = Symbol('replace');
+  const keepDur = clipDur(clip);
+  clip.loadToken = token;
+  clip.loading = true;
+  rebuildTimeline();
+
+  const still = file.type.startsWith('image/');
+  const media = still ? await new ImageMedia(file).load()
+                      : await new ClipMedia(file).load(audioCtx);
+  const current = state.clips.find(c => c.id === id);
+  if (!current || current.loadToken !== token) { media.destroy(); return; }
+  current.loading = false;
+  delete current.loadToken;
+  if (media.error) {
+    media.destroy();
+    rebuildTimeline();
+    return;
+  }
+
+  current.file = file;
+  current.name = file.name.replace(/\.[^.]+$/, '');
+  current.still = still;
+  current.media = media;
+  current.srcDur = media.duration;
+  current.in = still ? 0 : Math.min(current.in, Math.max(0, media.duration - MIN_CLIP));
+  current.out = still ? current.in + keepDur : Math.min(media.duration, current.in + keepDur);
+  current.muted = still ? false : current.muted;
+  assetSig = '';
+  media.ensure(current.in);
+  $('dropHint').classList.add('hidden');
+  syncInspector();
+  rebuildTimeline();
+  draw();
+  media.audioPromise?.then(() => {
+    const live = state.clips.find(c => c.id === id);
+    if (live && selectedClipId() === id) updateMuteBtn(live);
+    if (state.playing) startAudio();
+  });
 }
 
 // The opening frame, so the story template has something to sit on before you drop anything.
@@ -378,9 +500,9 @@ async function loadDefaultMedia() {
     if (!res.ok) return;
     const blob = await res.blob();
     if (state.clips.length) return;   // user dropped their own while this was in flight
-    await addFiles([new File([blob], 'Kunstsilo.jpg', { type: blob.type || 'image/jpeg' })]);
+    await addFiles([new File([blob], 'Kunstsilo.jpg', { type: blob.type || 'image/jpeg' })], { history: false });
     if (!state.texts.length) {
-      addStory();
+      addStory(false);
       selectText(null);   // open on the finished frame, not on a selection box
     }
   } catch {
@@ -415,7 +537,8 @@ function makeItem(kind, at, overrides = {}) {
 
 // state.texts is ordered top layer first, so a new element lands on top of what is already
 // there — except the overlay wash, which belongs under the type it exists to make legible.
-function addText(kind) {
+function addText(kind, history = true) {
+  if (history) checkpoint(`add ${KIND_INFO[kind]?.name?.toLowerCase() || 'element'}`);
   const at = Math.min(state.t, Math.max(0, totalDur() - 1));
   const item = makeItem(kind, at);
   if (kind === 'scrim') state.texts.push(item);
@@ -423,22 +546,35 @@ function addText(kind) {
   selectText(item.id);
 }
 
-// Lays in the whole template at once, listed top layer down: footer, headline, place, date,
-// category, and the scrim underneath them all.
-function addStory() {
+// Lays in the whole template at once. The headline is a three-card sequence across the story:
+// 30% for the opening, 30% for the speaker card, and 40% for the short call to action. They are
+// separate timeline layers, so each can still be retimed, rewritten and repositioned by hand.
+function addStory(history = true) {
+  if (history) checkpoint('add DOGA story');
   const at = Math.min(state.t, Math.max(0, totalDur() - 1));
   const dur = Math.max(2, Math.min(STORY_DUR, totalDur() - at || STORY_DUR));
+  const firstDur = dur * 0.3;
+  const secondDur = dur * 0.3;
+  const thirdAt = at + firstDur + secondDur;
   const added = [
     makeItem('arrow', at, { dur, swap: true }),
     makeItem('wordmark', at, { dur, swap: true }),
-    makeItem('caption', at, { dur }),
+    makeItem('caption', at, { dur: firstDur }),
+    makeItem('caption', at + firstDur, {
+      dur: secondDur,
+      text: 'Foredrag med Nicolai Tangen og Anne Elisabeth Bull',
+    }),
+    makeItem('caption', thirdAt, {
+      dur: at + dur - thirdAt,
+      text: 'Link in Bio!',
+    }),
     makeItem('body', at, { dur, text: '27. august, 2026\nkl. 09.00—10.30', x: N(550, 'x') }),
     makeItem('body', at, { dur }),
     makeItem('pill', at, { dur }),
     makeItem('scrim', at, { dur }),
   ];
   state.texts.unshift(...added);
-  selectText(added[2].id);   // headline — the piece you almost always edit first
+  selectText(added[2].id);   // opening headline — the piece you almost always edit first
 }
 
 // Repaints the inspector from whatever is selected. Never touches the selection itself.
@@ -487,6 +623,7 @@ function syncInspector() {
     $('durInput').max = (clip.srcDur - clip.in).toFixed(1);
     $('moveCtl').style.display = clip.still ? '' : 'none';
     $('moveInput').value = clip.move;
+    $('replaceBtn').textContent = clip.still ? 'Replace picture…' : 'Replace media…';
     updateMuteBtn(clip);
   }
 }
@@ -526,6 +663,7 @@ function updateMuteBtn(clip) {
 
 function deleteSelected() {
   if (!state.sel.size) return;
+  checkpoint(state.sel.size > 1 ? 'delete layers' : 'delete layer');
   const clipIds = [];
   const textIds = new Set();
   for (const key of state.sel) {
@@ -534,7 +672,7 @@ function deleteSelected() {
   }
   state.texts = state.texts.filter(t => !textIds.has(t.id));
   state.sel = new Set();
-  if (clipIds.length) removeClips(clipIds);
+  if (clipIds.length) removeClips(clipIds, { history: false });
   else { syncInspector(); rebuildTimeline(); draw(); }
 }
 
@@ -588,6 +726,7 @@ function moveLayer(dir) {
   const i = list.indexOf(item);
   const j = Math.max(0, Math.min(list.length - 1, i + dir));
   if (i < 0 || i === j) return;
+  checkpoint('reorder layer');
   list.splice(i, 1);
   list.splice(j, 0, item);
   rebuildTimeline();
@@ -672,12 +811,13 @@ function rebuildTimeline() {
 }
 
 // ---------- asset overview ----------
-// The Media tab's list of what is loaded. Every asset is a clip on the timeline, so this is a
-// poster-frame view of the clip track rather than a separate library: click a row to select
-// that clip, × to drop it.
+// The Media tab's list of what is loaded. Every asset is a clip on the timeline, so dragging a
+// row back to the clip track retimes that clip exactly where it is dropped. Click still selects
+// it, and × removes it.
 
 const assetList = $('assetList');
 let assetSig = '';
+const MEDIA_DRAG_TYPE = 'application/x-doga-media-id';
 
 const assetMeta = clip => clip.loading ? 'reading…'
   : clip.media?.error ? clip.media.error
@@ -705,6 +845,8 @@ function buildAssetRows() {
   for (const clip of state.clips) {
     const row = document.createElement('div');
     row.className = 'asset';
+    row.draggable = !clip.loading && !clip.media?.error;
+    row.title = row.draggable ? 'Drag to place on the timeline' : '';
     row.innerHTML = `<canvas class="thumb" width="80" height="80"></canvas>
       <span class="meta"><b></b><i></i></span>
       <span class="x" title="Remove">×</span>`;
@@ -714,6 +856,16 @@ function buildAssetRows() {
       removeClips([clip.id]);
     });
     row.addEventListener('click', () => selectClip(clip.id));
+    row.addEventListener('dragstart', e => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData(MEDIA_DRAG_TYPE, String(clip.id));
+      e.dataTransfer.setData('text/plain', `doga-media:${clip.id}`);
+      row.classList.add('dragging');
+    });
+    row.addEventListener('dragend', () => {
+      row.classList.remove('dragging');
+      clipTrack.classList.remove('media-dragover');
+    });
     assetList.appendChild(row);
     clip.assetEl = row;
     clip.thumbEl = row.querySelector('.thumb');
@@ -732,6 +884,54 @@ function rebuildAssets() {
     clip.assetEl.querySelector('i').textContent = assetMeta(clip);
   }
 }
+
+function isMediaDrag(dataTransfer) {
+  return !!dataTransfer && [...dataTransfer.types].includes(MEDIA_DRAG_TYPE);
+}
+
+function timelineTimeAt(clientX) {
+  const r = tl.getBoundingClientRect();
+  return Math.max(0, (clientX - r.left + tl.scrollLeft - PAD) / pps());
+}
+
+// Native drag-and-drop is used here rather than a second pointer-drag implementation so file
+// drags from Finder and media-row drags share the same target and feedback.
+tl.addEventListener('dragover', e => {
+  if (!isMediaDrag(e.dataTransfer)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  e.dataTransfer.dropEffect = 'move';
+  const r = clipTrack.getBoundingClientRect();
+  clipTrack.style.setProperty('--drop-x', `${Math.max(PAD, e.clientX - r.left)}px`);
+  clipTrack.classList.add('media-dragover');
+});
+
+tl.addEventListener('dragleave', e => {
+  if (!tl.contains(e.relatedTarget)) clipTrack.classList.remove('media-dragover');
+});
+
+tl.addEventListener('drop', e => {
+  if (!isMediaDrag(e.dataTransfer)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  clipTrack.classList.remove('media-dragover');
+  const clip = state.clips.find(c => c.id === +e.dataTransfer.getData(MEDIA_DRAG_TYPE));
+  if (!clip) return;
+
+  const beforeDrop = captureSnapshot();
+  clip.start = timelineTimeAt(e.clientX);
+  const r = clipTrack.getBoundingClientRect();
+  const lane = Math.max(0, Math.min(state.clips.length - 1,
+    Math.floor((e.clientY - r.top) / LANE_H)));
+  const oldLane = state.clips.indexOf(clip);
+  if (oldLane !== lane) {
+    state.clips.splice(oldLane, 1);
+    state.clips.splice(lane, 0, clip);
+  }
+  commitSnapshot(beforeDrop, 'place media');
+  selectClip(clip.id);
+  if (state.playing) startAudio();
+});
 
 // Green = frames decoded and sitting in RAM, ready to paint this instant. Not bytes read.
 function paintCache(clip) {
@@ -771,9 +971,13 @@ function scrollPlayheadIntoView() {
   else if (x > tl.scrollLeft + tl.clientWidth - margin) tl.scrollLeft = x - tl.clientWidth + margin;
 }
 
-function removeClips(ids) {
+function removeClips(ids, { history = true } = {}) {
   const gone = new Set(ids);
-  for (const c of state.clips) if (gone.has(c.id)) c.media?.destroy();
+  if (history && state.clips.some(c => gone.has(c.id))) {
+    checkpoint(ids.length > 1 ? 'remove media' : 'remove media');
+  }
+  // Decoded media stays alive while an undo snapshot refers to it. It is released when that
+  // snapshot falls off the bounded history, or when undo displaces it for good.
   state.clips = state.clips.filter(c => !gone.has(c.id));
   for (const id of ids) state.sel.delete(selKey('clip', id));
   if (!state.clips.length) { $('dropHint').classList.remove('hidden'); setPlaying(false); }
@@ -810,6 +1014,7 @@ function blockDrag(e, el, info) {
     : { start: info.item.start, dur: info.item.dur, index: info.index };
   const group = grip ? [] : selectionItems();
   const groupMin = group.length ? Math.min(...group.map(g => g.start)) : 0;
+  const beforeDrag = captureSnapshot();
 
   const onMove = ev => {
     const dx = (ev.clientX - x0) / scale;
@@ -867,6 +1072,7 @@ function blockDrag(e, el, info) {
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     const touchedClip = info.type === 'clip' || group.some(g => g.type === 'clip');
+    if (moved) commitSnapshot(beforeDrag, grip ? 'trim layer' : 'move layer');
     if (moved && touchedClip && state.playing) startAudio();
     if (!moved) {
       if (info.type === 'text') selectText(info.item.id);
@@ -981,7 +1187,10 @@ canvas.addEventListener('pointerdown', e => {
     const ox = lift.ox || 0;
     const oy = lift.oy || 0;
     const off = { x: p.x - (item.x * canvas.width + ox), y: p.y - (item.y * canvas.height + oy) };
+    const beforeMove = captureSnapshot();
+    let moved = false;
     dragCanvas(e, ev => {
+      moved = true;
       const q = canvasPos(ev);
       const box = textBoxes.get(item.id);
       const bw = box ? box.w : 0;
@@ -1000,13 +1209,19 @@ canvas.addEventListener('pointerdown', e => {
       item.x = Math.min(1 - bw / canvas.width, Math.max(0, (nx - ox) / canvas.width));
       item.y = Math.min(1 - bh / canvas.height, Math.max(0, (ny - oy) / canvas.height));
       draw();
-    }, () => { snapEdges = null; draw(); });
+    }, () => {
+      snapEdges = null;
+      if (moved) commitSnapshot(beforeMove, 'move element');
+      draw();
+    });
     return;
   }
 
   const clip = topClipAt(state.t);
   if (clip?.media?.ready) {
     const start = { x: p.x, y: p.y, panX: clip.panX, panY: clip.panY };
+    const beforePan = captureSnapshot();
+    let moved = false;
     // A still is drawn at its move's zoom, so the drag has to work against that same scale.
     const m = clip.still
       ? stillMotion(clip.move, clipPhase(clip, state.t), clip.media.width, clip.media.height,
@@ -1017,11 +1232,12 @@ canvas.addEventListener('pointerdown', e => {
     const ox = clip.media.width * s - canvas.width;
     const oy = clip.media.height * s - canvas.height;
     dragCanvas(e, ev => {
+      moved = true;
       const q = canvasPos(ev);
       if (ox > 1) clip.panX = Math.max(-1, Math.min(1, start.panX - ((q.x - start.x) / ox) * 2));
       if (oy > 1) clip.panY = Math.max(-1, Math.min(1, start.panY - ((q.y - start.y) / oy) * 2));
       draw();
-    });
+    }, () => { if (moved) commitSnapshot(beforePan, 'reposition media'); });
   }
 });
 
@@ -1078,14 +1294,26 @@ $('moveInput').addEventListener('change', () => {
 $('swapBtn').addEventListener('click', () => {
   const item = state.texts.find(t => t.id === selectedTextId());
   if (!item) return;
+  checkpoint('swap loop');
   item.swap = !item.swap;
   $('swapBtn').classList.toggle('on', item.swap);
   draw();
 });
 $('deleteBtn').addEventListener('click', deleteSelected);
+$('replaceBtn').addEventListener('click', () => {
+  if (selectedClipId() == null) return;
+  $('replaceInput').click();
+});
+$('replaceInput').addEventListener('change', e => {
+  const clip = state.clips.find(c => c.id === selectedClipId());
+  const [file] = e.target.files;
+  if (clip && file) replaceClipMedia(clip, file);
+  e.target.value = '';
+});
 $('muteBtn').addEventListener('click', () => {
   const clip = state.clips.find(c => c.id === selectedClipId());
   if (!clip) return;
+  checkpoint(clip.muted ? 'unmute media' : 'mute media');
   clip.muted = !clip.muted;
   updateMuteBtn(clip);
   if (state.playing) startAudio();
@@ -1095,7 +1323,11 @@ $('muteBtn').addEventListener('click', () => {
 // ---------- sidebar ----------
 
 document.querySelectorAll('#ratioSeg button').forEach(b =>
-  b.addEventListener('click', () => setRatio(b.dataset.ratio)));
+  b.addEventListener('click', () => {
+    if (state.ratio === b.dataset.ratio) return;
+    checkpoint('change aspect ratio');
+    setRatio(b.dataset.ratio);
+  }));
 $('zoomInput').addEventListener('input', e => setSpan(sliderToSpan(+e.target.value)));
 $('zoomInput').addEventListener('dblclick', () => {
   setSpan(Math.max(2, totalDur() * 1.05), 0);
@@ -1114,9 +1346,18 @@ $('guidesBtn').addEventListener('click', () => {
 });
 $('dropZone').addEventListener('click', () => { pickReplaces = false; $('fileInput').click(); });
 $('fileInput').addEventListener('change', e => {
-  // The phone picker swaps the picture rather than stacking another clip behind it.
-  if (pickReplaces) removeClips(state.clips.map(c => c.id));
-  addFiles(e.target.files);
+  const files = [...e.target.files];
+  // The phone picker swaps its current picture in place, keeping story timing intact.
+  if (pickReplaces && files[0] && state.clips.length === 1) {
+    replaceClipMedia(state.clips[0], files[0]);
+  } else if (pickReplaces && files.length) {
+    checkpoint('replace media');
+    removeClips(state.clips.map(c => c.id), { history: false });
+    addFiles(files, { history: false });
+  } else {
+    addFiles(files);
+  }
+  pickReplaces = false;
   e.target.value = '';
 });
 $('addStoryBtn').addEventListener('click', addStory);
@@ -1129,6 +1370,41 @@ $('opacityInput').addEventListener('input', () => {
   $('opacityVal').textContent = $('opacityInput').value + '%';
   draw();
 });
+
+// Continuous fields create one undo step per editing gesture, rather than one per keystroke or
+// slider pixel. Clicking Undo naturally blurs the field first, which commits that gesture.
+let finishActiveControl = null;
+
+function trackUndoableControl(id, label) {
+  const el = $(id);
+  let before = null;
+  let dirty = false;
+  const finish = () => {
+    if (before && dirty) commitSnapshot(before, label);
+    before = null;
+    dirty = false;
+    if (finishActiveControl === finish) finishActiveControl = null;
+  };
+  const begin = () => {
+    if (before) return;
+    finishActiveControl?.();
+    before = captureSnapshot();
+    finishActiveControl = finish;
+  };
+  el.addEventListener('pointerdown', begin);
+  el.addEventListener('focus', begin);
+  el.addEventListener('input', () => { dirty = true; });
+  el.addEventListener('change', () => { dirty = true; finish(); });
+  el.addEventListener('blur', finish);
+}
+
+trackUndoableControl('textInput', 'edit text');
+trackUndoableControl('sizeInput', 'resize text');
+trackUndoableControl('widthInput', 'resize text box');
+trackUndoableControl('opacityInput', 'change opacity');
+trackUndoableControl('durInput', 'change duration');
+trackUndoableControl('moveInput', 'change motion');
+
 $('playBtn').addEventListener('click', () => setPlaying(!state.playing));
 $('loopBtn').addEventListener('click', () => {
   state.loop = !state.loop;
@@ -1137,18 +1413,31 @@ $('loopBtn').addEventListener('click', () => {
 
 // ---------- drag & drop ----------
 
-window.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragover'); });
+window.addEventListener('dragover', e => {
+  e.preventDefault();
+  if (!isMediaDrag(e.dataTransfer)) document.body.classList.add('dragover');
+});
 window.addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragover'); });
 window.addEventListener('drop', e => {
   e.preventDefault();
   document.body.classList.remove('dragover');
-  addFiles(e.dataTransfer.files);
+  if (isMediaDrag(e.dataTransfer)) return;
+  const at = e.target.closest?.('#tlScroll') ? timelineTimeAt(e.clientX) : null;
+  addFiles(e.dataTransfer.files, { at });
 });
 
 // ---------- keyboard ----------
 
 window.addEventListener('keydown', e => {
   const typing = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT';
+  const inspectorField = !!e.target.closest?.('#layerWin');
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey
+      && (!typing || inspectorField)) {
+    e.preventDefault();
+    finishActiveControl?.();
+    undo();
+    return;
+  }
   if (e.code === 'Space' && !typing) { e.preventDefault(); setPlaying(!state.playing); }
   if ((e.code === 'Backspace' || e.code === 'Delete') && !typing) deleteSelected();
   if (e.code === 'ArrowLeft' && !typing) applySeek(state.t - (e.shiftKey ? 1 : 1 / 30));
@@ -1161,6 +1450,7 @@ window.addEventListener('keydown', e => {
   if ((e.key === '=' || e.key === '+') && !typing) setSpan(state.span / 1.3);
   if (e.key === '-' && !typing) setSpan(state.span * 1.3);
 });
+$('undoBtn').addEventListener('click', undo);
 
 // ---------- export ----------
 

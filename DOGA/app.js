@@ -517,7 +517,7 @@ async function loadDefaultMedia() {
 const N = (px, axis) => px / (axis === 'x' ? 1080 : 1920);
 const PRESETS = {
   caption:  { text: 'Frå industrimoment til regional kraft: Kva kan vi lære av Kunstsilo?',
-              x: N(60, 'x'), y: N(620, 'y'), size: 100, maxW: N(960, 'x'), dur: 5 },
+              x: N(60, 'x'), y: N(930, 'y'), size: 100, maxW: N(960, 'x'), dur: 5 },
   body:     { text: 'DOGA\nNedre Vollgate 4', x: N(60, 'x'), y: N(381, 'y'), size: 50, maxW: N(450, 'x'), dur: 5 },
   wordmark: { text: 'DOGA', x: N(60, 'x'), y: N(1602, 'y'), size: 50, maxW: N(400, 'x'), dur: 5 },
   pill:     { text: 'Arrangement', x: N(60, 'x'), y: N(270, 'y'), size: 40, maxW: 0.6, dur: 5 },
@@ -547,14 +547,15 @@ function addText(kind, history = true) {
 }
 
 // Lays in the whole template at once. The headline is a three-card sequence across the story:
-// 30% for the opening, 30% for the speaker card, and 40% for the short call to action. They are
-// separate timeline layers, so each can still be retimed, rewritten and repositioned by hand.
+// 37% for the opening, 21% for the speaker card, and the rest for the short call to action —
+// the opening carries the most words and the sign-off wants to sit long enough to act on. They
+// are separate timeline layers, so each can still be retimed, rewritten and repositioned by hand.
 function addStory(history = true) {
   if (history) checkpoint('add DOGA story');
   const at = Math.min(state.t, Math.max(0, totalDur() - 1));
   const dur = Math.max(2, Math.min(STORY_DUR, totalDur() - at || STORY_DUR));
-  const firstDur = dur * 0.3;
-  const secondDur = dur * 0.3;
+  const firstDur = dur * 0.37;
+  const secondDur = dur * 0.21;
   const thirdAt = at + firstDur + secondDur;
   const added = [
     makeItem('arrow', at, { dur, swap: true }),

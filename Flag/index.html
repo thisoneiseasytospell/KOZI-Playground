@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WdKA Gradshow 2026</title>
+<title>Flag Studio</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -13,8 +13,18 @@
 <!-- Panel -->
 <div class="panel" id="panel">
   <div class="panel-header">
-    <div class="panel-title">WdKA Gradshow 2026</div>
-    <button class="panel-close" id="panelClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    <div class="panel-title">Flag Studio</div>
+    <div class="panel-header-actions">
+      <button class="panel-icon" id="aboutToggle" aria-expanded="false" aria-controls="panelAbout" title="About">?</button>
+      <button class="panel-close" id="panelClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+  </div>
+  <div class="panel-about" id="panelAbout" hidden>
+    <p>A WebGL cloth studio, built for the <strong>Willem de Kooning Academy Graduation Show 2026</strong> identity.</p>
+    <div class="about-links">
+      <a class="about-link" href="https://www.kozi.studio/work/wdka-graduation-show/" target="_blank" rel="noopener noreferrer">See the case on kozi.studio &#8599;</a>
+      <a class="about-link" href="../index.html">&#8592; Back to the playground</a>
+    </div>
   </div>
   <div class="panel-tabs">
     <button class="panel-tab active" data-tab="studio">Studio</button>
@@ -178,8 +188,8 @@
       <div class="section">
         <div class="section-label">Attachment</div>
         <div class="pill-row" id="attachRow" style="gap:5px">
-          <button class="pill" data-attach="edge">Full edge</button>
-          <button class="pill active" data-attach="corners">Two corners</button>
+          <button class="pill active" data-attach="edge">Full edge</button>
+          <button class="pill" data-attach="corners">Two corners</button>
         </div>
       </div>
       <div class="section">
@@ -206,6 +216,10 @@
           <input type="range" id="gravity" min="-100" max="100" value="-10" step="1">
         </div>
       </div>
+      <div class="section">
+        <div class="section-label">Gust</div>
+        <button type="button" class="btn-gust" id="gustBtn"><span class="btn-gust-fill" id="gustFill"></span><span class="btn-gust-label">Hold to build a gust &middot; <kbd>G</kbd></span></button>
+      </div>
     </div>
     <div class="tab-content" id="tabExport">
       <div class="section">
@@ -217,7 +231,6 @@
           <button class="pill" data-some="16:9">16:9</button>
           <button class="pill" data-some="print">Name Tags Print</button>
           <button class="pill" data-some="tagsvideo">Name Tags Video</button>
-          <button class="pill" data-some="student">Student Takeover</button>
         </div>
       </div>
       <div class="section" id="batchSection" style="display:none">
@@ -317,22 +330,6 @@ Can't Do</textarea>
           </div>
         </div>
       </div>
-      <div class="section" id="clothSection">
-        <div class="section-label">Cloth</div>
-        <div class="pill-row" id="clothModeRow" style="gap:5px">
-          <button class="pill active" data-cloth="full">Full</button>
-          <button class="pill" data-cloth="slight">Slight wave</button>
-          <button class="pill" data-cloth="flat">Flat</button>
-        </div>
-        <div class="control-row" id="gentleStrengthRow" style="display:none; margin-top:10px">
-          <div class="control-label">
-            <span class="control-name">Strength</span>
-            <span class="control-value" id="gentleStrengthVal">50</span>
-          </div>
-          <input type="range" id="gentleStrength" min="5" max="200" value="50">
-        </div>
-        <label class="matte-row" style="margin-top:10px"><input type="checkbox" id="unlitToggle"> True color — no shading (exact print)</label>
-      </div>
       <div class="section">
         <div class="section-label">Export</div>
         <div class="pill-row" id="loopModeRow" style="gap:5px; margin-bottom:10px">
@@ -401,6 +398,15 @@ Can't Do</textarea>
 <div class="some-frame" id="someFrame">
   <div class="some-guides"></div>
   <div class="some-label" id="someLabel">1:1 · 1080×1080</div>
+</div>
+
+<!-- Control legend — over the bottom of the flag, not buried in the panel -->
+<div class="canvas-legend" id="canvasLegend">
+  <span><kbd>Space</kbd>pause</span>
+  <span><kbd>G</kbd>hold for a gust</span>
+  <span class="legend-mouse"><kbd>Drag</kbd>pan</span>
+  <span class="legend-mouse"><kbd>Right-drag</kbd>orbit</span>
+  <span class="legend-mouse"><kbd>Scroll</kbd>zoom</span>
 </div>
 
 <!-- Orbit ball -->

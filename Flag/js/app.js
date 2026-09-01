@@ -1,5 +1,6 @@
 // ══════════════════════════════════════════════════════════════
-//  WdKA Gradshow 2026 — WebGL cloth simulation
+//  Flag Studio — WebGL cloth simulation for the
+//  Willem de Kooning Academy Graduation Show 2026
 // ══════════════════════════════════════════════════════════════
 
 const DEFAULT_TEXTURE_PATH = 'demo%20flag.png';
@@ -25,9 +26,8 @@ function prepareFullTextureForExport() {
 // ─── Config ──────────────────────────────────────────────────
 const DENSITY = 28;
 let SUBSTEPS = 2;
-const CONSTRAINT_ITERS = 4;
-const POLE_RADIUS = 0.018;
-const POLE_SEGMENTS = 48;
+const POLE_RADIUS = 0.026;
+const POLE_SEGMENTS = 96;
 
 let aspectW = 3, aspectH = 2;
 let flagW, flagH, cols, rows, totalPts;
@@ -54,6 +54,48 @@ function computeGrid(aw, ah) {
 }
 computeGrid(aspectW, aspectH);
 
+// ─── Viking cloth model ──────────────────────────────────────
+// Ported from the Viking sketch: heavy satin on a flexible mast. The wind is a
+// coherent field — one vector per column plus a per-row bias — instead of
+// per-particle noise, so the cloth rolls in big folds rather than buzzing. The
+// weight comes from self-collision (folds cannot pass through each other) and
+// long-range attachments (satin barely stretches).
+const VK = {
+  damp: 0.996,          // verlet velocity retention per substep
+  kNormal: 0.62,        // aerodynamic pressure along the surface normal
+  kTangent: 0.12,       // tangential drag
+  kStruct: 1.0, kShear: 0.7, kBend: 0.45,
+  itersA: 5, itersB: 2, // constraint passes before / after self-collision
+  thickCells: 2.0,      // self-collision thickness, in cells
+  lraSlack: 1.004,      // cap every particle at its taut geodesic to the hoist
+  gravity: 7.4,         // downward accel at the default gravity slider (-1)
+  windMax: 10.0,        // wind slider 100 → 0.7 × this, matching Viking's default
+  timeScale: 0.85,      // < 1 reads heavier / bigger
+  maxAccel: 90,
+};
+
+// The mast. Flag's cylinder runs far below the viewport for framing, so the
+// bend is measured against a virtual mast with Viking's proportions (2.2× the
+// flag height, hoist just under the tip) — that is what makes the sway read the
+// same at any aspect ratio.
+const POLE = {
+  freq: 0.5,      // Hz — natural sway
+  zeta: 0.07,     // damping ratio (low = keeps swaying)
+  drive: 0.008,   // tip force per wind²
+  couple: 9.0,    // how hard the flag's lateral swing drags the tip
+  maxBend: 0.5,   // clamp on tip deflection at the reference mast length
+  radius: 0.038,  // keep-out radius, a shade wider than the drawn mast
+};
+let poleLen = 4.4, poleBaseY = -2.68;
+const sway = { x: 0, z: 0, vx: 0, vz: 0 };
+function computePoleRig() {
+  poleLen = flagH * 2.2;
+  poleBaseY = flagH * 0.8 - poleLen * 0.973;   // hoist top sits just under the tip
+}
+computePoleRig();
+// Quadratic from the base — a mast bends most at the tip.
+function bendAt(y) { const k = clamp((y - poleBaseY) / poleLen, 0, 1); return k * k; }
+
 const SIM = {
   windStrength: 100,
   turbulence: 30,
@@ -66,36 +108,12 @@ const SIM = {
   bgColor: [0.831, 0.996, 0.827],
 };
 
-// Fabric model: 'classic' = original; 'realistic' = noise flutter + one-sided aero + heavier sag.
-const REALISM = {
-  mode: 'realistic',
-  noiseFlutter: true,
-  oneSidedAero: true,
-  gravityMul: 1.8,
-};
-function setFabricMode(mode) {
-  REALISM.mode = mode;
-  const r = mode === 'realistic';
-  REALISM.noiseFlutter = r;
-  REALISM.oneSidedAero = r;
-  REALISM.gravityMul = r ? 1.8 : 1.0;
-}
-
 // Weather preset — 'normal' or 'storm'. Storm widens angle-drift for swirling gusts.
 const WEATHER = { mode: 'normal', angleDriftMax: 24, angleDriftForce: 1.0 };
 
 // Attachment: 'edge' pins the full hoist column (pole flag); 'corners' pins only
 // top-left + bottom-left (banner/rope attachment) so the hoist edge itself flaps.
-const ATTACH = { mode: 'corners' };
-
-// Slight-wave cloth mode — hand-tuned ripple for the name-tag prints.
-// amp is a fraction of flag width (caps text distortion so every tag stays
-// legible); freqU/freqV set the fold count; drift paces the live preview.
-// Tuned for the head-on matte print view, where shading is the only depth
-// cue: amp 0.09 → ~±30% diffuse swing + a visibly wavy fly edge, while the
-// worst-case perspective warp on the text stays under 5% (still legible).
-// strength is the live multiplier driven by the Strength slider (1 = baked).
-const GENTLE = { amp: 0.09, freqU: 3.5, freqV: 2.6, drift: 0.18, strength: 1 };
+const ATTACH = { mode: 'edge' };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -126,16 +144,67 @@ function fbm2(x, y) {
 }
 
 // ─── Cloth arrays ────────────────────────────────────────────
-let pos, prev, nrm, smoothNrm, uv, fixed;
-let indexData, triIdx, numC, conA, conB, conR;
+let pos, prev, nrm, uv, fixed;
+let numC, conA, conB, conR, conK;
+
+// Pinned particles that actually ride the mast (as opposed to the out-of-shape
+// particles parked in fixed[]) — the sway drives these every substep.
+let pinList = null;        // flat [particle, row, particle, row, …]
+let rowPinned = null;      // Uint8Array(rows) — row has a live hoist pin
+let hoistCol = 0;          // leftmost column that still has cloth in it
+
+// ── Render surface: the sim grid bicubically subdivided ──
+// Viking's silhouette and shading smoothness come from here, not from a denser
+// sim. The sim stays cheap; the surface the shader sees is SUBDIV× finer, with
+// real tangents so the crease map and the anisotropic sheen have a weft to
+// follow.
+const SUBDIV = 2;
+let RC = 0, RR = 0, RN = 0;
+let rPos, rNrm, rTan, rUV, rowPass;
+let rIndexData = null;
+// Catmull-Rom weights for each sub-sample position.
+const CRW = [];
+for (let s = 0; s < SUBDIV; s++) {
+  const f = s / SUBDIV;
+  CRW.push([
+    -0.5 * f + f * f - 0.5 * f * f * f,
+    1 - 2.5 * f * f + 1.5 * f * f * f,
+    0.5 * f + 2 * f * f - 1.5 * f * f * f,
+    -0.5 * f * f + 0.5 * f * f * f,
+  ]);
+}
+
+// ── Self-collision broadphase (spatial hash) ──
+const SC_HASH_N = 1 << 15, SC_HASH_MASK = SC_HASH_N - 1;
+const scCellStart = new Int32Array(SC_HASH_N + 1);
+const scFillPtr = new Int32Array(SC_HASH_N);
+let scCellOf = null, scSorted = null;
 
 function allocArrays() {
   pos = new Float32Array(totalPts * 3);
   prev = new Float32Array(totalPts * 3);
   nrm = new Float32Array(totalPts * 3);
-  smoothNrm = new Float32Array(totalPts * 3);
   uv = new Float32Array(totalPts * 2);
   fixed = new Uint8Array(totalPts);
+  scCellOf = new Int32Array(totalPts);
+  scSorted = new Int32Array(totalPts);
+  rowPinned = new Uint8Array(rows);
+
+  RC = (cols - 1) * SUBDIV + 1;
+  RR = (rows - 1) * SUBDIV + 1;
+  RN = RC * RR;
+  rPos = new Float32Array(RN * 3);
+  rNrm = new Float32Array(RN * 3);
+  rTan = new Float32Array(RN * 3);
+  rUV = new Float32Array(RN * 2);
+  rowPass = new Float32Array(rows * RC * 3);
+  for (let ry = 0; ry < RR; ry++) {
+    for (let rx = 0; rx < RC; rx++) {
+      const o = (ry * RC + rx) * 2;
+      rUV[o] = rx / (RC - 1);
+      rUV[o + 1] = ry / (RR - 1);
+    }
+  }
 }
 
 // ─── Custom shape (silhouette polygon) ───────────────────────
@@ -229,56 +298,32 @@ function initCloth() {
   }
 }
 
-// Snap the cloth to a flat plane (z = 0) with zero velocity — used by the
-// "Flat" cloth mode so the flag renders as a clean flat panel.
-function flattenCloth() {
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const idx = j * cols + i, i3 = idx * 3;
-      const u = i / (cols - 1), v = j / (rows - 1);
-      pos[i3] = prev[i3] = u * flagW;
-      pos[i3 + 1] = prev[i3 + 1] = -v * flagH + flagH * 0.8;
-      pos[i3 + 2] = prev[i3 + 2] = 0;
-    }
-  }
-  computeMeshNormals();
-}
-
-// "Slight wave" cloth mode — a flat panel with a small deterministic FBM
-// ripple instead of the wind sim. z-only displacement with the hoist column
-// held flat, so the texture-mapped text can never fold over or drift off
-// centre; GENTLE.amp caps how far it can distort. `seed` picks the fold
-// pattern (batch export passes the row index: every tag differs, re-exports
-// are identical); `time` slowly drifts the pattern for the live preview.
-function gentleClothPose(seed = 0, time = 0) {
-  const amp = flagW * GENTLE.amp * GENTLE.strength;
-  for (let j = 0; j < rows; j++) {
-    const v = j / (rows - 1);
-    const row3 = j * cols * 3;
-    for (let i = 0; i < cols; i++) {
-      const u = i / (cols - 1);
-      const i3 = row3 + i * 3;
-      pos[i3] = u * flagW;
-      pos[i3 + 1] = -v * flagH + flagH * 0.8;
-      pos[i3 + 2] = fbm2(
-        u * GENTLE.freqU + seed * 13.71 + time * GENTLE.drift,
-        v * GENTLE.freqV + seed * 7.31
-      ) * amp * Math.pow(u, 0.7);
-    }
-    // Re-space x so each row keeps its rest length in 3D — the fly edge pulls
-    // in slightly where the wave is bigger, reading as fabric, not embossing.
-    for (let i = 1; i < cols; i++) {
-      const i3 = row3 + i * 3;
-      const dz = pos[i3 + 2] - pos[i3 - 1];
-      const dx2 = restDx * restDx - dz * dz;
-      pos[i3] = pos[i3 - 3] + Math.sqrt(Math.max(dx2, restDx * restDx * 0.25));
-    }
-  }
-  prev.set(pos); // zero velocity so switching back to Full doesn't pop
-  computeMeshNormals();
-}
-
 let _lastPinKey = '';
+
+// Where row j's hoist pin sits right now, including the mast's bend.
+const _anc = [0, 0, 0];
+function anchorFor(j, out) {
+  const y = flagH * 0.8 - j * restDy;
+  const k = bendAt(y);
+  out[0] = hoistCol * restDx + sway.x * k;
+  out[1] = y;
+  out[2] = sway.z * k;
+  return out;
+}
+
+// Pinned particles follow the mast rather than sitting at a fixed point, so a
+// gust that bends the pole carries the whole flag with it.
+function driveAnchors() {
+  if (!pinList) return;
+  for (let k = 0; k < pinList.length; k += 2) {
+    const i3 = pinList[k] * 3;
+    anchorFor(pinList[k + 1], _anc);
+    pos[i3] = prev[i3] = _anc[0];
+    pos[i3 + 1] = prev[i3 + 1] = _anc[1];
+    pos[i3 + 2] = prev[i3 + 2] = _anc[2];
+  }
+}
+
 function applyPinning() {
   const active = i => !clothActive || clothActive[i];
   // Particles outside the custom shape are parked as fixed — every sim pass
@@ -295,6 +340,9 @@ function applyPinning() {
       }
     }
   }
+  hoistCol = L;
+  const pins = [];
+  rowPinned.fill(0);
   if (ATTACH.mode === 'corners') {
     let topJ = -1, botJ = -1;
     for (let j = 0; j < rows; j++) {
@@ -303,6 +351,7 @@ function applyPinning() {
     if (topJ < 0) { topJ = 0; botJ = rows - 1; }
     fixed[topJ * cols + L] = 1;
     fixed[botJ * cols + L] = 1;
+    pins.push(topJ * cols + L, topJ, botJ * cols + L, botJ);
     const pinKey = `corners:${cols}x${rows}:${L}:${topJ}:${botJ}`;
     // Kickstart: nudge the now-free hoist column slightly outward in z so it
     // immediately starts billowing instead of hanging dead at z=0. Only when
@@ -328,6 +377,8 @@ function applyPinning() {
       const idx = j * cols + L;
       if (!active(idx)) continue;
       fixed[idx] = 1;
+      pins.push(idx, j);
+      rowPinned[j] = 1;
       if (snap) {
         const i3 = idx * 3;
         const y = -(j / (rows - 1)) * flagH + flagH * 0.8;
@@ -338,524 +389,593 @@ function applyPinning() {
     }
     _lastPinKey = pinKey;
   }
+  pinList = Int32Array.from(pins);
 }
 
 function buildMesh() {
   computeActiveMask();
   applyPinning();
 
-  triIdx = [];
-  for (let j = 0; j < rows - 1; j++) {
-    for (let i = 0; i < cols - 1; i++) {
-      if (cellActive && !cellActive[j * (cols - 1) + i]) continue;
-      const a = j * cols + i;
-      triIdx.push(a, a + cols, a + 1, a + 1, a + cols, a + cols + 1);
+  // The render surface inherits the sim's active cells — each render quad sits
+  // inside exactly one sim cell, and the alpha mask cuts the exact silhouette.
+  const rIdx = [];
+  for (let ry = 0; ry < RR - 1; ry++) {
+    const sj = Math.min((ry / SUBDIV) | 0, rows - 2);
+    for (let rx = 0; rx < RC - 1; rx++) {
+      const si = Math.min((rx / SUBDIV) | 0, cols - 2);
+      if (cellActive && !cellActive[sj * (cols - 1) + si]) continue;
+      const a = ry * RC + rx, b = (ry + 1) * RC + rx;
+      rIdx.push(a, b, a + 1, a + 1, b, b + 1);
     }
   }
-  indexData = new Uint32Array(triIdx);
+  rIndexData = new Uint32Array(rIdx);
 
-  const cA = [], cB = [], cR = [];
+  // Structural / shear / bend, each with its own stiffness. Satin holds its
+  // length hard and resists shear almost as hard; bend is the soft one, which
+  // is what lets it fold instead of dome.
+  const cA = [], cB = [], cR = [], cKk = [];
   const act = i => !clothActive || clothActive[i];
-  const addC = (a, b, r) => { if (act(a) && act(b)) { cA.push(a); cB.push(b); cR.push(r); } };
+  const addC = (a, b, r, k) => { if (act(a) && act(b)) { cA.push(a); cB.push(b); cR.push(r); cKk.push(k); } };
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
       const idx = j * cols + i;
-      if (i < cols - 1) addC(idx, idx + 1, restDx);
-      if (j < rows - 1) addC(idx, idx + cols, restDy);
+      if (i < cols - 1) addC(idx, idx + 1, restDx, VK.kStruct);
+      if (j < rows - 1) addC(idx, idx + cols, restDy, VK.kStruct);
       if (i < cols - 1 && j < rows - 1) {
-        addC(idx, idx + cols + 1, restDiag);
-        addC(idx + 1, idx + cols, restDiag);
+        addC(idx, idx + cols + 1, restDiag, VK.kShear);
+        addC(idx + 1, idx + cols, restDiag, VK.kShear);
       }
       // Bend constraints also require the in-between particle — they must not
       // bridge across a notch cut into the shape (e.g. a swallowtail).
-      if (i < cols - 2 && act(idx + 1)) addC(idx, idx + 2, restDx * 2 * 0.98);
-      if (j < rows - 2 && act(idx + cols)) addC(idx, idx + cols * 2, restDy * 2 * 0.98);
+      if (i < cols - 2 && act(idx + 1)) addC(idx, idx + 2, restDx * 2, VK.kBend);
+      if (j < rows - 2 && act(idx + cols)) addC(idx, idx + cols * 2, restDy * 2, VK.kBend);
     }
   }
   numC = cA.length;
   conA = new Uint32Array(cA);
   conB = new Uint32Array(cB);
   conR = new Float32Array(cR);
+  conK = new Float32Array(cKk);
 }
 
 function rebuildGrid(aw, ah) {
   computeGrid(aw, ah);
+  computePoleRig();
+  sway.x = sway.z = sway.vx = sway.vz = 0;
   allocArrays();
   buildMesh();
   initCloth();
 }
 rebuildGrid(aspectW, aspectH);
 
-// ─── Wind gust blobs (ported from original for organic motion) ─
-const NUM_GUSTS = 9;
-const gusts = [];
-const gustPulse = new Float32Array(NUM_GUSTS);
-const gustSwirl = new Float32Array(NUM_GUSTS);
+// ─── Wind field + gusts ──────────────────────────────────────
+// A gust is one coherent rise/hold/fall envelope that leans on the whole flag,
+// not a drifting cloud of blobs. Holding the Gust button charges a bigger one.
 let _loopSimPhase = -1;
 let _loopGustBase = null;
 let _loopSimStep = 0;
 let _loopSimTotalSteps = 1;
 
+const GUST_RISE = 1.6, GUST_FALL = 3.0;
+const GUST = {
+  start: -1, next: 4, lift: 0.9, side: 0.4,
+  power: 1, hold: 0.8, pending: 0, last: 0,
+};
+
 function initGusts() {
-  gusts.length = 0;
-  for (let i = 0; i < NUM_GUSTS; i++) {
-    gusts.push({
-      x: Math.random() * 1.4 - 0.2,
-      y: Math.random() * 1.4 - 0.2,
-      vx: (Math.random() - 0.5) * 0.28,
-      vy: (Math.random() - 0.5) * 0.20,
-      r: 0.10 + Math.random() * 0.26,
-      sx: (Math.random() - 0.5) * 2.8,
-      sz: (Math.random() - 0.5) * 2.8,
-      phase: Math.random() * Math.PI * 2.0,
-      phaseVel: 1.2 + Math.random() * 2.6,
-      pulse: 0.35 + Math.random() * 1.45,
-      spin: (Math.random() < 0.5 ? -1 : 1) * (0.9 + Math.random() * 1.4),
-    });
-  }
+  GUST.start = -1;
+  GUST.next = 4 + Math.random() * 4;
+  GUST.lift = 0.9; GUST.side = 0.4; GUST.power = 1; GUST.hold = 0.8;
+  GUST.pending = 0; GUST.last = 0;
 }
 initGusts();
 
-function updateGusts(dt) {
-  for (const g of gusts) {
-    g.x += g.vx * dt;
-    g.y += g.vy * dt;
-    if (g.x < -0.5) g.x += 2.0;
-    if (g.x > 1.5) g.x -= 2.0;
-    if (g.y < -0.5) g.y += 2.0;
-    if (g.y > 1.5) g.y -= 2.0;
-    g.vx += (Math.random() - 0.5) * dt * 0.9;
-    g.vy += (Math.random() - 0.5) * dt * 0.7;
-    g.vx *= 0.993; g.vy *= 0.993;
-    g.vx = clamp(g.vx, -0.55, 0.55);
-    g.vy = clamp(g.vy, -0.55, 0.55);
-    g.sx += (Math.random() - 0.5) * dt * 4.0;
-    g.sz += (Math.random() - 0.5) * dt * 4.0;
-    g.sx *= 0.987; g.sz *= 0.987;
-    g.sx = clamp(g.sx, -3.4, 3.4);
-    g.sz = clamp(g.sz, -3.4, 3.4);
-    g.phase += g.phaseVel * dt;
-    if (g.phase > Math.PI * 2) g.phase -= Math.PI * 2;
-    g.phaseVel += (Math.random() - 0.5) * dt * 1.5;
-    g.phaseVel = clamp(g.phaseVel, 0.7, 5.2);
-    g.pulse += (Math.random() - 0.5) * dt * 1.8;
-    g.pulse = clamp(g.pulse, 0.15, 1.8);
-  }
+const smooth01 = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
+
+// Turbulence sets how often the air decides to shove; a storm roughly doubles it.
+function gustInterval() {
+  const storm = WEATHER.mode === 'storm' ? 0.45 : 1;
+  return (7 + Math.random() * 5) / (0.55 + (SIM.turbulence / 100) * 1.4) * storm;
 }
 
-function updateLoopGusts(phase) {
-  if (!_loopGustBase) return;
-  const tau = Math.PI * 2;
-  for (let i = 0; i < gusts.length; i++) {
-    const g = gusts[i];
-    const b = _loopGustBase[i];
-    const a = tau * phase + i * 1.731;
-    const b2 = tau * phase * 2 + i * 0.917;
-    g.x = clamp(b.x + Math.cos(a) * 0.16 + Math.sin(b2) * 0.05, -0.5, 1.5);
-    g.y = clamp(b.y + Math.sin(a + 0.8) * 0.12 + Math.cos(b2 + 0.4) * 0.04, -0.5, 1.5);
-    g.vx = 0;
-    g.vy = 0;
-    g.r = b.r;
-    g.sx = clamp(b.sx + Math.sin(a + 1.4) * 0.65 + Math.sin(b2) * 0.20, -3.4, 3.4);
-    g.sz = clamp(b.sz + Math.cos(a + 0.3) * 0.65 + Math.cos(b2 + 1.1) * 0.20, -3.4, 3.4);
-    g.phase = b.phase + tau * phase * (1 + (i % 3));
-    g.phaseVel = b.phaseVel;
-    g.pulse = clamp(b.pulse + Math.sin(a - 0.6) * 0.28, 0.15, 1.8);
-    g.spin = b.spin;
-  }
+function beginGust(t, power, resumeAt) {
+  GUST.start = t - resumeAt;
+  GUST.power = power;
+  GUST.hold = 0.8 * power;
+  GUST.lift = (0.6 + Math.random() * 0.9) * power;
+  GUST.side = (Math.random() - 0.5) * 1.2 * power;
+  GUST.next = t + gustInterval();
 }
 
-// ─── Physics simulation (ported from original) ──────────────
+function triggerGust(power = 1) {
+  // Mid-gust retrigger re-enters the rise where the envelope already is, so a
+  // second press never drops the wind out from under the flag.
+  if (GUST.start < 0) { GUST.pending = power; GUST.next = Math.min(GUST.next, simTime); }
+  else beginGust(simTime, power, GUST_RISE * GUST.last);
+}
+
+function gustEnv(t) {
+  // A seamless export drives the gust off the loop phase instead, so the
+  // envelope closes exactly on itself at the seam.
+  if (_loopSimPhase >= 0) {
+    GUST.power = 1; GUST.lift = 0.8; GUST.side = 0.3;
+    const h = 0.5 - 0.5 * Math.cos(2 * Math.PI * _loopSimPhase);
+    return (GUST.last = h * h);
+  }
+  if (GUST.start < 0) {
+    if (t < GUST.next) return (GUST.last = 0);
+    beginGust(t, GUST.pending || 1, 0);
+    GUST.pending = 0;
+  }
+  const e = t - GUST.start, peak = GUST_RISE + GUST.hold;
+  let g;
+  if (e < GUST_RISE) g = smooth01(e / GUST_RISE);
+  else if (e < peak) g = 1;
+  else if (e < peak + GUST_FALL) g = 1 - smooth01((e - peak) / GUST_FALL);
+  else { GUST.start = -1; g = 0; }
+  return (GUST.last = g);
+}
+
+// ─── Physics simulation (Viking cloth model) ─────────────────
 let simTime = 0;
 let windAngleDrift = 0, windAngleVel = 0, windStrengthDrift = 0;
+let windCol = new Float32Array(0), windRow = new Float32Array(0);
+
+function windBaseSpeed() {
+  const storm = WEATHER.mode === 'storm' ? 1.32 : 1;
+  return clamp(SIM.windStrength / 100, 0, 3) * 0.7 * VK.windMax * storm;
+}
+
+function windMag(t, g, base) {
+  const L = _loopSimPhase >= 0;
+  const a = _loopSimPhase * Math.PI * 2;
+  const breathe = L
+    ? 0.85 + 0.15 * Math.sin(a) + 0.10 * Math.sin(3 * a + 1.3)
+    : 0.85 + 0.15 * Math.sin(0.5 * t) + 0.10 * Math.sin(1.4 * t + 1.3);
+  return base * (breathe + windStrengthDrift * 0.18) + g * GUST.power * (2.6 + base * 0.55);
+}
+
+// One wind vector per column plus a per-row bias, rebuilt every substep. This
+// is the heart of the Viking feel: neighbouring particles see almost the same
+// air, so the cloth answers in long folds instead of per-particle chatter.
+// Under a seamless export every term becomes a whole harmonic of the loop.
+function updateWindField(t, g, mag, wdx, wdz) {
+  if (windCol.length !== cols * 3) windCol = new Float32Array(cols * 3);
+  if (windRow.length !== rows) windRow = new Float32Array(rows);
+  const turbK = (0.35 + (SIM.turbulence / 100) * 2.2) * (WEATHER.mode === 'storm' ? 1.35 : 1);
+  const L = _loopSimPhase >= 0;
+  const a = _loopSimPhase * Math.PI * 2;
+  const cxx = -wdz, cxz = wdx;          // cross-wind axis in the XZ plane
+  for (let i = 0; i < cols; i++) {
+    const u = i / (cols - 1), o = i * 3;
+    const lift = mag * turbK * (L
+        ? 0.22 * Math.sin(2 * a + 3.0 * u) + 0.12 * Math.sin(4 * a - 5.0 * u + 1.0)
+        : 0.22 * Math.sin(0.9 * t + 3.0 * u) + 0.12 * Math.sin(1.9 * t - 5.0 * u + 1.0))
+      + g * GUST.lift * 2.4;
+    const cross = mag * turbK * (L
+        ? 0.35 * Math.sin(3 * a - 4.5 * u) + 0.18 * Math.sin(5 * a - 8.0 * u + 2.0) + 0.07 * Math.sin(9 * a - 15.0 * u + 1.0)
+        : 0.35 * Math.sin(1.3 * t - 4.5 * u) + 0.18 * Math.sin(2.4 * t - 8.0 * u + 2.0) + 0.07 * Math.sin(4.2 * t - 15.0 * u + 1.0))
+      + g * GUST.side * 2.0;
+    windCol[o]     = wdx * mag + cxx * cross;
+    windCol[o + 1] = lift;
+    windCol[o + 2] = wdz * mag + cxz * cross;
+  }
+  for (let j = 0; j < rows; j++) {
+    const v = j / (rows - 1);
+    windRow[j] = mag * turbK * (L
+      ? 0.10 * Math.sin(2 * a + 2.2 * v) + 0.05 * Math.sin(5 * a + 3.1 * v)
+      : 0.10 * Math.sin(0.8 * t + 2.2 * v) + 0.05 * Math.sin(2.4 * t + 3.1 * v));
+  }
+}
+
+// ── The mast ──
+// A damped harmonic oscillator at the tip: the mean wind leans it downwind, and
+// the flag's own lateral swing drags it sideways, which feeds back into the
+// cloth through the anchors. That two-way coupling is why the whole rig
+// breathes together instead of the flag flapping on a dead stick.
+function updateSway(dt, mag, g, wdx, wdz) {
+  let sx = 0, sz = 0, n = 0;
+  const step = Math.max(1, (rows / 16) | 0);
+  for (let j = 0; j < rows; j += step) {
+    anchorFor(j, _anc);
+    for (let i = hoistCol + 2; i <= hoistCol + 6 && i < cols; i += 2) {
+      const pI = j * cols + i;
+      if (clothActive && !clothActive[pI]) continue;
+      const i3 = pI * 3;
+      sx += pos[i3] - _anc[0];
+      sz += pos[i3 + 2] - _anc[2];
+      n++;
+    }
+  }
+  if (n) { sx /= n; sz /= n; }
+  const omega = 2 * Math.PI * POLE.freq, k = omega * omega, c = 2 * POLE.zeta * omega;
+  const pullCross = -wdz * sx + wdx * sz;
+  const fDown = POLE.drive * mag * mag * (1 + 0.4 * g);
+  const fCross = POLE.couple * pullCross + POLE.drive * 0.6 * mag * mag * g * GUST.side;
+  const fx = wdx * fDown - wdz * fCross;
+  const fz = wdz * fDown + wdx * fCross;
+  sway.vx += (fx - k * sway.x - c * sway.vx) * dt;
+  sway.vz += (fz - k * sway.z - c * sway.vz) * dt;
+  sway.x += sway.vx * dt;
+  sway.z += sway.vz * dt;
+  const maxBend = POLE.maxBend * (poleLen / 4.4);
+  const m = Math.hypot(sway.x, sway.z);
+  if (m > maxBend) { const s = maxBend / m; sway.x *= s; sway.z *= s; sway.vx *= 0.5; sway.vz *= 0.5; }
+}
+
+// Cheap central-difference normals — the aero term needs a surface normal every
+// substep, and the smooth ones the shader uses are built later from the
+// subdivided surface instead.
+function computeAeroNormals() {
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const l = (j * cols + Math.max(i - 1, 0)) * 3, r = (j * cols + Math.min(i + 1, cols - 1)) * 3;
+      const u = (Math.max(j - 1, 0) * cols + i) * 3, d = (Math.min(j + 1, rows - 1) * cols + i) * 3;
+      const ax = pos[r] - pos[l], ay = pos[r + 1] - pos[l + 1], az = pos[r + 2] - pos[l + 2];
+      const bx = pos[d] - pos[u], by = pos[d + 1] - pos[u + 1], bz = pos[d + 2] - pos[u + 2];
+      const nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+      const i3 = (j * cols + i) * 3;
+      nrm[i3] = nx / len; nrm[i3 + 1] = ny / len; nrm[i3 + 2] = nz / len;
+    }
+  }
+}
+
+function integrate(dt, wdx, wdz) {
+  const dt2 = dt * dt, invDt = 1 / dt;
+  // Damping slider around its 92 default reproduces Viking's 0.996; storm's 94
+  // holds a touch more momentum, which is what makes soaked cloth feel heavy.
+  const damp = 1 - (1 - SIM.damping / 100) * 0.05;
+  const gravity = -SIM.gravity * VK.gravity;   // slider default -1 → 7.4 down
+  const maxStep = Math.max(restDx, restDy) * 1.5;
+  const kN = VK.kNormal, kT = VK.kTangent, maxA = VK.maxAccel;
+  const crossX = -wdz, crossZ = wdx;
+  const spin = Math.abs(orbitAngularVel) > 0.05 ? orbitAngularVel : 0;
+  const invCols = 1 / (cols - 1);
+  for (let j = 0; j < rows; j++) {
+    const wRow = windRow[j], rowBase = j * cols;
+    for (let i = 0; i < cols; i++) {
+      const pI = rowBase + i;
+      if (fixed[pI]) continue;
+      const i3 = pI * 3, o = i * 3;
+      const px = pos[i3], py = pos[i3 + 1], pz = pos[i3 + 2];
+      let vx = (px - prev[i3]) * damp, vy = (py - prev[i3 + 1]) * damp, vz = (pz - prev[i3 + 2]) * damp;
+      // Airflow relative to the particle — this single term is drag and push at once.
+      const rx = windCol[o] + crossX * wRow - vx * invDt;
+      const ry = windCol[o + 1] - vy * invDt;
+      const rz = windCol[o + 2] + crossZ * wRow - vz * invDt;
+      const nx = nrm[i3], ny = nrm[i3 + 1], nz = nrm[i3 + 2];
+      const vn = rx * nx + ry * ny + rz * nz;
+      const pn = vn * Math.abs(vn) * kN;                    // pressure across the sheet
+      let ax = nx * pn + (rx - nx * vn) * kT;               // + skin friction along it
+      let ay = ny * pn + (ry - ny * vn) * kT - gravity;
+      let az = nz * pn + (rz - nz * vn) * kT;
+      if (spin) {
+        // Spinning the pole throws the cloth outward and drags it round.
+        const rl = Math.sqrt(px * px + pz * pz) + 0.001;
+        const uu = i * invCols;
+        const cf = spin * spin * rl * uu * 0.95, tg = spin * uu * 0.55;
+        ax += (px / rl) * cf + (-pz / rl) * tg;
+        az += (pz / rl) * cf + (px / rl) * tg;
+      }
+      const am = Math.sqrt(ax * ax + ay * ay + az * az);
+      if (am > maxA) { const s = maxA / am; ax *= s; ay *= s; az *= s; }
+      vx += ax * dt2; vy += ay * dt2; vz += az * dt2;
+      const vm = Math.sqrt(vx * vx + vy * vy + vz * vz);
+      if (vm > maxStep) { const s = maxStep / vm; vx *= s; vy *= s; vz *= s; }
+      prev[i3] = px; prev[i3 + 1] = py; prev[i3 + 2] = pz;
+      pos[i3] = px + vx; pos[i3 + 1] = py + vy; pos[i3 + 2] = pz + vz;
+    }
+  }
+}
+
+function solveConstraints(iters) {
+  for (let it = 0; it < iters; it++) {
+    for (let c = 0; c < numC; c++) {
+      const a = conA[c], b = conB[c];
+      const af = fixed[a], bf = fixed[b];
+      if (af && bf) continue;
+      const a3 = a * 3, b3 = b * 3;
+      const dx = pos[b3] - pos[a3], dy = pos[b3 + 1] - pos[a3 + 1], dz = pos[b3 + 2] - pos[a3 + 2];
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d < 1e-7) continue;
+      const diff = (d - conR[c]) / d * 0.5 * conK[c];
+      const cx = dx * diff, cy = dy * diff, cz = dz * diff;
+      if (!af && !bf) {
+        pos[a3] += cx; pos[a3 + 1] += cy; pos[a3 + 2] += cz;
+        pos[b3] -= cx; pos[b3 + 1] -= cy; pos[b3 + 2] -= cz;
+      } else if (!af) {
+        pos[a3] += cx * 2; pos[a3 + 1] += cy * 2; pos[a3 + 2] += cz * 2;
+      } else {
+        pos[b3] -= cx * 2; pos[b3 + 1] -= cy * 2; pos[b3 + 2] -= cz * 2;
+      }
+    }
+  }
+}
+
+// Long-range attachments. Gauss-Seidel only carries the hoist's motion a few
+// cells per substep, so a fast mast swing leaves the fabric near the pole
+// rubbery. Capping every particle's distance to the pin in its own row — the
+// shortest path through the cloth — takes that out in one O(N) pass, which is
+// all the frame budget has room for. Only meaningful when the whole hoist is
+// pinned; a two-corner banner is supposed to stretch along its free edge.
+function longRangeAttach() {
+  if (ATTACH.mode !== 'edge' || !rowPinned) return;
+  for (let j = 0; j < rows; j++) {
+    if (!rowPinned[j]) continue;
+    anchorFor(j, _anc);
+    const ax = _anc[0], ay = _anc[1], az = _anc[2];
+    for (let i = hoistCol + 1; i < cols; i++) {
+      const pI = j * cols + i;
+      if (fixed[pI]) continue;
+      const i3 = pI * 3;
+      const dx = pos[i3] - ax, dy = pos[i3 + 1] - ay, dz = pos[i3 + 2] - az;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      const max = (i - hoistCol) * restDx * VK.lraSlack;
+      if (d2 <= max * max) continue;
+      const k = max / Math.sqrt(d2);
+      pos[i3] = ax + dx * k; pos[i3 + 1] = ay + dy * k; pos[i3 + 2] = az + dz * k;
+    }
+  }
+}
+
+// Self-collision: particles that are not grid neighbours stay a cloth-thickness
+// apart. This is what gives the fabric volume — folds stack instead of passing
+// through each other — and it is the single biggest difference from a plain
+// mass-spring flag.
+function selfCollide() {
+  const thick = restDx * VK.thickCells, thick2 = thick * thick, inv = 1 / thick;
+  scCellStart.fill(0);
+  for (let pI = 0; pI < totalPts; pI++) {
+    if (clothActive && !clothActive[pI]) { scCellOf[pI] = -1; continue; }
+    const i3 = pI * 3;
+    const h = (((Math.floor(pos[i3] * inv) * 73856093) ^ (Math.floor(pos[i3 + 1] * inv) * 19349663)
+             ^ (Math.floor(pos[i3 + 2] * inv) * 83492791)) & SC_HASH_MASK);
+    scCellOf[pI] = h;
+    scCellStart[h + 1]++;
+  }
+  for (let h = 0; h < SC_HASH_N; h++) { scCellStart[h + 1] += scCellStart[h]; scFillPtr[h] = scCellStart[h]; }
+  for (let pI = 0; pI < totalPts; pI++) { const h = scCellOf[pI]; if (h >= 0) scSorted[scFillPtr[h]++] = pI; }
+
+  for (let pI = 0; pI < totalPts; pI++) {
+    if (scCellOf[pI] < 0) continue;
+    const i3 = pI * 3, px = pos[i3], py = pos[i3 + 1], pz = pos[i3 + 2];
+    const pix = pI % cols, piy = (pI / cols) | 0;
+    const cx = Math.floor(px * inv), cy = Math.floor(py * inv), cz = Math.floor(pz * inv);
+    const pinnedP = fixed[pI];
+    // Probing all 27 cells and keeping q > p looks redundant, but it always
+    // moves the later-indexed particle, so every push is followed by that
+    // particle's own pass. A forward-half probe is ~10% faster and leaves ~40%
+    // more residual overlap.
+    for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) for (let oz = -1; oz <= 1; oz++) {
+      const h = (((((cx + ox) * 73856093) ^ ((cy + oy) * 19349663) ^ ((cz + oz) * 83492791))) & SC_HASH_MASK);
+      for (let s = scCellStart[h], e = scCellStart[h + 1]; s < e; s++) {
+        const q = scSorted[s];
+        if (q <= pI) continue;
+        const qix = q % cols, qiy = (q / cols) | 0;
+        if (Math.abs(qix - pix) <= 2 && Math.abs(qiy - piy) <= 2) continue;
+        const pinnedQ = fixed[q];
+        if (pinnedP && pinnedQ) continue;
+        const j3 = q * 3;
+        const dx = pos[j3] - px, dy = pos[j3 + 1] - py, dz = pos[j3 + 2] - pz;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 >= thick2 || d2 < 1e-10) continue;
+        const d = Math.sqrt(d2), push = (thick - d) / d;
+        const wp = pinnedP ? 0 : (pinnedQ ? 1 : 0.5), wq = pinnedQ ? 0 : (pinnedP ? 1 : 0.5);
+        pos[i3] -= dx * push * wp; pos[i3 + 1] -= dy * push * wp; pos[i3 + 2] -= dz * push * wp;
+        pos[j3] += dx * push * wq; pos[j3 + 1] += dy * push * wq; pos[j3 + 2] += dz * push * wq;
+      }
+    }
+  }
+}
+
+// Keep the cloth off the mast it hangs from. The hoist itself is pinned on the
+// axis, so the first couple of columns are left alone — pushing them out would
+// only kink the fabric right where it is held. What matters is the fly, which a
+// side gust can otherwise swing straight through the pole.
+function poleCollide() {
+  const r = POLE.radius, yTop = poleBaseY + poleLen + 0.15;
+  const skipTo = hoistCol + 2;
+  for (let pI = 0; pI < totalPts; pI++) {
+    if (fixed[pI] || pI % cols <= skipTo) continue;
+    const i3 = pI * 3, y = pos[i3 + 1];
+    if (y < poleBaseY || y > yTop) continue;
+    const k = bendAt(y);
+    const qx = pos[i3] - (hoistCol * restDx + sway.x * k), qz = pos[i3 + 2] - sway.z * k;
+    const len = Math.sqrt(qx * qx + qz * qz);
+    if (len >= r) continue;
+    if (len < 1e-5) { pos[i3 + 2] += r; continue; }
+    const kk = (r - len) / len;
+    pos[i3] += qx * kk; pos[i3 + 2] += qz * kk;
+  }
+}
+
+// Particles trimmed away by a custom shape hold stale parked positions. The
+// bicubic surface and the normals both reach two cells past the silhouette, so
+// give those cells a sensible continuation of the live cloth rather than a cliff.
+function extrapolateInactive() {
+  if (!clothActive) return;
+  let lastGoodRow = -1;
+  for (let j = 0; j < rows; j++) {
+    const rowBase = j * cols;
+    let first = -1, last = -1;
+    for (let i = 0; i < cols; i++) {
+      if (clothActive[rowBase + i]) { if (first < 0) first = i; last = i; }
+    }
+    if (first < 0) {
+      // Whole row trimmed — shadow the nearest live row, one cell lower.
+      if (lastGoodRow < 0) continue;
+      const srcBase = lastGoodRow * cols;
+      const dy = (j - lastGoodRow) * restDy;
+      for (let i = 0; i < cols; i++) {
+        const d3 = (rowBase + i) * 3, s3 = (srcBase + i) * 3;
+        pos[d3] = pos[s3]; pos[d3 + 1] = pos[s3 + 1] - dy; pos[d3 + 2] = pos[s3 + 2];
+        prev[d3] = pos[d3]; prev[d3 + 1] = pos[d3 + 1]; prev[d3 + 2] = pos[d3 + 2];
+      }
+      continue;
+    }
+    lastGoodRow = j;
+    // Leading run: continue backwards along the first live gradient.
+    if (first > 0) {
+      const a3 = (rowBase + first) * 3;
+      const b3 = (rowBase + Math.min(first + 1, last)) * 3;
+      const dx = pos[a3] - pos[b3], dy = pos[a3 + 1] - pos[b3 + 1], dz = pos[a3 + 2] - pos[b3 + 2];
+      for (let i = first - 1; i >= 0; i--) {
+        const k = first - i, o = (rowBase + i) * 3;
+        pos[o] = pos[a3] + dx * k; pos[o + 1] = pos[a3 + 1] + dy * k; pos[o + 2] = pos[a3 + 2] + dz * k;
+        prev[o] = pos[o]; prev[o + 1] = pos[o + 1]; prev[o + 2] = pos[o + 2];
+      }
+    }
+    // Trailing run: continue forwards along the last live gradient.
+    if (last < cols - 1) {
+      const a3 = (rowBase + last) * 3;
+      const b3 = (rowBase + Math.max(last - 1, first)) * 3;
+      const dx = pos[a3] - pos[b3], dy = pos[a3 + 1] - pos[b3 + 1], dz = pos[a3 + 2] - pos[b3 + 2];
+      for (let i = last + 1; i < cols; i++) {
+        const k = i - last, o = (rowBase + i) * 3;
+        pos[o] = pos[a3] + dx * k; pos[o + 1] = pos[a3 + 1] + dy * k; pos[o + 2] = pos[a3 + 2] + dz * k;
+        prev[o] = pos[o]; prev[o + 1] = pos[o + 1]; prev[o + 2] = pos[o + 2];
+      }
+    }
+    // Interior gaps: bridge straight between the live ends.
+    let i = first;
+    while (i < last) {
+      if (clothActive[rowBase + i + 1]) { i++; continue; }
+      let e = i + 1;
+      while (e < last && !clothActive[rowBase + e]) e++;
+      const a3 = (rowBase + i) * 3, b3 = (rowBase + e) * 3, span = e - i;
+      for (let m = 1; m < span; m++) {
+        const f = m / span, o = (rowBase + i + m) * 3;
+        pos[o] = pos[a3] + (pos[b3] - pos[a3]) * f;
+        pos[o + 1] = pos[a3 + 1] + (pos[b3 + 1] - pos[a3 + 1]) * f;
+        pos[o + 2] = pos[a3 + 2] + (pos[b3 + 2] - pos[a3 + 2]) * f;
+        prev[o] = pos[o]; prev[o + 1] = pos[o + 1]; prev[o + 2] = pos[o + 2];
+      }
+      i = e;
+    }
+  }
+}
 
 function simulate(frameDt) {
-  // The fixed sim step is SIM_DT (0.02s @ 50 Hz). The old 0.016 ceiling clamped
-  // every step down to 80% of its intended length, so both the live view and the
-  // MP4 export ran ~20% slow ("slow-mo"). Cap at 0.02 so a full step integrates
-  // fully; the lower bound still guards against zero/negative frame deltas.
-  const dt = clamp(frameDt, 0.004, 0.02);
+  // The fixed sim step is SIM_DT (0.02s @ 50 Hz); timeScale < 1 makes the cloth
+  // read heavier and larger without changing the step count.
+  const dt = clamp(frameDt, 0.004, 0.02) * VK.timeScale;
   const subDt = dt / SUBSTEPS;
 
-  // Update gusts once per frame. Seamless export gets a phase-looped gust
-  // field so the correction pass is not fighting a random walk at the seam.
-  if (_loopSimPhase >= 0) updateLoopGusts(_loopSimPhase);
-  else updateGusts(dt);
-  // Decay orbit angular velocity (smooth stop after user releases mouse)
-  orbitAngularVel *= Math.exp(-dt * 1.2);
-
-  // Ambient wind drift
+  // Ambient wind drift — the mean direction wanders, more so in a storm.
   const driftMax = WEATHER.angleDriftMax;
   const turbNorm = SIM.turbulence / 100;
   if (_loopSimPhase >= 0) {
-    const tau = Math.PI * 2;
-    const a = _loopSimPhase * tau;
+    const a = _loopSimPhase * Math.PI * 2;
     windAngleDrift = clamp(
-      Math.sin(a) * driftMax * 0.36 + Math.sin(a * 2 + 0.7) * driftMax * 0.10,
-      -driftMax,
-      driftMax
-    );
+      Math.sin(a) * driftMax * 0.36 + Math.sin(a * 2 + 0.7) * driftMax * 0.10, -driftMax, driftMax);
     windAngleVel = 0;
     windStrengthDrift = clamp(
       Math.sin(a + 1.2) * (0.10 + turbNorm * 0.18) + Math.sin(a * 2 - 0.4) * (0.04 + turbNorm * 0.08),
-      -0.75,
-      0.75
-    );
+      -0.75, 0.75);
   } else {
     windAngleVel += (Math.random() - 0.5) * dt * (90 * WEATHER.angleDriftForce + driftMax * 4.5);
     windAngleVel += (-windAngleDrift * 0.55) * dt;
     windAngleVel *= Math.exp(-dt * 0.55);
-    windAngleDrift += windAngleVel * dt;
-    windAngleDrift = clamp(windAngleDrift, -driftMax, driftMax);
-
+    windAngleDrift = clamp(windAngleDrift + windAngleVel * dt, -driftMax, driftMax);
     windStrengthDrift += (Math.random() - 0.5) * dt * (1.8 + turbNorm * 8.0);
     windStrengthDrift *= Math.exp(-dt * 1.6);
     windStrengthDrift = clamp(windStrengthDrift, -0.75, 0.75);
   }
+  // Decay orbit angular velocity (smooth stop after the user releases the mouse)
+  orbitAngularVel *= Math.exp(-dt * 1.2);
+
+  const aRad = (SIM.windAngle + windAngleDrift) * Math.PI / 180;
+  const wdx = Math.sin(aRad), wdz = Math.cos(aRad);
+  const base = windBaseSpeed();
+  // Stiffer cloth just gets more constraint passes — the rest lengths never change.
+  const itersA = VK.itersA + Math.round((SIM.stiffness - 40) / 100 * 3);
 
   for (let s = 0; s < SUBSTEPS; s++) {
-    const dt2 = subDt * subDt;
     simTime += subDt;
-
-    const damp = Math.pow(SIM.damping / 100, subDt * 85);
-    const stormBlend = WEATHER.mode === 'storm' ? 1 : 0;
-    const baseWind = clamp((SIM.windStrength / 100) * (1.0 + windStrengthDrift), 0, 3.5);
-    const windBase = baseWind * baseWind * (stormBlend ? 19.0 : 24.0) + baseWind * (stormBlend ? 3.2 : 2.5);
-    const turbAmt = SIM.turbulence / 100;
-    const aRad = (SIM.windAngle + windAngleDrift) * Math.PI / 180;
-    const wdx = Math.sin(aRad), wdz = Math.cos(aRad);
-    // More iterations + firmer solve as wind grows — keeps silk feel at low wind
-    // while preventing visible stretch under high wind / storm forces.
-    // Keep iteration count modest even under storm — extra iterations are O(numC)
-    // and destroy perf. Rely on air resistance (tames motion) + the hard stretch
-    // clamp below for anti-stretch insurance instead.
-    const iterations = Math.floor(SIM.stiffness / 100 * 2) + 3 + Math.floor(baseWind * 0.8) + stormBlend;
-    const solveStrength = clamp(0.55 + (SIM.stiffness / 100) * 0.3 + baseWind * 0.1 + stormBlend * 0.14, 0.2, 1.3);
-    const dragK = 0.06 + (1.0 - SIM.damping / 100) * 0.85 + baseWind * 0.02 + stormBlend * 0.045;
-    const gravity = SIM.gravity * REALISM.gravityMul;
-    const maxStep = Math.max(restDx, restDy) * (stormBlend ? (1.12 + baseWind * 0.42) : (1.3 + baseWind * 0.9));
-    const turbResponse = Math.pow(turbAmt, 0.82);
-    const turbField = turbResponse * (0.45 + baseWind * 0.85);
-
-    // Gust phase (once per substep, not per particle)
-    const activeGusts = stormBlend ? 6 : NUM_GUSTS;
-    for (let g = 0; g < activeGusts; g++) {
-      const gust = gusts[g];
-      gustPulse[g] = (0.72 + Math.sin(gust.phase) * 0.28) * (0.42 + gust.pulse * 0.58);
-      gustSwirl[g] = gust.spin * (0.22 + 0.34 * Math.cos(gust.phase * 0.75));
-    }
-
-    // Verlet integration
-    for (let p = 0; p < totalPts; p++) {
-      if (fixed[p]) continue;
-      const i3 = p * 3;
-      const px = pos[i3], py = pos[i3 + 1], pz = pos[i3 + 2];
-      const vx = (px - prev[i3]) * damp;
-      const vy = (py - prev[i3 + 1]) * damp;
-      const vz = (pz - prev[i3 + 2]) * damp;
-      prev[i3] = px; prev[i3 + 1] = py; prev[i3 + 2] = pz;
-
-      const uv2 = p * 2;
-      const u = uv[uv2], v = uv[uv2 + 1];
-
-      // Gust blob turbulence
-      let gustX = 0, gustZ = 0, gustLift = 0;
-      for (let g = 0; g < activeGusts; g++) {
-        const gust = gusts[g];
-        const gdx = u - gust.x, gdy = v - gust.y;
-        const d2 = gdx * gdx + gdy * gdy;
-        const r2 = gust.r * gust.r;
-        if (d2 < r2) {
-          const w = 1.0 - d2 / r2;
-          const w2 = w * w, w3 = w2 * w;
-          const pulse = w2 * gustPulse[g];
-          const swirl = w3 * gustSwirl[g];
-          gustX += gust.sx * pulse - gdy * swirl;
-          gustZ += gust.sz * pulse + gdx * swirl;
-          gustLift += swirl * 0.30 + (pulse - 0.50) * 0.10;
-        }
-      }
-
-      // Normal + attack angle
-      const npx = nrm[i3], npy = nrm[i3 + 1], npz = nrm[i3 + 2];
-      const nLen2 = npx * npx + npy * npy + npz * npz;
-      const attackAngle = nLen2 > 1e-4 ? Math.abs(npx * wdx + npz * wdz) : 1.0;
-
-      // Multi-scale spatial flutter
-      const t = simTime;
-      let flutterX, flutterZ;
-      if (REALISM.noiseFlutter) {
-        // FBM noise — fractal, incoherent. Wrinkles travel hoist→fly.
-        const travel = t * 1.8;
-        const stormness = stormBlend ? clamp((baseWind - 0.7) / 1.6, 0, 1) : clamp((baseWind - 1.2) / 1.8, 0, 1);
-        const waveScale = 1.0 - stormness * (stormBlend ? 0.12 : 0.22); // keep finer detail under storm
-        const fluFocus = 1.0 + Math.min(baseWind * 0.3, 0.7);
-        const fluBase = 0.22;
-        // Storm uses tighter, heavier folds instead of elastic over-extension.
-        const ampU = (fluBase + Math.pow(u, fluFocus) * (stormBlend ? 0.95 : 1.35)) * (1.0 + stormness * (stormBlend ? 0.18 : 0.55));
-        // Keep fly-end cracking, but cap it in storm so the silhouette does not stretch.
-        const edgeWhip = u * u * u * (stormBlend ? (0.22 + baseWind * 0.24) : (0.35 + baseWind * 0.45)) * (1.0 + stormness * (stormBlend ? 0.12 : 0.45));
-        flutterX = fbm2(u * 5.0 * waveScale - travel,        v * 4.0 * waveScale + t * 0.4)        * ampU * 1.25
-                 + fbm2(u * 9.5 - travel * 1.7,              v * 7.0 + t * 0.9 + 51.3)             * edgeWhip;
-        flutterZ = fbm2(u * 5.3 * waveScale - travel + 17.3, v * 4.2 * waveScale + t * 0.5 + 29.1) * ampU * 1.25
-                 + fbm2(u * 10.1 - travel * 1.9,             v * 7.3 + t * 1.1 + 73.9)             * edgeWhip;
-        // 4th octave — ultra-fine crinkle. Only amps up with wind, concentrated on fly half.
-        const crinkleAmp = (0.06 + baseWind * (stormBlend ? 0.12 : 0.22)) * Math.pow(u, 0.55) * (1.0 + stormness * (stormBlend ? 0.32 : 0.7));
-        flutterX += _noise2(u * 22.0 - travel * 2.3,         v * 17.0 + t * 1.6)                    * crinkleAmp;
-        flutterZ += _noise2(u * 24.0 - travel * 2.1 + 37.1,  v * 19.0 + t * 1.4 + 11.3)             * crinkleAmp;
-      } else {
-        flutterX = (
-          Math.sin(u * 18.7 + v * 9.1 + t * 6.8)
-          + Math.sin(u * 4.3 - v * 14.2 + t * 9.4)
-        ) * 0.45;
-        flutterZ = (
-          Math.cos(u * 15.3 - v * 11.7 + t * 7.9)
-          + Math.sin(u * 7.9 + v * 13.1 + t * 5.6)
-        ) * 0.45;
-      }
-
-      // Compose forces
-      const wm = (0.3 + u * 0.7) * attackAngle;
-      // Linear in baseWind (not quadratic windBase) so gusts scale gently at storm —
-      // mean wind pulls flag taut, gusts add rolling body waves without overpowering.
-      const gustScale = turbResponse * (baseWind * 32.0 + 2.2);
-
-      // Per-point wind direction jitter — breaks laminar-flow look at high wind.
-      // Low-frequency noise warps the wind vector slightly across u,v so different
-      // parts of the flag get pushed at different angles → turbulent eddies form.
-      // Weighted strongly toward the fly end: the hoist stays mostly aligned with
-      // the mean wind, but downstream the flow becomes chaotic with multi-scale eddies.
-      const flySwirl = 0.35 + u * u * (stormBlend ? 1.25 : 1.8);
-      const swirlAmp = (0.3 + baseWind * (stormBlend ? 0.34 : 0.55)) * flySwirl;
-      // Two scales of swirl — large eddies + fine vector noise.
-      const swirlU = fbm2(u * 1.8 + t * 0.6,        v * 1.5 - t * 0.4 + 101.0) * swirlAmp
-                   + _noise2(u * 5.5 + t * 1.3,     v * 4.8 - t * 0.9 + 41.0)  * swirlAmp * 0.45;
-      const swirlV = fbm2(u * 1.7 - t * 0.5 + 73.0, v * 1.6 + t * 0.7 + 19.0)  * swirlAmp
-                   + _noise2(u * 5.1 - t * 1.1 + 8.0, v * 5.3 + t * 1.0 + 55.0) * swirlAmp * 0.45;
-      // Vertical wind component — real turbulent flow has up/down gusts too.
-      const swirlY = _noise2(u * 2.4 + t * 0.7, v * 2.2 - t * 0.5 + 133.0) * swirlAmp * 0.55;
-      const localWdx = wdx + swirlU;
-      const localWdz = wdz + swirlV;
-
-      // Vortex shedding — aeroelastic flag-flap mode. The wake behind the flag forms
-      // alternating low-pressure vortices (Kármán street); this pushes the trailing edge
-      // side-to-side perpendicular to wind. It's what makes real flags SNAP rather than
-      // drift. Concentrated on the fly half; amplitude grows with wind.
-      const vortexFreq = 0.85 + baseWind * 1.3;
-      const vortexPhase = simTime * vortexFreq * 6.2831853;
-      // sin(vortexPhase - u*k) → pattern travels hoist→fly. sin(v*π*1.2) → lazy S along height.
-      const vortexSpatial = Math.sin(v * Math.PI * 1.2 + 0.4) * Math.sin(vortexPhase - u * 3.2);
-      const vortexAmp = (
-        stormBlend
-          ? baseWind * baseWind * 0.38 + baseWind * 0.55
-          : baseWind * baseWind * 0.9 + baseWind * 0.35
-      ) * (u * u) * (0.55 + turbResponse * 0.9);
-      const vortexX = -wdz * vortexSpatial * vortexAmp;
-      const vortexZ =  wdx * vortexSpatial * vortexAmp;
-
-      let fx = localWdx * windBase * wm + gustX * gustScale + flutterX * turbField + vortexX;
-      let fy = gravity * (1.18 + v * 0.92 + u * u * 0.34) + gustLift * gustScale * 0.045
-             + swirlY * windBase * wm;
-      let fz = localWdz * windBase * wm + gustZ * gustScale + flutterZ * turbField + vortexZ;
-
-      // Aerodynamic pressure
-      if (nLen2 > 1e-4) {
-        const ndw = npx * wdx + npz * wdz + npy * 0.05;
-        const aeroK = (windBase * (0.75 + turbAmt * 0.55)) * (0.2 + u * 0.8);
-        let aero;
-        if (REALISM.oneSidedAero) {
-          // Only windward face catches wind — no counter-push on leeward side.
-          // Lets folds billow freely instead of getting flattened from both sides.
-          const front = Math.max(ndw, 0.0);
-          aero = front * front * aeroK;
-        } else {
-          aero = ndw * Math.abs(ndw) * aeroK;
-        }
-        fx += npx * aero;
-        fy += Math.min(npy * aero * 0.24, 0.0);
-        fz += npz * aero;
-      }
-
-      // Relative airflow drag
-      const velX = vx / subDt, velY = vy / subDt, velZ = vz / subDt;
-      const flowScale = (0.12 + attackAngle * 0.88) * (0.35 + u * 0.65);
-      const flowX = wdx * windBase * flowScale;
-      const flowZ = wdz * windBase * flowScale;
-      const relX = velX - flowX, relZ = velZ - flowZ;
-      if (u > 0.35 && velY > 0.0) fy -= velY * (0.016 + u * 0.028);
-      const drag = dragK * (0.25 + u * 0.75);
-      fx -= relX * drag;
-      fy -= velY * drag * 0.8;
-      fz -= relZ * drag;
-
-      // Normal-based air resistance (cloth catches air like a sheet).
-      // Both quadratic and linear terms — linear dominates at low speeds and
-      // stops the fabric from drifting endlessly; quadratic bites hardest on
-      // sudden snaps and keeps the vortex/whip forces from over-stretching.
-      if (nLen2 > 1e-4) {
-        const velDotN = velX * npx + velY * npy + velZ * npz;
-        const airR = velDotN * Math.abs(velDotN) * (1.6 + stormBlend * 0.65) + velDotN * (0.9 + stormBlend * 0.35);
-        fx -= npx * airR;
-        fy -= npy * airR;
-        fz -= npz * airR;
-      }
-
-      // Centrifugal force from camera orbit (spinning the pole)
-      if (Math.abs(orbitAngularVel) > 0.05) {
-        // Radial direction from pole axis (Y) outward in XZ plane
-        const rx = px, rz = pz;
-        const rLen = Math.sqrt(rx * rx + rz * rz) + 0.001;
-        // F = m * omega^2 * r (outward), scaled by distance from pole (u)
-        const centrifugal = orbitAngularVel * orbitAngularVel * rLen * u * 0.95;
-        fx += (rx / rLen) * centrifugal;
-        fz += (rz / rLen) * centrifugal;
-        // Tangential impulse from angular acceleration — this is the main
-        // "swing" the user perceives when spinning the pole
-        const tangential = orbitAngularVel * u * 0.55;
-        fx += (-rz / rLen) * tangential;
-        fz += (rx / rLen) * tangential;
-      }
-
-      let nx = px + vx + fx * dt2;
-      let ny = py + vy + fy * dt2;
-      let nz = pz + vz + fz * dt2;
-
-      const sx = nx - px, sy = ny - py, sz = nz - pz;
-      const stepLen = Math.sqrt(sx * sx + sy * sy + sz * sz);
-      if (stepLen > maxStep) {
-        const sInv = maxStep / stepLen;
-        nx = px + sx * sInv; ny = py + sy * sInv; nz = pz + sz * sInv;
-      }
-      pos[i3] = nx; pos[i3 + 1] = ny; pos[i3 + 2] = nz;
-    }
-
-    // Constraint solving
-    for (let iter = 0; iter < iterations; iter++) {
-      for (let c = 0; c < numC; c++) {
-        const a = conA[c], b = conB[c];
-        const a3 = a * 3, b3 = b * 3;
-        const dx = pos[b3] - pos[a3], dy = pos[b3 + 1] - pos[a3 + 1], dz = pos[b3 + 2] - pos[a3 + 2];
-        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist < 1e-7) continue;
-        const diff = (dist - conR[c]) / dist * 0.5 * solveStrength;
-        const cx = dx * diff, cy = dy * diff, cz = dz * diff;
-        const af = fixed[a], bf = fixed[b];
-        if (!af && !bf) {
-          pos[a3] += cx; pos[a3 + 1] += cy; pos[a3 + 2] += cz;
-          pos[b3] -= cx; pos[b3 + 1] -= cy; pos[b3 + 2] -= cz;
-        } else if (!af) {
-          pos[a3] += cx * 2; pos[a3 + 1] += cy * 2; pos[a3 + 2] += cz * 2;
-        } else if (!bf) {
-          pos[b3] -= cx * 2; pos[b3 + 1] -= cy * 2; pos[b3 + 2] -= cz * 2;
-        }
-      }
-    }
-
-    // Hard stretch clamp. Storm gets a tighter limit and one extra pass so it
-    // reads as soaked, heavy fabric instead of rubber.
-    const maxStretch = stormBlend ? 1.045 : 1.06;
-    const clampPasses = 2;
-    for (let pass = 0; pass < clampPasses; pass++) {
-      for (let c = 0; c < numC; c++) {
-        const a = conA[c], b = conB[c];
-        const a3 = a * 3, b3 = b * 3;
-        const dx = pos[b3] - pos[a3], dy = pos[b3 + 1] - pos[a3 + 1], dz = pos[b3 + 2] - pos[a3 + 2];
-        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        const rMax = conR[c] * maxStretch;
-        if (dist > rMax && dist > 1e-7) {
-          const diff = (dist - rMax) / dist * 0.5;
-          const cx = dx * diff, cy = dy * diff, cz = dz * diff;
-          const af = fixed[a], bf = fixed[b];
-          if (!af && !bf) {
-            pos[a3] += cx; pos[a3 + 1] += cy; pos[a3 + 2] += cz;
-            pos[b3] -= cx; pos[b3 + 1] -= cy; pos[b3 + 2] -= cz;
-          } else if (!af) {
-            pos[a3] += cx * 2; pos[a3 + 1] += cy * 2; pos[a3 + 2] += cz * 2;
-          } else if (!bf) {
-            pos[b3] -= cx * 2; pos[b3 + 1] -= cy * 2; pos[b3 + 2] -= cz * 2;
-          }
-        }
-      }
-    }
-
-    // Anti-self-intersection
-    for (let j = 1; j < rows - 1; j++) {
-      for (let i = 1; i < cols - 1; i++) {
-        const idx = j * cols + i;
-        if (fixed[idx]) continue;
-        // Inactive (out-of-shape) neighbors hold stale parked positions —
-        // averaging them in would yank the cloth boundary every substep.
-        if (clothActive && !(clothActive[idx - 1] && clothActive[idx + 1] &&
-            clothActive[idx - cols] && clothActive[idx + cols])) continue;
-        const i3 = idx * 3;
-        const avgZ = (
-          pos[(idx - 1) * 3 + 2] + pos[(idx + 1) * 3 + 2] +
-          pos[(idx - cols) * 3 + 2] + pos[(idx + cols) * 3 + 2]
-        ) * 0.25;
-        const devZ = pos[i3 + 2] - avgZ;
-        const limit = restDx * 1.65;
-        if (Math.abs(devZ) > limit) {
-          const correction = devZ > 0 ? devZ - limit : devZ + limit;
-          pos[i3 + 2] -= correction * 0.5;
-          prev[i3 + 2] -= correction * 0.5;
-        }
-      }
-    }
-    const minSep = restDx * 0.18;
-    for (let pass = 0; pass < 2; pass++) {
-      for (let j = 0; j < rows; j++) {
-        for (let i = 1; i < cols; i++) {
-          const left = j * cols + i - 1, curr = left + 1;
-          if (clothActive && !(clothActive[left] && clothActive[curr])) continue;
-          const l3 = left * 3, c3 = curr * 3;
-          const overlap = (pos[l3] + minSep) - pos[c3];
-          if (overlap > 0) {
-            if (!fixed[curr]) { pos[c3] += overlap; prev[c3] += overlap; }
-            else if (!fixed[left]) { pos[l3] -= overlap; prev[l3] -= overlap; }
-          }
-        }
-      }
-    }
+    const g = gustEnv(simTime);
+    const mag = windMag(simTime, g, base);
+    updateSway(subDt, mag, g, wdx, wdz);
+    updateWindField(simTime, g, mag, wdx, wdz);
+    computeAeroNormals();
+    integrate(subDt, wdx, wdz);
+    driveAnchors();
+    solveConstraints(itersA);
+    longRangeAttach();
+    // Self-collision once per frame, not per substep: the cloth barely moves
+    // between substeps, and it is by far the most expensive pass.
+    if (s === SUBSTEPS - 1) selfCollide();
+    poleCollide();
+    solveConstraints(VK.itersB);
+    longRangeAttach();
   }
-
+  extrapolateInactive();
   computeMeshNormals();
 }
 
-function computeMeshNormals() {
-  nrm.fill(0);
-  for (let t = 0; t < triIdx.length; t += 3) {
-    const a = triIdx[t], b = triIdx[t + 1], c = triIdx[t + 2];
-    const a3 = a * 3, b3 = b * 3, c3 = c * 3;
-    const abx = pos[b3] - pos[a3], aby = pos[b3 + 1] - pos[a3 + 1], abz = pos[b3 + 2] - pos[a3 + 2];
-    const acx = pos[c3] - pos[a3], acy = pos[c3 + 1] - pos[a3 + 1], acz = pos[c3 + 2] - pos[a3 + 2];
-    const nx = aby * acz - abz * acy, ny = abz * acx - abx * acz, nz = abx * acy - aby * acx;
-    nrm[a3] += nx; nrm[a3 + 1] += ny; nrm[a3 + 2] += nz;
-    nrm[b3] += nx; nrm[b3 + 1] += ny; nrm[b3 + 2] += nz;
-    nrm[c3] += nx; nrm[c3 + 1] += ny; nrm[c3 + 2] += nz;
-  }
-  for (let i = 0; i < totalPts; i++) {
-    const i3 = i * 3;
-    const len = Math.sqrt(nrm[i3] ** 2 + nrm[i3 + 1] ** 2 + nrm[i3 + 2] ** 2);
-    if (len > 0) { nrm[i3] /= len; nrm[i3 + 1] /= len; nrm[i3 + 2] /= len; }
-  }
-  for (let pass = 0; pass < 2; pass++) {
-    const src = pass === 0 ? nrm : smoothNrm;
-    const dst = pass === 0 ? smoothNrm : nrm;
-    for (let j = 0; j < rows; j++) {
-      for (let i = 0; i < cols; i++) {
-        const idx = j * cols + i;
-        const i3 = idx * 3;
-        let sx = src[i3], sy = src[i3 + 1], sz = src[i3 + 2];
-        if (i > 0) { const n = (idx - 1) * 3; sx += src[n]; sy += src[n + 1]; sz += src[n + 2]; }
-        if (i < cols - 1) { const n = (idx + 1) * 3; sx += src[n]; sy += src[n + 1]; sz += src[n + 2]; }
-        if (j > 0) { const n = (idx - cols) * 3; sx += src[n]; sy += src[n + 1]; sz += src[n + 2]; }
-        if (j < rows - 1) { const n = (idx + cols) * 3; sx += src[n]; sy += src[n + 1]; sz += src[n + 2]; }
-        const len = Math.sqrt(sx * sx + sy * sy + sz * sz);
-        if (len > 1e-6) { dst[i3] = sx / len; dst[i3 + 1] = sy / len; dst[i3 + 2] = sz / len; }
-        else { dst[i3] = 0; dst[i3 + 1] = 1; dst[i3 + 2] = 0; }
+// ─── Render surface ──────────────────────────────────────────
+// Catmull-Rom in u, then in v — the same two-pass bicubic Viking uses. It costs
+// one O(N) sweep and buys a silhouette and a shading gradient that a grid this
+// coarse could never carry on its own.
+function buildRenderSurface() {
+  for (let j = 0; j < rows; j++) {
+    const rowBase = j * cols;
+    for (let rx = 0; rx < RC; rx++) {
+      const i = (rx / SUBDIV) | 0, s = rx - i * SUBDIV, o = (j * RC + rx) * 3;
+      if (s === 0) {
+        const p = (rowBase + i) * 3;
+        rowPass[o] = pos[p]; rowPass[o + 1] = pos[p + 1]; rowPass[o + 2] = pos[p + 2];
+      } else {
+        const w = CRW[s];
+        const i0 = (rowBase + Math.max(i - 1, 0)) * 3, i1 = (rowBase + i) * 3;
+        const i2 = (rowBase + Math.min(i + 1, cols - 1)) * 3, i3 = (rowBase + Math.min(i + 2, cols - 1)) * 3;
+        for (let k = 0; k < 3; k++) {
+          rowPass[o + k] = w[0] * pos[i0 + k] + w[1] * pos[i1 + k] + w[2] * pos[i2 + k] + w[3] * pos[i3 + k];
+        }
       }
     }
   }
+  for (let ry = 0; ry < RR; ry++) {
+    const j = (ry / SUBDIV) | 0, s = ry - j * SUBDIV;
+    const r0 = Math.max(j - 1, 0) * RC, r1 = j * RC;
+    const r2 = Math.min(j + 1, rows - 1) * RC, r3 = Math.min(j + 2, rows - 1) * RC;
+    const w = CRW[s];
+    for (let rx = 0; rx < RC; rx++) {
+      const o = (ry * RC + rx) * 3;
+      if (s === 0) {
+        const p = (r1 + rx) * 3;
+        rPos[o] = rowPass[p]; rPos[o + 1] = rowPass[p + 1]; rPos[o + 2] = rowPass[p + 2];
+      } else {
+        const i0 = (r0 + rx) * 3, i1 = (r1 + rx) * 3, i2 = (r2 + rx) * 3, i3 = (r3 + rx) * 3;
+        for (let k = 0; k < 3; k++) {
+          rPos[o + k] = w[0] * rowPass[i0 + k] + w[1] * rowPass[i1 + k] + w[2] * rowPass[i2 + k] + w[3] * rowPass[i3 + k];
+        }
+      }
+    }
+  }
+  // Normals and a real weft tangent — the crease map and the anisotropic sheen
+  // both need to know which way the weave runs.
+  for (let ry = 0; ry < RR; ry++) {
+    for (let rx = 0; rx < RC; rx++) {
+      const o = (ry * RC + rx) * 3;
+      const l = (ry * RC + Math.max(rx - 1, 0)) * 3, r = (ry * RC + Math.min(rx + 1, RC - 1)) * 3;
+      const u = (Math.max(ry - 1, 0) * RC + rx) * 3, d = (Math.min(ry + 1, RR - 1) * RC + rx) * 3;
+      const tx = rPos[r] - rPos[l], ty = rPos[r + 1] - rPos[l + 1], tz = rPos[r + 2] - rPos[l + 2];
+      const bx = rPos[d] - rPos[u], by = rPos[d + 1] - rPos[u + 1], bz = rPos[d + 2] - rPos[u + 2];
+      let nx = by * tz - bz * ty, ny = bz * tx - bx * tz, nz = bx * ty - by * tx;
+      let len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+      rNrm[o] = nx / len; rNrm[o + 1] = ny / len; rNrm[o + 2] = nz / len;
+      len = Math.sqrt(tx * tx + ty * ty + tz * tz) || 1;
+      rTan[o] = tx / len; rTan[o + 1] = ty / len; rTan[o + 2] = tz / len;
+    }
+  }
+}
+
+// Kept under the original name because every export path calls it to refresh
+// the surface after writing straight into pos[].
+function computeMeshNormals() {
+  computeAeroNormals();
+  buildRenderSurface();
 }
 
 // ─── Shaders ─────────────────────────────────────────────────
@@ -920,14 +1040,15 @@ void main() {
 
 // Main scene shaders
 const vsrc = `
-attribute vec3 aPos, aNrm;
+attribute vec3 aPos, aNrm, aTan;
 attribute vec2 aUV;
 uniform mat4 uProj, uView, uModel;
-varying vec3 vNrm, vPos, vLocalPos;
+varying vec3 vNrm, vPos, vLocalPos, vTan;
 varying vec2 vUV;
 void main() {
   vec4 wp = uModel * vec4(aPos, 1.0);
   vNrm = normalize(mat3(uModel) * aNrm);
+  vTan = mat3(uModel) * aTan;
   vPos = wp.xyz;
   vLocalPos = aPos;
   vUV = aUV;
@@ -936,12 +1057,18 @@ void main() {
 
 const fsrc = `
 precision highp float;
-varying vec3 vNrm, vPos, vLocalPos;
+varying vec3 vNrm, vPos, vLocalPos, vTan;
 varying vec2 vUV;
 uniform vec3 uLight, uColor, uEye;
-uniform sampler2D uTex, uMask;
+uniform sampler2D uTex, uMask, uCrease;
 uniform float uFace, uAlpha, uAmbient, uPartyTime, uMatte, uUnlit, uLightning, uMoonSurface;
+uniform float uCreaseScale, uSheen, uAniso, uRough, uEnvInt, uSpecInt, uBackTint, uTransl, uExposure;
 uniform bool uHasTex, uIsGlass, uHasMask;
+// Narkowicz's fit of the ACES filmic curve — the tone response three.js uses,
+// and the reason the satin rolls off into the highlights instead of clipping.
+vec3 aces(vec3 x) {
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
 float hash21(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
   p += dot(p, p + 45.32);
@@ -1004,6 +1131,9 @@ void main() {
     base = mix(base, t.rgb, t.a);
     alpha = t.a + uAlpha * (1.0 - t.a);
   }
+  // The reverse of a flag is the same cloth seen through it — same print,
+  // mirrored and a shade down.
+  if (uFace < 0.0 && uUnlit < 0.5) base *= uBackTint;
   if (uMoonSurface > 0.5) {
     float dust = noise21(vLocalPos.xz * 12.0) * 0.55 + noise21(vLocalPos.xz * 46.0 + 31.7) * 0.45;
     vec2 craterCell = floor(vLocalPos.xz * 0.95);
@@ -1034,24 +1164,77 @@ void main() {
     return;
   }
 
-  // Normal lighting
-  float ndl = dot(n, ld);
-  float diff = max(ndl, 0.0) * 0.50;
-  float fill = max(dot(n, normalize(vec3(-0.45, 0.35, -0.65))), 0.0) * 0.14;
-  float back = max(-ndl, 0.0) * 0.20;
-  // uMatte (0→1) fades out every reflective term for a flat, glare-free
-  // print surface — keeps diffuse/fill/back so the cloth folds still read.
+  // ── Satin ──
+  // Physically-shaded heavy cloth, lit the way the Viking sketch is: one warm
+  // raking key, a cool studio environment, a broad retroreflective sheen and a
+  // little light coming through from behind. Everything above works in sRGB, so
+  // the albedo is linearised here and encoded again on the way out.
+  vec3 alb = pow(base, vec3(2.2));
+
+  // Tangent frame from the cloth's own weft direction, then the crease map.
+  vec3 T = vTan - n * dot(n, vTan);
+  float tl = length(T);
+  T = tl > 1e-4 ? T / tl : normalize(cross(n, vec3(0.0, 1.0, 0.001)));
+  vec3 Bt = cross(n, T);
+  vec3 cn = texture2D(uCrease, vUV).xyz * 2.0 - 1.0;
+  // uCreaseScale 0 collapses this to n, so no branch is needed.
+  vec3 N = normalize(T * (cn.x * uCreaseScale) + Bt * (cn.y * uCreaseScale) + n * cn.z);
+  Bt = normalize(cross(N, T));
+  T = normalize(cross(Bt, N));
+
+  float NdV = max(dot(N, vd), 1e-4);
+  float NdL = max(dot(N, ld), 0.0);
+
+  // Studio box: bright above, neutral at the sides, dark floor.
+  vec3 envUp = vec3(1.00, 0.98, 0.94);
+  vec3 envSide = vec3(0.55, 0.57, 0.62);
+  vec3 envDown = vec3(0.16, 0.15, 0.14);
+  float envI = uEnvInt * (uAmbient / 0.38);
+  vec3 irr = N.y > 0.0 ? mix(envSide, envUp, N.y) : mix(envSide, envDown, -N.y);
+
+  vec3 keyC = vec3(1.000, 0.945, 0.863);
+  vec3 fillC = vec3(1.000, 0.902, 0.800);
+  vec3 fillDir = normalize(vec3(0.62, -0.16, -0.47));
+  vec3 rimDir = normalize(vec3(0.36, 0.44, -0.87));
+
+  vec3 dif = alb * irr * envI;
+  dif += alb * keyC * 1.082 * NdL;
+  dif += alb * fillC * 0.089 * max(dot(N, fillDir), 0.0);
+  dif += alb * 0.143 * max(dot(N, rimDir), 0.0);
+  dif += alb * uTransl * max(dot(-N, ld), 0.0);   // light through the cloth
+
+  // uMatte (0→1) fades every reflective term for a flat, glare-free print
+  // surface, leaving the diffuse so the folds still read.
   float em = 1.0 - uMatte;
-  float rim = pow(1.0 - max(dot(n, vd), 0.0), 2.8) * 0.18 * em;
-  float spec = pow(max(dot(n, hd), 0.0), 72.0) * 0.14 * em;
-  float spec2 = pow(max(dot(n, hd), 0.0), 16.0) * 0.16 * em;
-  float spec3 = pow(max(dot(n, hd), 0.0), 160.0) * 0.10 * em;
-  float light = uAmbient + diff + fill + back + rim + spec + spec2 + spec3;
-  float sheen = pow(1.0 - max(dot(n, vd), 0.0), 4.0) * 0.07 * em;
-  vec3 sheenTint = mix(vec3(0.84, 0.90, 0.98), vec3(0.98, 0.90, 0.84), vUV.y);
-  vec3 lit = base * light + sheenTint * sheen;
-  lit = mix(lit, base * 2.45 + vec3(0.18, 0.22, 0.32), flash * 0.68);
-  gl_FragColor = vec4(lit, alpha * m);
+
+  // Anisotropic GGX — the highlight smears along the weave rather than
+  // pooling. Rotated a quarter turn, so it runs up the height like satin.
+  vec3 H = normalize(ld + vd);
+  float NdH = max(dot(N, H), 0.0);
+  float VdH = max(dot(vd, H), 1e-4);
+  float ax = max(uRough * (1.0 + uAniso), 0.02);
+  float ay = max(uRough * (1.0 - uAniso), 0.02);
+  float th = dot(Bt, H) / ax;
+  float bh = dot(T, H) / ay;
+  float dd = th * th + bh * bh + NdH * NdH;
+  float D = 1.0 / (3.14159265 * ax * ay * max(dd * dd, 1e-6));
+  float kg = uRough * uRough * 0.5;
+  float G = (NdL / (NdL * (1.0 - kg) + kg)) * (NdV / (NdV * (1.0 - kg) + kg));
+  float F = 0.04 + 0.96 * pow(1.0 - VdH, 5.0);
+  vec3 spec = keyC * 1.082 * (D * G * F / (4.0 * NdV)) * uSpecInt * em;
+
+  // The broad grazing sheen is what separates satin from paper.
+  vec3 sheen = vec3(1.000, 0.941, 0.847) * uSheen * pow(1.0 - NdV, 3.0) * (0.35 + 0.65 * NdL) * em;
+
+  // Blurred environment reflection.
+  vec3 R = reflect(-vd, N);
+  vec3 envR = R.y > 0.0 ? mix(envSide, envUp, R.y) : mix(envSide, envDown, -R.y);
+  float Fv = 0.04 + 0.96 * pow(1.0 - NdV, 5.0);
+  vec3 envSpec = envR * envI * Fv * uSpecInt * (1.0 - uRough * 0.7) * em;
+
+  vec3 lin = dif + spec + sheen + envSpec;
+  lin = mix(lin, alb * 3.4 + vec3(0.35, 0.42, 0.60), flash * 0.68);
+  gl_FragColor = vec4(pow(aces(lin * uExposure), vec3(1.0 / 2.2)), alpha * m);
 }`;
 
 // ─── WebGL init ──────────────────────────────────────────────
@@ -1116,13 +1299,41 @@ gl.attachShader(prog, compileShader(fsrc, gl.FRAGMENT_SHADER));
 gl.linkProgram(prog); gl.useProgram(prog);
 
 const loc = {};
-['aPos', 'aNrm', 'aUV'].forEach(n => loc[n] = gl.getAttribLocation(prog, n));
-['uProj', 'uView', 'uModel', 'uLight', 'uColor', 'uEye', 'uTex', 'uFace', 'uAlpha', 'uAmbient', 'uHasTex', 'uIsGlass', 'uPartyTime', 'uMatte', 'uUnlit', 'uMask', 'uHasMask', 'uLightning', 'uMoonSurface']
+['aPos', 'aNrm', 'aUV', 'aTan'].forEach(n => loc[n] = gl.getAttribLocation(prog, n));
+['uProj', 'uView', 'uModel', 'uLight', 'uColor', 'uEye', 'uTex', 'uFace', 'uAlpha', 'uAmbient', 'uHasTex', 'uIsGlass', 'uPartyTime', 'uMatte', 'uUnlit', 'uMask', 'uHasMask', 'uLightning', 'uMoonSurface',
+ 'uCrease', 'uCreaseScale', 'uSheen', 'uAniso', 'uRough', 'uEnvInt', 'uSpecInt', 'uBackTint', 'uTransl', 'uExposure']
   .forEach(n => loc[n] = gl.getUniformLocation(prog, n));
+
+// Satin, matching the Viking material. These never change at runtime, so they
+// are set once rather than per draw.
+const SATIN = {
+  crease: 0.45,   // strength of the baked packaging folds
+  sheen: 0.28,
+  aniso: 0.35,
+  rough: 0.58,
+  env: 0.45,
+  spec: 0.60,
+  backTint: 0.74, // the reverse of the flag, a shade down
+  transl: 0.32,   // light carried through the cloth
+  exposure: 1.0,
+};
+function applySatinUniforms() {
+  gl.useProgram(prog);
+  gl.uniform1f(loc.uCreaseScale, SATIN.crease);
+  gl.uniform1f(loc.uSheen, SATIN.sheen);
+  gl.uniform1f(loc.uAniso, SATIN.aniso);
+  gl.uniform1f(loc.uRough, SATIN.rough);
+  gl.uniform1f(loc.uEnvInt, SATIN.env);
+  gl.uniform1f(loc.uSpecInt, SATIN.spec);
+  gl.uniform1f(loc.uBackTint, SATIN.backTint);
+  gl.uniform1f(loc.uTransl, SATIN.transl);
+  gl.uniform1f(loc.uExposure, SATIN.exposure);
+  gl.uniform1i(loc.uCrease, 3);
+}
 
 // ─── Buffers ─────────────────────────────────────────────────
 const posBuf = gl.createBuffer(), nrmBuf = gl.createBuffer();
-const uvBuf = gl.createBuffer(), idxBuf = gl.createBuffer();
+const uvBuf = gl.createBuffer(), idxBuf = gl.createBuffer(), tanBuf = gl.createBuffer();
 let polePosBuf = gl.createBuffer(), poleNrmBuf = gl.createBuffer();
 let poleUVBuf = gl.createBuffer(), poleIdxBuf = gl.createBuffer();
 let poleIdxCount = 0;
@@ -1141,19 +1352,71 @@ const MOON = {
   flagYOffset: 0.92,
 };
 
+// Everything the shader sees is the subdivided surface, not the sim grid.
 function uploadStaticBuffers() {
   gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, rUV, gl.STATIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, pos.byteLength, gl.DYNAMIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, rPos.byteLength, gl.DYNAMIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER, nrmBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, nrm.byteLength, gl.DYNAMIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, rNrm.byteLength, gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, tanBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, rTan.byteLength, gl.DYNAMIC_DRAW);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
-  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indexData, gl.STATIC_DRAW);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, rIndexData, gl.STATIC_DRAW);
+}
+
+// One place that binds the cloth for drawing — the live view, the FBO preview
+// and the still exporter all go through it.
+function bindClothBuffers() {
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, rPos);
+  gl.enableVertexAttribArray(loc.aPos);
+  gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, nrmBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, rNrm);
+  gl.enableVertexAttribArray(loc.aNrm);
+  gl.vertexAttribPointer(loc.aNrm, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, tanBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, rTan);
+  gl.enableVertexAttribArray(loc.aTan);
+  gl.vertexAttribPointer(loc.aTan, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+  gl.enableVertexAttribArray(loc.aUV);
+  gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+}
+
+// Cloth is double-sided: back faces first so the front overwrites where they meet.
+function drawCloth(count) {
+  gl.enable(gl.CULL_FACE);
+  gl.uniform1f(loc.uFace, -1.0);
+  gl.cullFace(gl.FRONT);
+  gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_INT, 0);
+  gl.uniform1f(loc.uFace, 1.0);
+  gl.cullFace(gl.BACK);
+  gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_INT, 0);
+  gl.disable(gl.CULL_FACE);
 }
 uploadStaticBuffers();
 
 // ─── Pole mesh ───────────────────────────────────────────────
+// The mast is not a stick: it carries the same bend the sim drives the anchors
+// with, so the pole and the cloth move as one rig.
+let poleRest = null, polePos = null;
+function updatePoleMesh() {
+  if (!poleRest) return;
+  const sx = sway.x, sz = sway.z;
+  for (let i = 0; i < poleRest.length; i += 3) {
+    const k = bendAt(poleRest[i + 1]);
+    polePos[i] = poleRest[i] + sx * k;
+    polePos[i + 1] = poleRest[i + 1];
+    polePos[i + 2] = poleRest[i + 2] + sz * k;
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, polePosBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, polePos);
+}
+
 function buildPole() {
   const r = POLE_RADIUS;
   const seg = POLE_SEGMENTS;
@@ -1166,11 +1429,14 @@ function buildPole() {
 
   const positions = [], normals = [], uvs = [], indices = [];
 
-  // Cylinder body — multiple rings for smooth shading along length
-  const cylRings = 8;
+  // Cylinder body. The mast runs far below the viewport for framing but only
+  // bends over its top few units, so the rings are packed toward the tip —
+  // that is the part on screen, and the part the sway has to curve smoothly.
+  const cylRings = 32;
   for (let ring = 0; ring <= cylRings; ring++) {
     const t = ring / cylRings;
-    const y = yBot + (yTop - yBot) * t;
+    const f = 1 - t;
+    const y = yTop - (yTop - yBot) * f * f;
     for (let i = 0; i <= seg; i++) {
       const a = (i / seg) * Math.PI * 2;
       const nx = Math.cos(a), nz = Math.sin(a);
@@ -1199,8 +1465,9 @@ function buildPole() {
   }
   for (let i = 0; i < seg; i++) indices.push(ci, ci + 1 + i + 1, ci + 1 + i);
 
-  // Ball finial — higher resolution
-  const ballSegs = 16, ballRings = 12;
+  // Ball finial. It is small but it is the one round thing on screen, so it
+  // needs the density — 16 segments showed its facets on a large display.
+  const ballSegs = 48, ballRings = 32;
   const ballY = yTop + finialR * 0.6;
   const bb = positions.length / 3;
   for (let lat = 0; lat <= ballRings; lat++) {
@@ -1222,8 +1489,10 @@ function buildPole() {
   }
 
   poleIdxCount = indices.length;
+  poleRest = new Float32Array(positions);
+  polePos = new Float32Array(positions);
   gl.bindBuffer(gl.ARRAY_BUFFER, polePosBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, polePos, gl.DYNAMIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER, poleNrmBuf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER, poleUVBuf);
@@ -1409,6 +1678,84 @@ function drawBackgroundQuad(drawW, drawH) {
   gl.disableVertexAttribArray(bgLoc.aP);
 }
 
+// ─── Crease map ──────────────────────────────────────────────
+// A static tangent-space normal map: a handful of soft packaging folds plus
+// low-frequency unevenness in the weave. It is what stops a flat-lit stretch of
+// cloth from reading as plastic, and it costs nothing at runtime.
+let creaseTex = null;
+function buildCreaseMap() {
+  const W = 512, H = Math.max(64, Math.round(W * flagH / flagW));
+  const hgt = new Float32Array(W * H);
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const folds = [];
+  for (let i = 0; i < 7; i++) {
+    const ang = (i % 2 === 0 ? Math.PI / 2 : 0) + (rnd() - 0.5) * 0.25;
+    folds.push({
+      x: rnd() * W, y: rnd() * H,
+      nx: Math.cos(ang), ny: Math.sin(ang),
+      w: (6 + rnd() * 14) * (W / 1024),
+      a: (rnd() < 0.5 ? -1 : 1) * (0.5 + rnd() * 0.5),
+    });
+  }
+  const P = 64, grid = new Float32Array(P * P);
+  for (let i = 0; i < grid.length; i++) grid[i] = rnd();
+  const noise = (x, y) => {
+    const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const g00 = grid[(yi % P) * P + (xi % P)], g10 = grid[(yi % P) * P + ((xi + 1) % P)];
+    const g01 = grid[((yi + 1) % P) * P + (xi % P)], g11 = grid[((yi + 1) % P) * P + ((xi + 1) % P)];
+    return (g00 * (1 - sx) + g10 * sx) * (1 - sy) + (g01 * (1 - sx) + g11 * sx) * sy;
+  };
+  const ns = W / 1024;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let v = 0;
+      for (const f of folds) {
+        const t = ((x - f.x) * f.nx + (y - f.y) * f.ny) / f.w;
+        v += f.a * Math.exp(-t * t) * 0.35;
+      }
+      v += (noise(x / (140 * ns), y / (140 * ns)) - 0.5) * 0.6
+         + (noise(x / (38 * ns) + 9, y / (38 * ns) + 5) - 0.5) * 0.25;
+      hgt[y * W + x] = v;
+    }
+  }
+  // Height → tangent-space normal. Tangent = +u, bitangent = +v (v runs down).
+  const px = new Uint8Array(W * H * 4);
+  const S = 14.0 * ns;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const xl = hgt[y * W + Math.max(x - 1, 0)], xr = hgt[y * W + Math.min(x + 1, W - 1)];
+      const yu = hgt[Math.max(y - 1, 0) * W + x], yd = hgt[Math.min(y + 1, H - 1) * W + x];
+      let nx = -(xr - xl) * 0.5 * S, ny = (yd - yu) * 0.5 * S, nz = 1;
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      const o = (y * W + x) * 4;
+      px[o] = Math.round((nx / len * 0.5 + 0.5) * 255);
+      px[o + 1] = Math.round((ny / len * 0.5 + 0.5) * 255);
+      px[o + 2] = Math.round((nz / len * 0.5 + 0.5) * 255);
+      px[o + 3] = 255;
+    }
+  }
+  if (!creaseTex) creaseTex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE3);
+  gl.bindTexture(gl.TEXTURE_2D, creaseTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  // No mipmaps: the shader samples it inside branch-free code and the folds are
+  // low-frequency anyway.
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.activeTexture(gl.TEXTURE0);
+}
+// The fold pattern is baked at the current aspect, so a ratio change needs a
+// repaint — but only once the ratio has settled, not on every tween frame.
+let _creaseRaf = null;
+function queueCreaseRebuild() {
+  if (_creaseRaf) cancelAnimationFrame(_creaseRaf);
+  _creaseRaf = requestAnimationFrame(() => { _creaseRaf = null; buildCreaseMap(); });
+}
+
 // ─── Shape mask texture (custom silhouette) ──────────────────
 // 1×1 white fallback keeps the uMask sampler valid when no shape is active.
 const whiteTex = gl.createTexture();
@@ -1516,7 +1863,7 @@ function applyShape(finalize = true) {
   reseedNewParticles(oldActive);
   computeMeshNormals();
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
-  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indexData, gl.STATIC_DRAW);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, rIndexData, gl.STATIC_DRAW);
   buildMaskTexture();
 }
 
@@ -1754,7 +2101,7 @@ function autoFrame() {
   // Fit the full flag+pole in view (flag shifted up by 0.2*flagH)
   const totalH = flagH * 1.5;
   const fitHalf = Math.max(totalH * 0.55, (flagW * 0.65) / aspect);
-  cam.tgtDist = clamp((fitHalf / halfTan) * 1.15, 1.5, 20.0);
+  cam.tgtDist = clamp((fitHalf / halfTan) * 1.32, 1.5, 20.0);
   applySceneFrameDistance();
 }
 
@@ -1946,6 +2293,10 @@ function applyMoonCamera() {
 }
 
 // ─── Renderer ────────────────────────────────────────────────
+// One warm key raking across the cloth from the hoist side — the same setup as
+// the Viking sketch, which is what makes the folds read as folds.
+const KEY_LIGHT = [-4.0, 5.0, 6.5];
+
 function resize() {
   const rawDpr = window.devicePixelRatio || 1;
   const dpr = isMobileViewport() ? Math.min(rawDpr, 1.75) : rawDpr;
@@ -1983,10 +2334,6 @@ let matteMode = false;
 // and defaulted on whenever a picture is dropped in.
 let unlitMode = false;
 // Cloth mode — 'full' = wind sim · 'slight' = gentle deterministic ripple
-// (name-tag prints) · 'flat' = plain panel, no cloth effect at all.
-let clothMode = 'full';
-let gentleTime = 0; // drives the slow drift of the slight-wave live preview
-
 function strokePathTriangles(path, widthPx, drawW, drawH) {
   if (!path || path.length < 2) return null;
   const sx = drawW * 0.5;
@@ -2051,6 +2398,7 @@ function drawLightningBolts(drawW, drawH) {
 
 function drawMoonSurface() {
   if (!MOON.active) return;
+  if (loc.aTan >= 0) gl.disableVertexAttribArray(loc.aTan);
   setModelMatrix(moonSceneModel(1));
   gl.uniform1i(loc.uIsGlass, 0);
   gl.uniform1f(loc.uMatte, 1.0);
@@ -2077,6 +2425,8 @@ function drawMoonSurface() {
 }
 
 function drawPoleMesh() {
+  if (loc.aTan >= 0) gl.disableVertexAttribArray(loc.aTan);
+  updatePoleMesh();
   setModelMatrix(MOON.active ? moonFlagModel() : MODEL_IDENTITY);
   gl.uniform1i(loc.uIsGlass, 1);
   gl.uniform1f(loc.uMoonSurface, 0.0);
@@ -2115,7 +2465,7 @@ function render(dt) {
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-  const ld = MOON.active ? [-0.32, 1.0, 0.58] : [0.5, 0.8, 0.35];
+  const ld = MOON.active ? [-0.32, 1.0, 0.58] : KEY_LIGHT;
   const ll = Math.sqrt(ld[0] ** 2 + ld[1] ** 2 + ld[2] ** 2);
   const e = eyePos();
 
@@ -2154,28 +2504,8 @@ function render(dt) {
   }
   setMaskUniforms(isCustomShape());
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-  gl.bufferSubData(gl.ARRAY_BUFFER, 0, pos);
-  gl.enableVertexAttribArray(loc.aPos);
-  gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, nrmBuf);
-  gl.bufferSubData(gl.ARRAY_BUFFER, 0, nrm);
-  gl.enableVertexAttribArray(loc.aNrm);
-  gl.vertexAttribPointer(loc.aNrm, 3, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
-  gl.enableVertexAttribArray(loc.aUV);
-  gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
-  gl.enable(gl.CULL_FACE);
-
-  gl.uniform1f(loc.uFace, -1.0);
-  gl.cullFace(gl.FRONT);
-  gl.drawElements(gl.TRIANGLES, indexData.length, gl.UNSIGNED_INT, 0);
-  gl.uniform1f(loc.uFace, 1.0);
-  gl.cullFace(gl.BACK);
-  gl.drawElements(gl.TRIANGLES, indexData.length, gl.UNSIGNED_INT, 0);
-
-  gl.disable(gl.CULL_FACE);
+  bindClothBuffers();
+  drawCloth(rIndexData.length);
   gl.disable(gl.BLEND);
 }
 
@@ -2500,6 +2830,7 @@ function softRatioUpdate(aw, ah) {
   restDx = flagW / (cols - 1);
   restDy = flagH / (rows - 1);
   restDiag = Math.sqrt(restDx * restDx + restDy * restDy);
+  computePoleRig();
 
   const sx = flagW / oldW, sy = flagH / oldH, sz = Math.min(sx, sy);
   for (let k = 0; k < totalPts; k++) {
@@ -2508,7 +2839,7 @@ function softRatioUpdate(aw, ah) {
     prev[i3] *= sx; prev[i3 + 1] *= sy; prev[i3 + 2] *= sz;
   }
 
-  const dx2 = restDx * 2 * 0.98, dy2 = restDy * 2 * 0.98;
+  const dx2 = restDx * 2, dy2 = restDy * 2;
   for (let k = 0; k < numC; k++) {
     const d = conB[k] - conA[k];
     if (d === 1) conR[k] = restDx;
@@ -2519,6 +2850,7 @@ function softRatioUpdate(aw, ah) {
   }
 
   buildPole();
+  queueCreaseRebuild();
   queueTextureRefresh();
   autoFrame();
 }
@@ -2582,6 +2914,7 @@ function fullRebuild(aw, ah, smooth) {
   }
   uploadStaticBuffers();
   buildPole();
+  queueCreaseRebuild();
   refreshTexture();
 }
 
@@ -2606,6 +2939,17 @@ function loadDefaultTexture() {
 // ─── UI ──────────────────────────────────────────────────────
 const panel = document.getElementById('panel');
 document.getElementById('panelClose').addEventListener('click', () => { panel.classList.add('collapsed'); if (someActive) initSomeCrop(); });
+
+// About — what this is, how to drive it, and where it comes from.
+const aboutToggle = document.getElementById('aboutToggle');
+const panelAbout = document.getElementById('panelAbout');
+if (aboutToggle && panelAbout) {
+  aboutToggle.addEventListener('click', () => {
+    const open = panelAbout.hidden;
+    panelAbout.hidden = !open;
+    aboutToggle.setAttribute('aria-expanded', String(open));
+  });
+}
 document.getElementById('panelToggle').addEventListener('click', () => {
   closeMobileSheet();
   panel.classList.remove('collapsed');
@@ -2932,17 +3276,6 @@ slider('windStrength', 'windVal', v => { SIM.windStrength = +v; return v; });
 slider('turbulence', 'turbVal', v => { SIM.turbulence = +v; return v; });
 slider('gravity', 'gravityVal', v => { SIM.gravity = +v / 10; return (+v / 10).toFixed(1); });
 
-// Fabric model stays realistic by default; the old Classic/Realistic UI was removed.
-const fabricModeRow = document.getElementById('fabricModeRow');
-if (fabricModeRow) {
-  fabricModeRow.addEventListener('click', e => {
-    const btn = e.target.closest('[data-mode]');
-    if (!btn || btn.classList.contains('active')) return;
-    setActiveButton(fabricModeRow, '[data-mode]', btn);
-    setFabricMode(btn.dataset.mode);
-  });
-}
-
 // Weather preset — Normal / Storm segmented control
 const weatherRow = document.getElementById('weatherRow');
 let _savedWeather = null;
@@ -2997,6 +3330,48 @@ attachRow.addEventListener('click', e => {
   setActiveButton(attachRow, '[data-attach]', btn);
   ATTACH.mode = btn.dataset.attach;
   applyPinning();
+});
+
+// ─── Gust ────────────────────────────────────────────────────
+// Hold the button (or G) to charge one; the fill is the charge, so the release
+// is never a surprise. The air also throws its own gusts on a timer set by the
+// Turbulence slider — this is just the manual trigger.
+const GUST_CHARGE_T = 1.2;                  // seconds of hold for full power
+const GUST_MIN = 0.7, GUST_MAX = 2.3;
+const gustBtn = document.getElementById('gustBtn');
+const gustFill = document.getElementById('gustFill');
+let chargeT0 = -1;
+const nowSec = () => performance.now() / 1000;
+const chargeAmt = () => Math.min(1, (nowSec() - chargeT0) / GUST_CHARGE_T);
+function startCharge() { if (chargeT0 < 0) chargeT0 = nowSec(); }
+function releaseCharge() {
+  if (chargeT0 < 0) return;
+  const c = chargeAmt();
+  chargeT0 = -1;
+  if (gustFill) gustFill.style.width = '0%';
+  triggerGust(GUST_MIN + (GUST_MAX - GUST_MIN) * c);
+}
+function updateGustCharge() {
+  if (chargeT0 >= 0 && gustFill) gustFill.style.width = (chargeAmt() * 100).toFixed(1) + '%';
+}
+if (gustBtn) {
+  gustBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    gustBtn.setPointerCapture(e.pointerId);
+    startCharge();
+  });
+  gustBtn.addEventListener('pointerup', releaseCharge);
+  gustBtn.addEventListener('pointercancel', releaseCharge);
+}
+window.addEventListener('blur', releaseCharge);   // never leave a charge stuck on tab-away
+window.addEventListener('keydown', e => {
+  if (e.key !== 'g' && e.key !== 'G') return;
+  const t = e.target;
+  if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) return;
+  if (!e.repeat) startCharge();
+});
+window.addEventListener('keyup', e => {
+  if (e.key === 'g' || e.key === 'G') releaseCharge();
 });
 
 // Font picker — bundled fonts first, optional local fonts via browser permission.
@@ -3112,7 +3487,7 @@ scrollSpeedSlider.addEventListener('input', () => {
 });
 
 // Snap the flag to a 5×5 square. Used when text is first typed and by the
-// Student Takeover preset — text reads best centred on a square.
+// Title-card text reads best centred on a square.
 function setSquareRatio() {
   customAW = 5; customAH = 5;
   ensureCustomMode();
@@ -3665,7 +4040,6 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   SIM.flagColor = [0.831, 0.996, 0.827];
   SIM.bgColor = [0.831, 0.996, 0.827];
   SUBSTEPS = 2;
-  setFabricMode('realistic');
   WEATHER.mode = 'normal';
   WEATHER.angleDriftMax = 24;
   WEATHER.angleDriftForce = 1.0;
@@ -3768,8 +4142,6 @@ async function exportFlagPDF() {
   const prev = btn ? btn.textContent : '';
   if (btn) { btn.textContent = 'PDF…'; btn.style.pointerEvents = 'none'; }
   try {
-    if (clothMode === 'flat') flattenCloth();
-    else if (clothMode === 'slight') gentleClothPose(0, gentleTime);
     const [outW, outH] = getExportSize();
     const JsPDF = await getJsPDF();
     const blob = await renderFlagToBlob(outW, outH, matteMode);
@@ -3796,73 +4168,12 @@ async function exportFlagPDF() {
 // all specular/sheen. Shared by the single-PNG button and the CSV batch.
 function renderFlagToBlob(outW, outH, matte, transparent, mime = 'image/png', quality) {
   const restorePreviewTexture = prepareFullTextureForExport();
-  const meshScale = 3; // 3x denser mesh via bilinear interpolation
   // 2× supersample if the GPU can host the larger renderbuffer/texture.
   const maxRb = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
   const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
   const maxDim = Math.min(maxRb, maxTex);
   const ss = (outW * 2 <= maxDim && outH * 2 <= maxDim) ? 2 : 1;
   const w = outW * ss, h = outH * ss;
-
-  // ── Build high-res mesh by interpolating current cloth ──
-  const eCols = (cols - 1) * meshScale + 1;
-  const eRows = (rows - 1) * meshScale + 1;
-  const ePts = eCols * eRows;
-  const ePos = new Float32Array(ePts * 3);
-  const eNrm = new Float32Array(ePts * 3);
-  const eUV = new Float32Array(ePts * 2);
-
-  for (let ej = 0; ej < eRows; ej++) {
-    for (let ei = 0; ei < eCols; ei++) {
-      const eIdx = ej * eCols + ei;
-      const origI = ei / meshScale, origJ = ej / meshScale;
-      const i0 = Math.floor(origI), j0 = Math.floor(origJ);
-      const i1 = Math.min(i0 + 1, cols - 1), j1 = Math.min(j0 + 1, rows - 1);
-      const fi = origI - i0, fj = origJ - j0;
-      const p00 = j0 * cols + i0, p10 = j0 * cols + i1;
-      const p01 = j1 * cols + i0, p11 = j1 * cols + i1;
-      const w00 = (1 - fi) * (1 - fj), w10 = fi * (1 - fj);
-      const w01 = (1 - fi) * fj, w11 = fi * fj;
-      for (let k = 0; k < 3; k++) {
-        ePos[eIdx * 3 + k] = w00 * pos[p00 * 3 + k] + w10 * pos[p10 * 3 + k]
-                            + w01 * pos[p01 * 3 + k] + w11 * pos[p11 * 3 + k];
-        eNrm[eIdx * 3 + k] = w00 * nrm[p00 * 3 + k] + w10 * nrm[p10 * 3 + k]
-                            + w01 * nrm[p01 * 3 + k] + w11 * nrm[p11 * 3 + k];
-      }
-      const ni = eIdx * 3;
-      const nl = Math.sqrt(eNrm[ni] ** 2 + eNrm[ni + 1] ** 2 + eNrm[ni + 2] ** 2);
-      if (nl > 0) { eNrm[ni] /= nl; eNrm[ni + 1] /= nl; eNrm[ni + 2] /= nl; }
-      eUV[eIdx * 2] = ei / (eCols - 1);
-      eUV[eIdx * 2 + 1] = ej / (eRows - 1);
-    }
-  }
-
-  // Build triangle indices for dense mesh. Each dense cell lies fully inside
-  // one coarse cell — skip those whose parent is trimmed away by the custom
-  // shape, so no triangles interpolate toward parked inactive particles.
-  const eTriIdx = [];
-  for (let j = 0; j < eRows - 1; j++) {
-    for (let i = 0; i < eCols - 1; i++) {
-      if (cellActive && !cellActive[Math.floor(j / meshScale) * (cols - 1) + Math.floor(i / meshScale)]) continue;
-      const a = j * eCols + i;
-      eTriIdx.push(a, a + eCols, a + 1, a + 1, a + eCols, a + eCols + 1);
-    }
-  }
-  const eIndexData = new Uint32Array(eTriIdx);
-
-  // Create temporary GPU buffers for high-res mesh
-  const ePosBuf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, ePosBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, ePos, gl.STATIC_DRAW);
-  const eNrmBuf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, eNrmBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, eNrm, gl.STATIC_DRAW);
-  const eUVBuf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, eUVBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, eUV, gl.STATIC_DRAW);
-  const eIdxBuf = gl.createBuffer();
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, eIdxBuf);
-  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, eIndexData, gl.STATIC_DRAW);
 
   // ── Camera matching current view ──
   const mainFOV = Math.PI / 4.5;
@@ -3908,7 +4219,7 @@ function renderFlagToBlob(outW, outH, matte, transparent, mime = 'image/png', qu
   if (transparent) gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   else gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-  const ld = [0.5, 0.8, 0.35];
+  const ld = KEY_LIGHT;
   const ll = Math.sqrt(ld[0] ** 2 + ld[1] ** 2 + ld[2] ** 2);
 
   gl.useProgram(prog);
@@ -3937,26 +4248,8 @@ function renderFlagToBlob(outW, outH, matte, transparent, mime = 'image/png', qu
   }
   setMaskUniforms(isCustomShape());
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, ePosBuf);
-  gl.enableVertexAttribArray(loc.aPos);
-  gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, eNrmBuf);
-  gl.enableVertexAttribArray(loc.aNrm);
-  gl.vertexAttribPointer(loc.aNrm, 3, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, eUVBuf);
-  gl.enableVertexAttribArray(loc.aUV);
-  gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, eIdxBuf);
-  gl.enable(gl.CULL_FACE);
-
-  gl.uniform1f(loc.uFace, -1.0);
-  gl.cullFace(gl.FRONT);
-  gl.drawElements(gl.TRIANGLES, eIndexData.length, gl.UNSIGNED_INT, 0);
-  gl.uniform1f(loc.uFace, 1.0);
-  gl.cullFace(gl.BACK);
-  gl.drawElements(gl.TRIANGLES, eIndexData.length, gl.UNSIGNED_INT, 0);
-
-  gl.disable(gl.CULL_FACE);
+  bindClothBuffers();
+  drawCloth(rIndexData.length);
   gl.disable(gl.BLEND);
 
   // Read pixels
@@ -3983,10 +4276,6 @@ function renderFlagToBlob(outW, outH, matte, transparent, mime = 'image/png', qu
   gl.deleteFramebuffer(fbo);
   gl.deleteTexture(fboTex);
   gl.deleteRenderbuffer(depthBuf);
-  gl.deleteBuffer(ePosBuf);
-  gl.deleteBuffer(eNrmBuf);
-  gl.deleteBuffer(eUVBuf);
-  gl.deleteBuffer(eIdxBuf);
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(0, 0, 0, 1);
 
@@ -4141,10 +4430,9 @@ document.getElementById('someRow').addEventListener('click', e => {
   const ffiSection = document.getElementById('ffiSection');
   const batchSection = document.getElementById('batchSection');
   const singlePdfBtn = document.getElementById('pdfBtn');
-  // Print + Tags Video + Student are all title-card presets sharing the Name
-  // Tag Text blocks; print gets the CSV→ZIP/PDF machinery, tagsvideo gets the
-  // CSV→MP4-per-row machinery, student gets neither.
-  if (someFormat === 'print' || someFormat === 'student' || someFormat === 'tagsvideo') {
+  // Print and Tags Video are both title-card presets sharing the Name Tag Text
+  // blocks; print gets the CSV→ZIP/PDF machinery, tagsvideo the CSV→MP4-per-row.
+  if (someFormat === 'print' || someFormat === 'tagsvideo') {
     const isPrint = someFormat === 'print', isVideo = someFormat === 'tagsvideo';
     ffiSection.style.display = '';
     batchSection.style.display = (isPrint || isVideo) ? '' : 'none';
@@ -4154,10 +4442,8 @@ document.getElementById('someRow').addEventListener('click', e => {
     // and the cloth pills (full motion is forced by the preset).
     setDisplay('exportBtn', isVideo ? 'none' : '');
     setDisplay('someSeqBtn', isVideo ? 'none' : '');
-    setDisplay('clothSection', isVideo ? 'none' : '');
     if (isPrint) applyPrintPreset();
-    else if (isVideo) applyTagsVideoPreset();
-    else applyStudentPreset();
+    else applyTagsVideoPreset();
     someActive = true;
     initSomeCrop();
     someFrame.style.display = 'block';
@@ -4168,8 +4454,7 @@ document.getElementById('someRow').addEventListener('click', e => {
   if (singlePdfBtn) singlePdfBtn.style.display = '';
   setDisplay('exportBtn', '');
   setDisplay('someSeqBtn', '');
-  setDisplay('clothSection', '');
-  // Leaving print/tagsvideo/student — restore the studio surface + generic text rendering.
+  // Leaving print/tagsvideo — restore the studio surface + generic text rendering.
   matteMode = false;
   const mt = document.getElementById('matteToggle');
   if (mt) mt.checked = false;
@@ -4441,7 +4726,7 @@ else MOBILE_QUERY.addListener(syncMobileMode);
 syncMobileMode();
 
 // ─── Name Tags print preset + CSV batch export ─────────────────────
-function applyTitleCardPreset({ format, width, height, matte, cameraDist, cloth, updateBatch }) {
+function applyTitleCardPreset({ format, width, height, matte, cameraDist, updateBatch }) {
   textLayout = 'titleCard';        // cloth text comes from titleBlocks
   textLayoutUserSet = true;
 
@@ -4461,8 +4746,6 @@ function applyTitleCardPreset({ format, width, height, matte, cameraDist, cloth,
   setBackgroundColor('#D3FED1');
   setTextColor('#00330A', false);
   setPoleColorOverride(null);
-
-  if (cloth) setClothMode(cloth);
 
   cam.tgtTheta = 0; cam.tgtPhi = 0; cam.tgtRoll = 0;
   cam.tgtTarget[0] = 1.191;
@@ -4499,23 +4782,9 @@ function applyPrintPreset() {
   });
 }
 
-// Student Takeover — the name-tag flag as a 9:16 social video: same title-card
-// text blocks and print palette, 1080×1920, 10s MP4 export. None of the
-// print/batch machinery (no CSV, no PDF, no A5).
-function applyStudentPreset() {
-  applyTitleCardPreset({
-    format: 'student',
-    width: 1080,
-    height: 1920,
-    matte: false,
-    cameraDist: 6.9,
-  });
-}
-
 // Name Tags Video — the name-tag flag as a 16:9 video, batched: the CSV that
 // feeds the print run feeds this too, but every row becomes its own 10s MP4
-// (1920×1080). Full cloth only — the preset forces it and the UI hides the
-// cloth pills; no PNG/PDF outputs here.
+// (1920×1080). No PNG/PDF outputs here.
 function applyTagsVideoPreset() {
   applyTitleCardPreset({
     format: 'tagsvideo',
@@ -4523,7 +4792,6 @@ function applyTagsVideoPreset() {
     height: 1080,
     matte: false,
     cameraDist: 4.8,
-    cloth: 'full',
   });
 }
 
@@ -4676,12 +4944,7 @@ let batchVideoExporting = false, batchVideoCancel = false;
 
 if (matteToggle) matteToggle.addEventListener('change', () => { matteMode = matteToggle.checked; });
 
-const unlitToggle = document.getElementById('unlitToggle');
-function setUnlitMode(on) {
-  unlitMode = on;
-  if (unlitToggle) unlitToggle.checked = on;
-}
-if (unlitToggle) unlitToggle.addEventListener('change', () => { unlitMode = unlitToggle.checked; });
+function setUnlitMode(on) { unlitMode = on; }
 
 // Friendly size descriptor for the batch buttons: the A-series paper name when
 // the pixels match that paper at 300 DPI (either orientation), else raw px.
@@ -4809,12 +5072,8 @@ async function runBatchExport(format = 'zip', btn = batchExportBtn) {
     titleBlocks[3].text = (rec.www || '').replace(/\|/g, '\n');
     generateTextTexture(0);
 
-    // Flat = identical clean panel per row; slight = unique-but-bounded ripple
-    // seeded by the row index (deterministic — re-exporting the same CSV gives
-    // identical files); full = advance wind for a unique untamed pose.
-    if (clothMode === 'flat') flattenCloth();
-    else if (clothMode === 'slight') gentleClothPose(i + 1);
-    else for (let s = 0; s < STEP_FRAMES; s++) simulate(SIM_DT);
+    // Advance the wind between rows so every tag gets its own pose.
+    for (let s = 0; s < STEP_FRAMES; s++) simulate(SIM_DT);
 
     // JPEG for PDF (compact, jsPDF-safe), lossless PNG for the ZIP masters.
     const blob = await renderFlagToBlob(outW, outH, matteMode, false,
@@ -5008,30 +5267,6 @@ if (batchVideoBtn) batchVideoBtn.addEventListener('click', () => {
 });
 
 // ── Cloth mode pills + single PDF + PNG-frame-sequence wiring ──
-const clothModeRow = document.getElementById('clothModeRow');
-const gentleStrengthRow = document.getElementById('gentleStrengthRow');
-function setClothMode(mode) {
-  clothMode = mode;
-  setActiveByData(clothModeRow, '[data-cloth]', 'cloth', mode);
-  if (gentleStrengthRow) gentleStrengthRow.style.display = mode === 'slight' ? '' : 'none';
-  if (mode === 'flat') flattenCloth();
-  else if (mode === 'slight') gentleClothPose(0, gentleTime);
-}
-if (clothModeRow) clothModeRow.addEventListener('click', e => {
-  const btn = e.target.closest('[data-cloth]');
-  if (!btn || btn.classList.contains('active')) return;
-  setClothMode(btn.dataset.cloth);
-});
-// Strength slider — 50 = the baked default amplitude, 100 = double.
-const gentleStrengthIn = document.getElementById('gentleStrength');
-if (gentleStrengthIn) gentleStrengthIn.addEventListener('input', () => {
-  const v = parseInt(gentleStrengthIn.value, 10) || 50;
-  GENTLE.strength = v / 50;
-  const lbl = document.getElementById('gentleStrengthVal');
-  if (lbl) lbl.textContent = v;
-  if (clothMode === 'slight') gentleClothPose(0, gentleTime);
-});
-
 const pdfBtn = document.getElementById('pdfBtn');
 if (pdfBtn) pdfBtn.addEventListener('click', exportFlagPDF);
 
@@ -5131,7 +5366,7 @@ function renderToFBO(fw, fh) {
   const vFrac = someActive ? (someCrop.h / window.innerHeight) : 1.0;
   const expFOV = 2 * Math.atan(vFrac * Math.tan(mainFOV / 2));
   const e = eyePos();
-  const ld = [0.5, 0.8, 0.35];
+  const ld = KEY_LIGHT;
   const ll = Math.sqrt(ld[0] ** 2 + ld[1] ** 2 + ld[2] ** 2);
 
   gl.enable(gl.BLEND);
@@ -5163,28 +5398,8 @@ function renderToFBO(fw, fh) {
   }
   setMaskUniforms(isCustomShape());
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-  gl.bufferSubData(gl.ARRAY_BUFFER, 0, pos);
-  gl.enableVertexAttribArray(loc.aPos);
-  gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, nrmBuf);
-  gl.bufferSubData(gl.ARRAY_BUFFER, 0, nrm);
-  gl.enableVertexAttribArray(loc.aNrm);
-  gl.vertexAttribPointer(loc.aNrm, 3, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
-  gl.enableVertexAttribArray(loc.aUV);
-  gl.vertexAttribPointer(loc.aUV, 2, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
-  gl.enable(gl.CULL_FACE);
-
-  gl.uniform1f(loc.uFace, -1.0);
-  gl.cullFace(gl.FRONT);
-  gl.drawElements(gl.TRIANGLES, indexData.length, gl.UNSIGNED_INT, 0);
-  gl.uniform1f(loc.uFace, 1.0);
-  gl.cullFace(gl.BACK);
-  gl.drawElements(gl.TRIANGLES, indexData.length, gl.UNSIGNED_INT, 0);
-
-  gl.disable(gl.CULL_FACE);
+  bindClothBuffers();
+  drawCloth(rIndexData.length);
   gl.disable(gl.BLEND);
 
   // Read back
@@ -5259,16 +5474,12 @@ function applyCameraState(state) {
 }
 
 function cloneGustState() {
-  return gusts.map(g => ({
-    x: g.x, y: g.y, vx: g.vx, vy: g.vy, r: g.r,
-    sx: g.sx, sz: g.sz, phase: g.phase, phaseVel: g.phaseVel,
-    pulse: g.pulse, spin: g.spin,
-  }));
+  return { gust: { ...GUST }, sway: { ...sway } };
 }
 
 function restoreGustState(state) {
-  gusts.length = 0;
-  for (const g of state) gusts.push({ ...g });
+  Object.assign(GUST, state.gust);
+  Object.assign(sway, state.sway);
 }
 
 function snapshotMotionState() {
@@ -5276,14 +5487,12 @@ function snapshotMotionState() {
     pos: new Float32Array(pos),
     prev: new Float32Array(prev),
     nrm: new Float32Array(nrm),
-    smoothNrm: new Float32Array(smoothNrm),
     gusts: cloneGustState(),
     simTime,
     windAngleDrift,
     windAngleVel,
     windStrengthDrift,
     orbitAngularVel,
-    gentleTime,
     textScrollTime,
     cam: cloneCameraState(),
     moon: cloneMoonState(),
@@ -5295,14 +5504,12 @@ function restoreMotionState(state) {
   pos.set(state.pos);
   prev.set(state.prev);
   nrm.set(state.nrm);
-  smoothNrm.set(state.smoothNrm);
   restoreGustState(state.gusts);
   simTime = state.simTime;
   windAngleDrift = state.windAngleDrift;
   windAngleVel = state.windAngleVel;
   windStrengthDrift = state.windStrengthDrift;
   orbitAngularVel = state.orbitAngularVel;
-  gentleTime = state.gentleTime;
   textScrollTime = state.textScrollTime;
   applyCameraState(state.cam);
   applyMoonState(state.moon);
@@ -5315,15 +5522,12 @@ function restoreMotionState(state) {
 function advanceRecordingMotionFrame(updateTexture) {
   let scrollDirty = false;
   for (let i = 0; i < REC_STEPS; i++) {
-    if (clothMode === 'full') {
-      if (_loopGustBase) {
-        _loopSimPhase = (_loopSimStep % _loopSimTotalSteps) / _loopSimTotalSteps;
-        _loopSimStep++;
-      }
-      simulate(SIM_DT);
-      if (_loopGustBase) _loopSimPhase = -1;
+    if (_loopGustBase) {
+      _loopSimPhase = (_loopSimStep % _loopSimTotalSteps) / _loopSimTotalSteps;
+      _loopSimStep++;
     }
-    else if (clothMode === 'slight') gentleTime += SIM_DT;
+    simulate(SIM_DT);
+    if (_loopGustBase) _loopSimPhase = -1;
     updateCamera(SIM_DT);
     updateMoonScene(SIM_DT);
     if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
@@ -5332,8 +5536,6 @@ function advanceRecordingMotionFrame(updateTexture) {
     }
   }
   if (updateTexture && scrollDirty) generateTextTexture(textScrollTime);
-  if (clothMode === 'flat') flattenCloth();
-  else if (clothMode === 'slight') gentleClothPose(0, gentleTime);
   updateOrbitBall();
   return scrollDirty;
 }
@@ -5345,18 +5547,34 @@ async function buildSeamlessLoopFrames(onProgress) {
   _loopGustBase = cloneGustState();
   _loopSimStep = 0;
   _loopSimTotalSteps = REC_TOTAL_FRAMES * REC_STEPS;
+  // One discarded lap first. Everything driving the cloth is already locked to
+  // the loop phase, but heavy satin carries momentum for several seconds, so a
+  // capture that starts cold still arrives somewhere else ten seconds later.
+  // Running a full lap into the bin lets that transient die, and because the
+  // lap is exactly one period the phase lands back on 0 for the real capture.
+  const WARM = REC_TOTAL_FRAMES;
+  const TOTAL = WARM + REC_TOTAL_FRAMES;
   try {
+    const warmScroll = textScrollTime;
+    for (let f = 0; f < WARM; f++) {
+      advanceRecordingMotionFrame(false);
+      if (f % 20 === 0) {
+        if (onProgress) onProgress(f, TOTAL);
+        await new Promise(r => requestAnimationFrame(r));
+      }
+    }
+    // The cloth keeps its settled state; the text scroll goes back to the top.
+    textScrollTime = warmScroll;
     for (let f = 0; f <= REC_TOTAL_FRAMES; f++) {
       advanceRecordingMotionFrame(false);
         frames.push({
           pos: new Float32Array(pos),
           cam: cloneCameraState(),
           moon: cloneMoonState(),
-          gentleTime,
           textScrollTime,
         });
       if (f % 20 === 0) {
-        if (onProgress) onProgress(f, REC_TOTAL_FRAMES);
+        if (onProgress) onProgress(WARM + f, TOTAL);
         await new Promise(r => requestAnimationFrame(r));
       }
     }
@@ -5383,7 +5601,6 @@ async function buildSeamlessLoopFrames(onProgress) {
 function applyLoopFrame(frame) {
   pos.set(frame.pos);
   prev.set(frame.pos);
-  gentleTime = frame.gentleTime;
   textScrollTime = frame.textScrollTime;
   applyCameraState(frame.cam);
   applyMoonState(frame.moon);
@@ -5747,7 +5964,7 @@ let PAUSED = false;
 
 // Pause indicator pill — shown at bottom-center while paused.
 const pauseIndicator = document.createElement('div');
-pauseIndicator.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.78);color:#fff;padding:8px 16px;border-radius:999px;font:700 13px "ABC Diatype",sans-serif;display:none;pointer-events:none;z-index:9999;letter-spacing:0.02em;';
+pauseIndicator.style.cssText = 'position:fixed;bottom:62px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.78);color:#fff;padding:8px 16px;font:700 13px "ABC Diatype",sans-serif;display:none;pointer-events:none;z-index:9999;letter-spacing:0.02em;';
 pauseIndicator.textContent = 'Paused — Space to resume';
 document.body.appendChild(pauseIndicator);
 
@@ -5819,8 +6036,7 @@ function loop(now) {
   let scrollDirty = false;
   while (simAccum >= SIM_DT) {
     simAccum -= SIM_DT;
-    if (clothMode === 'full') simulate(SIM_DT);
-    else if (clothMode === 'slight') gentleTime += SIM_DT;
+    simulate(SIM_DT);
     updateCamera(SIM_DT);
     updateMoonScene(SIM_DT);
     if (textScrollSpeed > 0 && currentText.trim() && textLayout === 'repeat') {
@@ -5831,12 +6047,13 @@ function loop(now) {
   // Regenerate the scrolled text texture once per rendered frame — repainting
   // the 4K canvas per substep compounded lag on slow frames (2-3 substeps).
   if (scrollDirty) generateTextTexture(textScrollTime);
-  if (clothMode === 'flat') flattenCloth();
-  else if (clothMode === 'slight') gentleClothPose(0, gentleTime);
+  updateGustCharge();
   updateOrbitBall();
   render(SIM_DT);
 }
 
 // ─── Init ────────────────────────────────────────────────────
+buildCreaseMap();
+applySatinUniforms();
 loadDefaultTexture();
 requestAnimationFrame(loop);

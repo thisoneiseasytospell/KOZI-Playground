@@ -71,6 +71,23 @@
       line-height: 1;
       transform: translateY(-0.01em);
     }
+    /* A locked card keeps its place in the list but reads as inert: no arrow,
+       no underline, dimmed, with a small note saying why it goes nowhere. */
+    .project-card.locked {
+      cursor: default;
+      color: #888;
+    }
+    .project-card.locked:hover h2 {
+      text-decoration: none;
+    }
+    .project-card.locked h2::after {
+      display: none;
+    }
+    .locked-note {
+      margin-left: 0.6em;
+      color: #666;
+      letter-spacing: 1px;
+    }
     .video-preview {
       display: none;
       position: fixed;
@@ -117,17 +134,12 @@
           <source src="demos/vikingdemo.mp4" type="video/mp4">
         </video>
       </a>
-      <!-- Hidden for now
-      <a href="DOGA/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
-        <h2>DOGA</h2>
-      </a>
-      -->
-      <a href="3D%20Avatar%20Blob/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
-        <h2>2D/3D Avatar</h2>
+      <div class="project-card locked">
+        <h2>2D/3D Avatar</h2><span class="locked-note">confidential</span>
         <video class="video-preview" loop muted playsinline preload="none" width="1200" height="1080">
           <source src="demos/orb-avatar-demo.mp4" type="video/mp4">
         </video>
-      </a>
+      </div>
       <a href="ASCII/index.html" class="project-card" target="_blank" rel="noopener noreferrer">
         <h2>ASCII Camera Glitch</h2>
         <video class="video-preview" loop muted playsinline preload="none" width="640" height="360">

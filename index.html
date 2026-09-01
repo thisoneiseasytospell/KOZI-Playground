@@ -88,6 +88,9 @@
       color: #666;
       letter-spacing: 1px;
     }
+    .mobile-banner {
+      display: none;
+    }
     .video-preview {
       display: none;
       position: fixed;
@@ -111,6 +114,33 @@
         width: 100%;
         padding: 10px 0 18px;
       }
+      .mobile-banner {
+        display: block;
+        border: 1px solid #333;
+        padding: 12px 14px;
+        margin-bottom: 32px;
+        line-height: 1.6;
+        color: #999;
+      }
+      .mobile-banner strong {
+        color: #fff;
+        font-weight: normal;
+      }
+      .mobile-banner a {
+        color: #fff;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.28em;
+        margin-top: 8px;
+      }
+      .mobile-banner a::after {
+        content: "";
+        width: 0.95em;
+        height: 0.95em;
+        display: inline-block;
+        background: url("assets/arrow.svg") no-repeat center / contain;
+      }
       .video-preview,
       .project-card:hover .video-preview {
         display: block;
@@ -126,6 +156,13 @@
 </head>
 <body>
   <div class="container">
+    <!-- These sketches lean on desktop-only GPU, webcam and pointer behaviour,
+         so phones get sent to a computer. CSS-only, shown at the same
+         breakpoint that stacks the previews inline. -->
+    <div class="mobile-banner">
+      Built for <strong>Chrome on desktop</strong> — open this page on a computer for the full thing.
+      <a href="https://kozi.studio/">kozi.studio</a>
+    </div>
     <h1><a href="https://kozi.studio/" style="color:#fff;text-decoration:none;">KOZI</a> Playground</h1>
     <div class="project-list">
       <div class="project-card locked">

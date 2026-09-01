@@ -1063,6 +1063,7 @@ uniform vec3 uLight, uColor, uEye;
 uniform sampler2D uTex, uMask, uCrease;
 uniform float uFace, uAlpha, uAmbient, uPartyTime, uMatte, uUnlit, uLightning, uMoonSurface;
 uniform float uCreaseScale, uSheen, uAniso, uRough, uEnvInt, uSpecInt, uBackTint, uTransl, uExposure;
+uniform float uClassic;
 uniform bool uHasTex, uIsGlass, uHasMask;
 // Narkowicz's fit of the ACES filmic curve — the tone response three.js uses,
 // and the reason the satin rolls off into the highlights instead of clipping.
@@ -1161,6 +1162,32 @@ void main() {
   // (~0.55) darkens every colour, e.g. #B52C3A reds turn maroon.
   if (uUnlit > 0.5) {
     gl_FragColor = vec4(base, alpha * m);
+    return;
+  }
+
+  // ── Classic ──
+  // The pre-rebuild shading model, kept so the older look stays reachable.
+  // Every term is summed in sRGB with no tone curve, so the albedo is only
+  // ever scaled: saturation holds steady across the folds, where the satin
+  // path below swings it as the grazing sheen piles on.
+  if (uClassic > 0.5) {
+    float cndl = dot(n, ld);
+    float cem = 1.0 - uMatte;
+    float cndv = max(dot(n, vd), 0.0);
+    float cndh = max(dot(n, hd), 0.0);
+    float clight = uAmbient
+      + max(cndl, 0.0) * 0.50
+      + max(dot(n, normalize(vec3(-0.45, 0.35, -0.65))), 0.0) * 0.14
+      + max(-cndl, 0.0) * 0.20
+      + pow(1.0 - cndv, 2.8) * 0.18 * cem
+      + pow(cndh, 72.0) * 0.14 * cem
+      + pow(cndh, 16.0) * 0.16 * cem
+      + pow(cndh, 160.0) * 0.10 * cem;
+    float csheen = pow(1.0 - cndv, 4.0) * 0.07 * cem;
+    vec3 ctint = mix(vec3(0.84, 0.90, 0.98), vec3(0.98, 0.90, 0.84), vUV.y);
+    vec3 clit = base * clight + ctint * csheen;
+    clit = mix(clit, base * 2.45 + vec3(0.18, 0.22, 0.32), flash * 0.68);
+    gl_FragColor = vec4(clit, alpha * m);
     return;
   }
 
@@ -1301,22 +1328,41 @@ gl.linkProgram(prog); gl.useProgram(prog);
 const loc = {};
 ['aPos', 'aNrm', 'aUV', 'aTan'].forEach(n => loc[n] = gl.getAttribLocation(prog, n));
 ['uProj', 'uView', 'uModel', 'uLight', 'uColor', 'uEye', 'uTex', 'uFace', 'uAlpha', 'uAmbient', 'uHasTex', 'uIsGlass', 'uPartyTime', 'uMatte', 'uUnlit', 'uMask', 'uHasMask', 'uLightning', 'uMoonSurface',
- 'uCrease', 'uCreaseScale', 'uSheen', 'uAniso', 'uRough', 'uEnvInt', 'uSpecInt', 'uBackTint', 'uTransl', 'uExposure']
+ 'uCrease', 'uCreaseScale', 'uSheen', 'uAniso', 'uRough', 'uEnvInt', 'uSpecInt', 'uBackTint', 'uTransl', 'uExposure', 'uClassic']
   .forEach(n => loc[n] = gl.getUniformLocation(prog, n));
 
 // Satin, matching the Viking material. These never change at runtime, so they
 // are set once rather than per draw.
 const SATIN = {
   crease: 0.45,   // strength of the baked packaging folds
-  sheen: 0.28,
+  backTint: 0.74, // the reverse of the flag, a shade down
+  transl: 0.32,   // light carried through the cloth
+  // The rest is owned by the light mode below, which overwrites it wholesale.
+  classic: 0,
+  sheen: 0.18,
   aniso: 0.35,
   rough: 0.58,
   env: 0.45,
   spec: 0.60,
-  backTint: 0.74, // the reverse of the flag, a shade down
-  transl: 0.32,   // light carried through the cloth
-  exposure: 1.0,
+  exposure: 0.68,
 };
+
+// Light modes — every entry is a complete set, so switching never leaves a
+// value behind from the mode before it.
+//
+// Satin renders in linear light and lands on an ACES curve, so exposure sets
+// where the albedo sits on that curve, not just how bright it is. At 1.0 a
+// saturated flag runs up onto the shoulder: #B52C3A read back as (203,40,55)
+// instead of (181,44,58), and the sheen at 0.28 washed grazing folds out to a
+// pale pink — saturation swung 0.53–0.82 across the cloth where the classic
+// model held 0.73–0.76. 0.68 with a 0.18 sheen puts the red channel back on
+// 181 and pulls the swing to 0.66–0.84.
+const LIGHT_MODES = {
+  studio:  { classic: 0, sheen: 0.18, aniso: 0.35, rough: 0.58, env: 0.45, spec: 0.60, exposure: 0.68 },
+  soft:    { classic: 0, sheen: 0.10, aniso: 0.20, rough: 0.74, env: 0.62, spec: 0.30, exposure: 0.62 },
+  classic: { classic: 1, sheen: 0.18, aniso: 0.35, rough: 0.58, env: 0.45, spec: 0.60, exposure: 0.68 },
+};
+let lightMode = 'studio';
 function applySatinUniforms() {
   gl.useProgram(prog);
   gl.uniform1f(loc.uCreaseScale, SATIN.crease);
@@ -1328,7 +1374,17 @@ function applySatinUniforms() {
   gl.uniform1f(loc.uBackTint, SATIN.backTint);
   gl.uniform1f(loc.uTransl, SATIN.transl);
   gl.uniform1f(loc.uExposure, SATIN.exposure);
+  gl.uniform1f(loc.uClassic, SATIN.classic);
   gl.uniform1i(loc.uCrease, 3);
+}
+
+// These live on the program, not the draw call, so setting them once here
+// carries into the preview, the export renders and the batch passes alike.
+function setLightMode(mode) {
+  if (!LIGHT_MODES[mode]) return;
+  lightMode = mode;
+  Object.assign(SATIN, LIGHT_MODES[mode]);
+  applySatinUniforms();
 }
 
 // ─── Buffers ─────────────────────────────────────────────────
@@ -3322,6 +3378,15 @@ weatherRow.addEventListener('click', e => {
   setWeather(btn.dataset.weather);
 });
 
+// Light — Studio / Soft / Classic
+const lightRow = document.getElementById('lightRow');
+if (lightRow) lightRow.addEventListener('click', e => {
+  const btn = e.target.closest('[data-light]');
+  if (!btn || btn.classList.contains('active')) return;
+  setActiveButton(lightRow, '[data-light]', btn);
+  setLightMode(btn.dataset.light);
+});
+
 // Attachment — Full edge / Two corners
 const attachRow = document.getElementById('attachRow');
 attachRow.addEventListener('click', e => {
@@ -4046,6 +4111,8 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   _savedWeather = null;
   clearLookSceneEffects();
   setActiveByData(weatherRow, '[data-weather]', 'weather', 'normal');
+  setLightMode('studio');
+  setActiveByData(lightRow, '[data-light]', 'light', 'studio');
   document.getElementById('windStrength').value = 100;
   document.getElementById('turbulence').value = 30;
   document.getElementById('gravity').value = -10;

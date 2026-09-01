@@ -1,4 +1,4 @@
-# Maggie Studio
+# 2D/3D Avatar
 
 A 3D avatar generator with iOS exports.
 

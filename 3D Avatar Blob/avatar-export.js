@@ -317,7 +317,7 @@
       svg{display:block;width:100%;height:100%;overflow:visible;touch-action:none;user-select:none}
       .head{fill:${config.surface.mode === 'flat' ? colors[0] : 'url(#avatar-surface)'}}
       .eye{fill:${config.eyeColor || '#0e0e14'};shape-rendering:geometricPrecision}
-    </style><svg viewBox="0 0 560 560" role="img" aria-label="Animated Maggie Studio avatar">
+    </style><svg viewBox="0 0 560 560" role="img" aria-label="Animated 2D/3D avatar">
       <defs><linearGradient id="avatar-surface" x1="0" y1="0" x2="1" y2="1">${stops}</linearGradient></defs>
       <path class="head"></path><path class="eye eye-left"></path><path class="eye eye-right"></path><path class="eye mouth"></path>
     </svg>`;
@@ -588,10 +588,10 @@
       }, null, 2) + '\n',
       'kozi-avatar-js/avatar.js': runtimeSource(snapshot),
       'kozi-avatar-js/index.html': `<!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Maggie Studio Avatar</title>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>2D/3D Avatar</title>
 <style>*{box-sizing:border-box}html,body,#avatar{width:100%;height:100%;margin:0}body{background:#d9d9d3}#avatar{min-height:420px}</style></head>
 <body><main id="avatar"></main><script type="module">import { createAvatar } from './avatar.js'; createAvatar(document.querySelector('#avatar'));</script></body></html>`,
-      'kozi-avatar-js/README.md': `# Maggie Studio Avatar — JavaScript module
+      'kozi-avatar-js/README.md': `# 2D/3D Avatar — JavaScript module
 
 The exported avatar is dependency-free and carries the configuration that was active at export time.
 
@@ -617,7 +617,7 @@ Open \`index.html\` through a local web server. For example, run \`npm run dev\`
         dependencies: { '@vitejs/plugin-react': '^5.0.0', vite: '^7.0.0', typescript: '^5.8.0', react: '^19.0.0', 'react-dom': '^19.0.0' },
         devDependencies: { '@types/react': '^19.0.0', '@types/react-dom': '^19.0.0' },
       }, null, 2) + '\n',
-      'kozi-avatar-react/index.html': '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Maggie Studio Avatar</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
+      'kozi-avatar-react/index.html': '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>2D/3D Avatar</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
       'kozi-avatar-react/tsconfig.json': JSON.stringify({
         compilerOptions: { target: 'ES2022', useDefineForClassFields: true, lib: ['ES2022', 'DOM', 'DOM.Iterable'], allowJs: true, skipLibCheck: true, esModuleInterop: true, allowSyntheticDefaultImports: true, strict: true, forceConsistentCasingInFileNames: true, module: 'ESNext', moduleResolution: 'Bundler', resolveJsonModule: true, isolatedModules: true, noEmit: true, jsx: 'react-jsx' }, include: ['src']
       }, null, 2) + '\n',
@@ -658,7 +658,7 @@ import './style.css';
 createRoot(document.getElementById('root')!).render(<StrictMode><Avatar /></StrictMode>);
 `,
       'kozi-avatar-react/src/style.css': `*{box-sizing:border-box}html,body,#root{width:100%;height:100%;margin:0}body{background:#d9d9d3;font-family:Arial,sans-serif}#root{min-height:420px}`,
-      'kozi-avatar-react/README.md': `# Maggie Studio Avatar — React + TypeScript
+      'kozi-avatar-react/README.md': `# 2D/3D Avatar — React + TypeScript
 
 \`Avatar.tsx\` is a reusable component with the current studio configuration embedded in \`avatar.js\`.
 

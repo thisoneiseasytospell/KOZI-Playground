@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Maggie Studio</title>
+<title>2D/3D Avatar</title>
 <script>
   const avatarQuery = new URLSearchParams(location.search);
   window.AVATAR_ICON_MODE = avatarQuery.get('avatar-icon') === '1';
@@ -748,7 +748,7 @@ blink()</pre>
   </div>
   <div id="panel">
     <div class="phead">
-      <h1><span>Maggie</span><span>Studio</span></h1>
+      <h1><span>2D/3D</span><span>Avatar</span></h1>
       <div class="phead-actions">
         <a class="phead-back" href="../index.html">← Playground</a>
         <button type="button" id="creditsToggle" class="phead-help" aria-controls="credits" aria-expanded="false" title="Credits">?</button>
@@ -791,7 +791,7 @@ blink()</pre>
 <script>
 'use strict';
 /* =============================================================
-   Maggie Studio — procedural 3D rendered as flat 2D SVG.
+   2D/3D Avatar — procedural 3D rendered as flat 2D SVG.
    Orthographic projection, spring-driven motion, no libraries.
    ============================================================= */
 
@@ -808,7 +808,7 @@ const AVATAR_PROFILE_KEY = `ttt-avatar-profile:${AVATAR_PROFILE}`;
 const AVATAR_STATE_DEFAULTS_KEY = 'ttt-avatar-state-defaults:v1';
 if (!AVATAR_ICON_MODE && AVATAR_PROFILE !== 'default') {
   const profileLabel = AVATAR_PROFILE[0].toUpperCase() + AVATAR_PROFILE.slice(1);
-  document.title = `Maggie Studio · ${profileLabel}`;
+  document.title = `2D/3D Avatar · ${profileLabel}`;
 }
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -3296,7 +3296,7 @@ function downloadStateDefault(snapshot) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `maggie-${snapshot.state}-default.json`;
+  anchor.download = `avatar-${snapshot.state}-default.json`;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
@@ -3458,7 +3458,7 @@ function getExportSnapshot() {
   };
   const authoredMotion = STATES[stateID];
   return {
-    name: 'Maggie Studio Avatar',
+    name: '2D/3D Avatar',
     shape: setup.shape,
     selection: { state: stateID, expressionSourceID: expressionID },
     expression: expressionID === 26 ? 'orbit' : 'pose',
@@ -5014,7 +5014,7 @@ function getImplementationSpec() {
   }));
   return {
     schemaVersion: 1,
-    product: 'Maggie Studio',
+    product: '2D/3D Avatar',
     coordinateSystem: {
       units: 'avatarUnits',
       angles: 'degrees',

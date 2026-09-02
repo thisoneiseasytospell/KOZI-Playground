@@ -91,6 +91,30 @@
     .mobile-banner {
       display: none;
     }
+    /* Sits under the list, closing the page in the same white as the titles.
+       The link carries the same trailing arrow as every other outbound link. */
+    .site-footer {
+      margin-top: 64px;
+      color: #fff;
+      letter-spacing: 1px;
+    }
+    .site-footer a {
+      color: #fff;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.28em;
+    }
+    .site-footer a::after {
+      content: "";
+      width: 0.95em;
+      height: 0.95em;
+      display: inline-block;
+      background: url("assets/arrow.svg") no-repeat center / contain;
+    }
+    .site-footer a:hover {
+      text-decoration: underline;
+    }
     .video-preview {
       display: none;
       position: fixed;
@@ -232,6 +256,9 @@
         </video>
       </a>
     </div>
+    <footer class="site-footer">
+      &copy; 2026 <a href="https://kozi.studio/" target="_blank" rel="noopener noreferrer">kozi.studio</a>
+    </footer>
   </div>
   <script>
     (function () {

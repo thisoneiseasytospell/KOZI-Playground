@@ -136,7 +136,12 @@
       .project-card {
         display: block;
         width: 100%;
-        padding: 10px 0 18px;
+        padding: 10px 0;
+      }
+      /* Each case stacks with its preview on phones, so give them clear
+         breathing room between one another. */
+      .project-list {
+        gap: 40px;
       }
       .mobile-banner {
         display: block;
@@ -150,20 +155,14 @@
         color: #fff;
         font-weight: normal;
       }
+      /* Reads as a plain hyperlink rather than a "go back" arrow: underlined,
+         white, on its own line under the notice. */
       .mobile-banner a {
         color: #fff;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.28em;
-        margin-top: 8px;
-      }
-      .mobile-banner a::after {
-        content: "";
-        width: 0.95em;
-        height: 0.95em;
+        text-decoration: underline;
+        text-underline-offset: 0.18em;
         display: inline-block;
-        background: url("assets/arrow.svg") no-repeat center / contain;
+        margin-top: 8px;
       }
       .video-preview,
       .project-card:hover .video-preview {
